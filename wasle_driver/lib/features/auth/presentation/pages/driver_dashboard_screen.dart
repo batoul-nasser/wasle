@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../../../../core/ui/ui.dart';
 import '../../data/auth_service.dart';
+import '../../../deliveries/data/driver_deliveries_repository.dart';
+import '../../../deliveries/presentation/pages/my_deliveries_screen.dart';
 import 'driver_profile_screen.dart';
 
 class DriverDashboardScreen extends StatefulWidget {
@@ -13,9 +15,13 @@ class DriverDashboardScreen extends StatefulWidget {
 
 class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   final AuthService _authService = AuthService();
+  final DriverDeliveriesRepository _deliveriesRepository = DriverDeliveriesRepository();
 
   bool isLoading = true;
   String? errorText;
+  int assignedCount = 0;
+  int activeCount = 0;
+  int completedCount = 0;
 
   Map<String, dynamic>? profileData;
   Map<String, dynamic>? driverData;
@@ -49,6 +55,17 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         company = await _authService.getCompanyById(companyId.toString());
       }
 
+      try {
+        final counts = await _deliveriesRepository.getDriverDeliveryCounts();
+        assignedCount = counts['assigned'] ?? 0;
+        activeCount = counts['active'] ?? 0;
+        completedCount = counts['completed'] ?? 0;
+      } catch (_) {
+        assignedCount = 0;
+        activeCount = 0;
+        completedCount = 0;
+      }
+
       if (!mounted) return;
 
       setState(() {
@@ -74,6 +91,15 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         builder: (_) => const DriverProfileScreen(),
       ),
     );
+  }
+
+  void _openMyDeliveries() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const MyDeliveriesScreen(),
+      ),
+    ).then((_) => _loadDashboard());
   }
 
   @override
@@ -165,7 +191,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                                     borderRadius: BorderRadius.circular(999),
                                   ),
                                   child: Text(
-                                    'Assigned 0',
+                                    'Assigned $assignedCount',
                                     style: AppTextStyles.label.copyWith(color: Colors.white),
                                   ),
                                 ),
@@ -179,7 +205,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                                     borderRadius: BorderRadius.circular(999),
                                   ),
                                   child: Text(
-                                    'Pending 0',
+                                    'Active $activeCount',
                                     style: AppTextStyles.label.copyWith(color: Colors.white),
                                   ),
                                 ),
@@ -197,11 +223,11 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                       SizedBox(
                         height: 186,
                         child: Row(
-                          children: const [
+                          children: [
                             Expanded(
                               child: DashboardStatCard(
                                 icon: Icons.assignment_turned_in_outlined,
-                                value: '0',
+                                value: '$assignedCount',
                                 label: 'Assigned Orders',
                                 subtitle: 'Ready to pick up',
                               ),
@@ -210,7 +236,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                             Expanded(
                               child: DashboardStatCard(
                                 icon: Icons.check_circle_outline,
-                                value: '0',
+                                value: '$completedCount',
                                 label: 'Completed',
                                 subtitle: 'Delivered today',
                                 accentColor: AppColors.success,
@@ -221,11 +247,11 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                         ),
                       ),
                       const SizedBox(height: AppSpacing.md),
-                      const DashboardStatCard(
+                      DashboardStatCard(
                         icon: Icons.pending_actions_outlined,
-                        value: '0',
+                        value: '$activeCount',
                         label: 'Pending Tasks',
-                        subtitle: 'No urgent actions right now',
+                        subtitle: 'Orders in active progress',
                         accentColor: AppColors.warning,
                         accentSoftColor: AppColors.warningSoft,
                       ),
@@ -235,6 +261,12 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                         subtitle: 'Common actions for your account',
                       ),
                       const SizedBox(height: AppSpacing.md),
+                      PrimaryButton(
+                        label: 'My Deliveries',
+                        icon: Icons.local_shipping_outlined,
+                        onPressed: _openMyDeliveries,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
                       PrimaryButton(
                         label: 'View Profile',
                         icon: Icons.badge_outlined,

@@ -26,12 +26,22 @@ class StatusChip extends StatelessWidget {
       case 'approved':
       case 'completed':
       case 'delivered':
+      case 'dropped_at_pickup_point':
+      case 'returned_to_store':
       case 'active':
         return StatusChipTone.success;
       case 'pending':
       case 'created':
+      case 'pending_driver_receipt':
       case 'assigned':
+      case 'ready_for_driver_pickup':
+      case 'rescheduled':
         return StatusChipTone.warning;
+      case 'driver_received_order':
+      case 'picked_up':
+      case 'in_transit':
+      case 'returning_to_store':
+        return StatusChipTone.info;
       case 'rejected':
       case 'failed':
       case 'cancelled':

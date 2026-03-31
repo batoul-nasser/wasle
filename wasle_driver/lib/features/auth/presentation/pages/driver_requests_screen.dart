@@ -90,6 +90,11 @@ class _DriverRequestsScreenState extends State<DriverRequestsScreen> {
     final phone = request['phone']?.toString() ?? '-';
     final requestStatus = request['request_status']?.toString() ?? '-';
     final verificationStatus = request['verification_status']?.toString() ?? '-';
+    final decisionStatus = requestStatus.toLowerCase() == 'approved'
+        ? 'approved'
+        : requestStatus.toLowerCase() == 'rejected'
+            ? 'rejected'
+            : 'pending';
 
     return InfoCard(
       title: driverName,
@@ -120,13 +125,18 @@ class _DriverRequestsScreenState extends State<DriverRequestsScreen> {
           ),
           const SizedBox(height: AppSpacing.sm),
           _RequestField(
-            label: 'Verification',
-            value: verificationStatus,
+            label: 'Company Decision',
+            value: decisionStatus,
             icon: Icons.verified_user_outlined,
             trailing: StatusChip(
-              label: verificationStatus,
-              tone: StatusChip.fromStatus(verificationStatus),
+              label: decisionStatus,
+              tone: StatusChip.fromStatus(decisionStatus),
             ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            'Driver verification profile: $verificationStatus',
+            style: AppTextStyles.bodyMuted,
           ),
           const SizedBox(height: AppSpacing.md),
           Row(

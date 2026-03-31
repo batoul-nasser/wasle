@@ -51,6 +51,18 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   bool isLoading = false;
   String? errorText;
 
+  String _friendlyOtpError(Object error) {
+    final raw = error.toString();
+    final lower = raw.toLowerCase();
+    if (lower.contains('otp_expired') || lower.contains('token has expired')) {
+      return 'OTP expired. Please resend a new code.';
+    }
+    if (lower.contains('invalid') && lower.contains('otp')) {
+      return 'Invalid OTP. Please check the code and try again.';
+    }
+    return raw;
+  }
+
   @override
   void initState() {
     super.initState();
@@ -174,11 +186,23 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       }
 
       if (role == 'driver') {
-        final status = await _authService.checkDriverStatus();
+        final rawStatus = await _authService.checkDriverStatus();
+        final status = rawStatus?.toLowerCase().trim();
 
         if (!mounted) return;
 
-        if (status == 'pending') {
+        const approvedStatuses = {'approved'};
+        const rejectedStatuses = {'rejected'};
+        const pendingLikeStatuses = {
+          'pending',
+          'under_review',
+          'in_review',
+          'awaiting_approval',
+          'waiting_approval',
+          'submitted',
+        };
+
+        if (status == null || pendingLikeStatuses.contains(status)) {
           Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
@@ -189,7 +213,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           return;
         }
 
-        if (status == 'approved') {
+        if (approvedStatuses.contains(status)) {
           Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
@@ -200,7 +224,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           return;
         }
 
-        if (status == 'rejected') {
+        if (rejectedStatuses.contains(status)) {
           Navigator.pushAndRemoveUntil(
             context,
             MaterialPageRoute(
@@ -210,8 +234,14 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           );
           return;
         }
-
-        throw Exception('Unknown driver status');
+        Navigator.pushAndRemoveUntil(
+          context,
+          MaterialPageRoute(
+            builder: (_) => const WaitingApprovalScreen(),
+          ),
+          (route) => false,
+        );
+        return;
       }
 
       throw Exception('Unknown role');
@@ -219,7 +249,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       print('OTP VERIFY ERROR: $e');
       print(st);
 
-      setState(() => errorText = e.toString());
+      setState(() => errorText = _friendlyOtpError(e));
     } finally {
       if (mounted) {
         setState(() {
@@ -246,7 +276,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         const SnackBar(content: Text('OTP sent again')),
       );
     } catch (e) {
-      setState(() => errorText = e.toString());
+      setState(() => errorText = _friendlyOtpError(e));
     }
   }
 

@@ -3,6 +3,7 @@
 import '../../../../core/ui/ui.dart';
 import '../../data/auth_service.dart';
 import 'approved_drivers_screen.dart';
+import 'company_assign_orders_screen.dart';
 import 'company_profile_screen.dart';
 import 'driver_requests_screen.dart';
 
@@ -114,6 +115,15 @@ class _CompanyDashboardScreenState extends State<CompanyDashboardScreen> {
     );
   }
 
+  void _openAssignOrders() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const CompanyAssignOrdersScreen(),
+      ),
+    );
+  }
+
   int _countByStatus(String status) {
     final normalized = status.toLowerCase();
     return requests.where((request) {
@@ -130,6 +140,7 @@ class _CompanyDashboardScreenState extends State<CompanyDashboardScreen> {
 
     final pendingCount = _countByStatus('pending');
     final approvedCount = _countByStatus('approved');
+    final showActionPanel = !isLoading && errorText == null;
 
     return Scaffold(
       appBar: AppBar(
@@ -211,41 +222,92 @@ class _CompanyDashboardScreenState extends State<CompanyDashboardScreen> {
                           ],
                         ),
                       ),
-                      const SizedBox(height: AppSpacing.xl),
-                      const SectionHeader(
+                      const SizedBox(height: AppSpacing.lg),
+                      InfoCard(
                         title: 'Quick Actions',
-                        subtitle: 'Manage requests and company account',
+                        subtitle: 'Actions are pinned at the bottom for faster access',
+                        leading: Container(
+                          width: 34,
+                          height: 34,
+                          decoration: BoxDecoration(
+                            color: AppColors.primarySoft,
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: const Icon(
+                            Icons.bolt_outlined,
+                            color: AppColors.primary,
+                            size: 18,
+                          ),
+                        ),
+                        child: Text(
+                          'Use the bottom panel to assign orders, review drivers, and manage your company account.',
+                          style: AppTextStyles.bodyMuted,
+                        ),
                       ),
-                      const SizedBox(height: AppSpacing.md),
+                      const SizedBox(height: 260),
+                    ],
+                  ),
+                ),
+      bottomNavigationBar: showActionPanel
+          ? SafeArea(
+              top: false,
+              child: Container(
+                padding: const EdgeInsets.fromLTRB(
+                  AppSpacing.xl,
+                  AppSpacing.sm,
+                  AppSpacing.xl,
+                  AppSpacing.md,
+                ),
+                decoration: const BoxDecoration(
+                  color: AppColors.background,
+                  border: Border(top: BorderSide(color: AppColors.border)),
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
                       PrimaryButton(
-                        label: 'View Driver Requests',
+                        label: 'Assign Orders to Drivers',
+                        icon: Icons.assignment_ind_outlined,
+                        height: 48,
+                        onPressed: _openAssignOrders,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      SecondaryButton(
+                        label: 'Driver Requests',
                         icon: Icons.inbox_outlined,
+                        height: 48,
                         onPressed: _openRequests,
                       ),
-                      const SizedBox(height: AppSpacing.sm),
+                      const SizedBox(height: AppSpacing.xs),
                       SecondaryButton(
-                        label: 'View Approved Drivers',
+                        label: 'Approved Drivers',
                         icon: Icons.verified_user_outlined,
+                        height: 48,
                         onPressed: _openApprovedDrivers,
                       ),
-                      const SizedBox(height: AppSpacing.sm),
+                      const SizedBox(height: AppSpacing.xs),
                       SecondaryButton(
                         label: 'Company Profile',
                         icon: Icons.business_outlined,
+                        height: 48,
                         onPressed: _openProfile,
                       ),
-                      const SizedBox(height: AppSpacing.sm),
+                      const SizedBox(height: AppSpacing.xs),
                       PrimaryButton(
                         label: 'Log Out',
                         icon: Icons.logout_rounded,
                         backgroundColor: AppColors.danger,
+                        height: 48,
                         isLoading: isSigningOut,
                         onPressed: _signOut,
                       ),
-                      const SizedBox(height: AppSpacing.xl),
                     ],
                   ),
                 ),
+              ),
+            )
+          : null,
     );
   }
 }

@@ -29,8 +29,7 @@ class _ApprovedDriversScreenState extends State<ApprovedDriversScreen> {
 
       final approved = data.where((request) {
         final requestStatus = request['request_status']?.toString().toLowerCase();
-        final verification = request['verification_status']?.toString().toLowerCase();
-        return requestStatus == 'approved' || verification == 'approved';
+        return requestStatus == 'approved';
       }).toList();
 
       if (!mounted) return;

@@ -11,6 +11,7 @@ import 'features/auth/presentation/pages/company_sign_up_screen.dart';
 import 'features/auth/presentation/pages/waiting_approval_screen.dart';
 import 'features/auth/presentation/pages/rejected_screen.dart';
 import 'features/auth/presentation/pages/driver_dashboard_screen.dart';
+import 'features/deliveries/presentation/pages/my_deliveries_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,6 +43,7 @@ class WasleDriverApp extends StatelessWidget {
         '/waiting': (context) => const WaitingApprovalScreen(),
         '/rejected': (context) => const RejectedScreen(),
         '/dashboard': (context) => const DriverDashboardScreen(),
+        '/my-deliveries': (context) => const MyDeliveriesScreen(),
       },
     );
   }

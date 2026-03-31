@@ -56,7 +56,7 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } catch (e) {
       setState(() {
-        errorText = 'Login failed';
+        errorText = e.toString();
       });
     } finally {
       if (mounted) {
@@ -110,7 +110,7 @@ class _LoginScreenState extends State<LoginScreen> {
       );
     } catch (e) {
       setState(() {
-        errorText = 'Failed to send OTP';
+        errorText = e.toString();
       });
     } finally {
       if (mounted) {
