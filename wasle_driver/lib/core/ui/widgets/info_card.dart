@@ -46,7 +46,10 @@ class InfoCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (title != null || subtitle != null || leading != null || trailing != null) ...[
+          if (title != null ||
+              subtitle != null ||
+              leading != null ||
+              trailing != null) ...[
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -58,7 +61,8 @@ class InfoCard extends StatelessWidget {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      if (title != null) Text(title!, style: AppTextStyles.title),
+                      if (title != null)
+                        Text(title!, style: AppTextStyles.title),
                       if (subtitle != null) ...[
                         const SizedBox(height: AppSpacing.xxs),
                         Text(subtitle!, style: AppTextStyles.bodyMuted),
@@ -66,12 +70,15 @@ class InfoCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (trailing case final trailingWidget?) trailingWidget,
+                ?trailing,
               ],
             ),
           ],
           if (child != null) ...[
-            if (title != null || subtitle != null || leading != null || trailing != null)
+            if (title != null ||
+                subtitle != null ||
+                leading != null ||
+                trailing != null)
               const SizedBox(height: AppSpacing.md),
             child!,
           ],
