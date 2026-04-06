@@ -1,6 +1,6 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-enum AuthFlowMode { login, driverSignup, companySignup }
+enum AuthFlowMode { login, driverSignup, companySignup, customerSignup }
 
 class AuthService {
   final SupabaseClient _client = Supabase.instance.client;
@@ -109,6 +109,8 @@ class AuthService {
         return '/driver-dashboard';
       case 'company_admin':
         return '/company-dashboard';
+      case 'customer':
+        return '/customer-dashboard';
       default:
         return '/welcome';
     }
@@ -156,6 +158,19 @@ class AuthService {
       'id': userId,
       'name': companyName,
       'location': location,
+    });
+  }
+
+  Future<void> createCustomerProfile({
+    required String userId,
+    required String fullName,
+    required String phone,
+  }) async {
+    await _client.from('profiles').upsert({
+      'id': userId,
+      'full_name': fullName,
+      'phone': phone,
+      'role': 'customer', // 👈 THIS IS THE IMPORTANT LINE
     });
   }
 

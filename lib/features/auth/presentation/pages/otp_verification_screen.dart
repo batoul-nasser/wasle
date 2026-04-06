@@ -98,6 +98,21 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             (_) => false,
           );
           break;
+
+        case AuthFlowMode.customerSignup:
+          await _authService.createCustomerProfile(
+            userId: userId,
+            fullName: widget.fullName ?? '',
+            phone: widget.phone ?? '',
+          );
+
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/customer-dashboard',
+            (_) => false,
+          );
+          break;
       }
     } catch (e) {
       setState(() => errorText = 'Verification failed: $e');
