@@ -100,7 +100,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           break;
       }
     } catch (e) {
-      setState(() => errorText = e.toString());
+      setState(() => errorText = 'Verification failed: $e');
     } finally {
       if (mounted) {
         setState(() => isLoading = false);
@@ -124,6 +124,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           children: [
             TextField(
               controller: otpController,
+              keyboardType: TextInputType.number,
               decoration: const InputDecoration(labelText: 'OTP Code'),
             ),
             const SizedBox(height: 16),
