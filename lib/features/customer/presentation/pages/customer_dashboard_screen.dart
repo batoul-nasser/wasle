@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'track_my_order_page.dart';
+import 'payment_method_page.dart';
+import 'pickup_point_page.dart';
 
 class CustomerDashboardScreen extends StatelessWidget {
   const CustomerDashboardScreen({super.key});
@@ -28,7 +31,8 @@ class CustomerDashboardScreen extends StatelessWidget {
             const SizedBox(height: 10),
             Text(
               value,
-              style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
             ),
             const SizedBox(height: 6),
             Text(
@@ -148,10 +152,9 @@ class CustomerDashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Temporary static values for MVP UI
     const orderId = 'ORD-1024';
     const orderStatus = 'Arrived at Pickup Point';
-    const eta = '15 min';
+    const eta = 'Ready for pickup';
     const paymentMethod = 'Cash at Pickup Point';
     const paymentStatus = 'Unpaid';
     const pickupPointName = 'Wasle Pickup Point - Beirut';
@@ -310,21 +313,36 @@ class CustomerDashboardScreen extends StatelessWidget {
             context: context,
             icon: Icons.location_searching_outlined,
             label: 'Track My Order',
-            onPressed: () {},
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const TrackMyOrderPage()),
+              );
+            },
           ),
           const SizedBox(height: 12),
           _buildActionButton(
             context: context,
             icon: Icons.payments_outlined,
             label: 'Payment Method',
-            onPressed: () {},
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PaymentMethodPage()),
+              );
+            },
           ),
           const SizedBox(height: 12),
           _buildActionButton(
             context: context,
             icon: Icons.store_outlined,
             label: 'Pickup Point Details',
-            onPressed: () {},
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PickupPointPage()),
+              );
+            },
           ),
         ],
       ),
