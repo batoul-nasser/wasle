@@ -52,7 +52,8 @@ class OrderModel {
     return OrderModel(
       id: map['id']?.toString() ?? '',
       trackingCode: map['tracking_code']?.toString() ?? '',
-      status: map['status']?.toString() ?? 'created',
+      status: _normalizeStatus(map['status']?.toString()),
+
       codAmount:
           ((map['declared_value'] ?? map['cod_amount']) as num?)?.toDouble() ??
               0.0,
@@ -120,6 +121,63 @@ class OrderModel {
       resolution: resolution,
       timeline: events,
     );
+  }
+
+
+  OrderModel copyWith({
+    String? id,
+    String? trackingCode,
+    String? status,
+    double? codAmount,
+    String? createdAt,
+    String? pickupMethod,
+    String? customerName,
+    String? customerPhone,
+    String? customerEmail,
+    String? address,
+    String? notes,
+    String? preferredTimeWindow,
+    String? assignedCompany,
+    String? driverName,
+    String? driverPhone,
+    String? expectedPickupTime,
+    String? failedReason,
+    String? resolution,
+    List<String>? timeline,
+  }) {
+    return OrderModel(
+      id: id ?? this.id,
+      trackingCode: trackingCode ?? this.trackingCode,
+      status: status ?? this.status,
+      codAmount: codAmount ?? this.codAmount,
+      createdAt: createdAt ?? this.createdAt,
+      pickupMethod: pickupMethod ?? this.pickupMethod,
+      customerName: customerName ?? this.customerName,
+      customerPhone: customerPhone ?? this.customerPhone,
+      customerEmail: customerEmail ?? this.customerEmail,
+      address: address ?? this.address,
+      notes: notes ?? this.notes,
+      preferredTimeWindow: preferredTimeWindow ?? this.preferredTimeWindow,
+      assignedCompany: assignedCompany ?? this.assignedCompany,
+      driverName: driverName ?? this.driverName,
+      driverPhone: driverPhone ?? this.driverPhone,
+      expectedPickupTime: expectedPickupTime ?? this.expectedPickupTime,
+      failedReason: failedReason ?? this.failedReason,
+      resolution: resolution ?? this.resolution,
+      timeline: timeline ?? this.timeline,
+    );
+  }
+
+  static String _normalizeStatus(String? raw) {
+    final value = (raw ?? 'created').trim().toLowerCase();
+    switch (value) {
+      case 'returning_to_store':
+        return 'returning';
+      case 'returned':
+        return 'returned_to_store';
+      default:
+        return value.isEmpty ? 'created' : value;
+    }
   }
 
   static String _formatDate(String? iso) {

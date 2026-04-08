@@ -42,7 +42,8 @@ TextStyle _t(
 
 Color _statusFg(String s) {
   if (s == 'delivered') return _W.green;
-  if (s == 'failed') return _W.red;
+  if (s == 'failed' || s == 'cancelled') return _W.red;
+  if (s == 'returning' || s == 'returned_to_store') return _W.amber;
   if (s == 'assigned' || s == 'in_transit') return _W.blue;
   if (s == 'created') return _W.amber;
   return _W.gray;
@@ -50,7 +51,8 @@ Color _statusFg(String s) {
 
 Color _statusBg(String s) {
   if (s == 'delivered') return _W.greenLt;
-  if (s == 'failed') return _W.redLt;
+  if (s == 'failed' || s == 'cancelled') return _W.redLt;
+  if (s == 'returning' || s == 'returned_to_store') return _W.amberLt;
   if (s == 'assigned' || s == 'in_transit') return _W.blueLt;
   if (s == 'created') return _W.amberLt;
   return _W.slateLt;
@@ -68,6 +70,14 @@ String _statusLabel(String s) {
       return 'Delivered';
     case 'failed':
       return 'Failed';
+    case 'cancelled':
+      return 'Cancelled';
+    case 'returning':
+      return 'Returning';
+    case 'returned_to_store':
+      return 'Returned';
+    case 'exceptions':
+      return 'Issues';
     default:
       return s;
   }
@@ -80,6 +90,10 @@ const List<String> _kFilters = [
   'in_transit',
   'delivered',
   'failed',
+  'cancelled',
+  'returning',
+  'returned_to_store',
+  'exceptions',
 ];
 
 class OrdersScreen extends StatefulWidget {
@@ -122,8 +136,12 @@ class _OrdersScreenState extends State<OrdersScreen> {
           o.customerName.toLowerCase().contains(q) ||
           o.trackingCode.toLowerCase().contains(q);
 
-      final matchStatus =
-          _selectedStatus == 'All' || o.status == _selectedStatus;
+      final exceptionStatuses = {'failed', 'cancelled', 'returning', 'returned_to_store'};
+      final matchStatus = _selectedStatus == 'All'
+          ? true
+          : _selectedStatus == 'exceptions'
+              ? exceptionStatuses.contains(o.status)
+              : o.status == _selectedStatus;
 
       return matchSearch && matchStatus;
     }).toList();

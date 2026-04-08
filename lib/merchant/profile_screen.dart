@@ -1,10 +1,11 @@
-// lib/merchant/profile_screen.dart
-
 import 'package:flutter/material.dart';
+import 'package:wasle/ui/auth/auth_controller.dart';
 
 import 'models/order_model.dart';
+import 'notifications_screen.dart';
+import 'issues_screen.dart';
+import 'security_validation_screen.dart';
 import 'services/order_service.dart';
-import 'package:wasle/ui/auth/auth_controller.dart';
 
 class _W {
   _W._();
@@ -28,6 +29,7 @@ class _W {
   static const white20 = Color(0x33FFFFFF);
   static const white70 = Color(0xB3FFFFFF);
   static const white07 = Color(0x12FFFFFF);
+  static const white03 = Color(0x08FFFFFF);
 }
 
 TextStyle _t(
@@ -54,15 +56,38 @@ BoxDecoration _cardDecor({double radius = 20}) {
   );
 }
 
-class ProfileScreen extends StatelessWidget {
+class ProfileScreen extends StatefulWidget {
   const ProfileScreen({super.key});
+
+  @override
+  State<ProfileScreen> createState() => _ProfileScreenState();
+}
+
+class _ProfileScreenState extends State<ProfileScreen> {
+  late Future<Map<String, dynamic>?> _profileFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _profileFuture = authController.getMyProfile();
+  }
+
+  Future<void> _refresh() async {
+    setState(() {
+      _profileFuture = authController.getMyProfile();
+    });
+    await Future.wait([
+      _profileFuture,
+      orderService.refresh(),
+    ]);
+  }
 
   @override
   Widget build(BuildContext context) {
     return Container(
       color: _W.bg,
       child: FutureBuilder<Map<String, dynamic>?>(
-        future: authController.getMyProfile(),
+        future: _profileFuture,
         builder: (context, profileSnap) {
           final profile = profileSnap.data;
 
@@ -89,95 +114,134 @@ class ProfileScreen extends StatelessWidget {
           return ValueListenableBuilder<List<OrderModel>>(
             valueListenable: orderService,
             builder: (context, orders, _) {
+              const exceptionStatuses = {
+                'failed',
+                'cancelled',
+                'returning',
+                'returned_to_store',
+              };
+
               final total = orders.length;
               final delivered =
                   orders.where((o) => o.status == 'delivered').length;
-              final failed = orders.where((o) => o.status == 'failed').length;
+              final issues =
+                  orders.where((o) => exceptionStatuses.contains(o.status)).length;
+              final active = orders
+                  .where((o) => o.status != 'delivered' &&
+                      !exceptionStatuses.contains(o.status))
+                  .length;
 
-              return ListView(
-                padding: EdgeInsets.fromLTRB(
-                  14,
-                  0,
-                  14,
-                  28 + MediaQuery.of(context).padding.bottom,
-                ),
-                children: [
-                  const _TopNav(),
-                  const SizedBox(height: 4),
-                  _HeroCard(
-                    title: fullName,
-                    email: email,
-                    phone: phone,
-                    status: status,
+              return RefreshIndicator(
+                onRefresh: _refresh,
+                child: ListView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    14,
+                    0,
+                    14,
+                    28 + MediaQuery.of(context).padding.bottom,
                   ),
-                  const SizedBox(height: 14),
-                  _StatsRow(
-                    total: total,
-                    delivered: delivered,
-                    failed: failed,
-                  ),
-                  const SizedBox(height: 14),
-                  _SectionCard(
-                    icon: Icons.tune_outlined,
-                    iconColor: _W.blue,
-                    iconBg: _W.blueLt,
-                    title: 'Account Settings',
-                    subtitle: 'Manage preferences and access',
-                    child: Column(
-                      children: [
-                        _SettingTile(
-                          icon: Icons.notifications_outlined,
-                          iconColor: _W.amber,
-                          iconBg: _W.amberLt,
-                          title: 'Notifications',
-                          subtitle: 'Notifications center coming soon',
-                          onTap: () => _showSnack(
-                            context,
-                            'Notifications center is not connected yet.',
-                          ),
+                  children: [
+                    _TopNav(
+                      onNotifications: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) => const MerchantNotificationsScreen(),
                         ),
-                        const SizedBox(height: 8),
-                        _SettingTile(
-                          icon: Icons.lock_outline,
-                          iconColor: _W.blue,
-                          iconBg: _W.blueLt,
-                          title: 'Security',
-                          subtitle: 'Password, OTP, and account security',
-                          onTap: () => _showSnack(
-                            context,
-                            'Security settings screen is coming soon.',
-                          ),
+                      ),
+                      onSecurity: () => Navigator.of(context).push(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              const MerchantSecurityValidationScreen(),
                         ),
-                        const SizedBox(height: 8),
-                        _SettingTile(
-                          icon: Icons.help_outline,
-                          iconColor: _W.green,
-                          iconBg: _W.greenLt,
-                          title: 'Support',
-                          subtitle: 'Get help with orders or delivery issues',
-                          onTap: () => _showSnack(
-                            context,
-                            'Support module is coming soon.',
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        _SettingTile(
-                          icon: Icons.info_outline,
-                          iconColor: _W.slate,
-                          iconBg: _W.slateLt,
-                          title: 'About Wasle',
-                          subtitle: 'Version and app information',
-                          onTap: () => _showSnack(
-                            context,
-                            'Wasle Merchant app information screen is coming soon.',
-                          ),
-                        ),
-                      ],
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 12),
-                  const _SignOutButton(),
-                ],
+                    const SizedBox(height: 4),
+                    _HeroCard(
+                      title: fullName,
+                      email: email,
+                      phone: phone,
+                      status: status,
+                      total: total,
+                      active: active,
+                      issues: issues,
+                    ),
+                    const SizedBox(height: 14),
+                    _StatsRow(
+                      total: total,
+                      delivered: delivered,
+                      issues: issues,
+                    ),
+                    const SizedBox(height: 14),
+                    _SectionCard(
+                      icon: Icons.tune_outlined,
+                      iconColor: _W.blue,
+                      iconBg: _W.blueLt,
+                      title: 'Account Settings',
+                      subtitle: 'Manage preferences, alerts, and access checks',
+                      child: Column(
+                        children: [
+                          _SettingTile(
+                            icon: Icons.notifications_outlined,
+                            iconColor: _W.amber,
+                            iconBg: _W.amberLt,
+                            title: 'Notifications',
+                            subtitle:
+                                'Recent order updates and delivery alerts',
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const MerchantNotificationsScreen(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _SettingTile(
+                            icon: Icons.lock_outline,
+                            iconColor: _W.blue,
+                            iconBg: _W.blueLt,
+                            title: 'Security',
+                            subtitle:
+                                'Validate merchant access and permissions',
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const MerchantSecurityValidationScreen(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _SettingTile(
+                            icon: Icons.inventory_2_outlined,
+                            iconColor: _W.green,
+                            iconBg: _W.greenLt,
+                            title: 'Issues Center',
+                            subtitle:
+                                'Review failed, cancelled, and return-flow orders',
+                            onTap: () => Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => const MerchantIssuesScreen(),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          _SettingTile(
+                            icon: Icons.info_outline,
+                            iconColor: _W.slate,
+                            iconBg: _W.slateLt,
+                            title: 'About Wasle',
+                            subtitle: 'Version and app information',
+                            onTap: () => _showSnack(
+                              context,
+                              'Wasle Merchant app information screen is coming soon.',
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    const _SignOutButton(),
+                  ],
+                ),
               );
             },
           );
@@ -201,7 +265,13 @@ void _showSnack(BuildContext context, String msg) {
 }
 
 class _TopNav extends StatelessWidget {
-  const _TopNav();
+  final VoidCallback onNotifications;
+  final VoidCallback onSecurity;
+
+  const _TopNav({
+    required this.onNotifications,
+    required this.onSecurity,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -235,8 +305,66 @@ class _TopNav extends StatelessWidget {
               ],
             ),
           ),
+          const Spacer(),
+          _NavIconBtn(
+            icon: Icons.notifications_outlined,
+            hasDot: true,
+            onTap: onNotifications,
+          ),
+          const SizedBox(width: 8),
+          _NavIconBtn(
+            icon: Icons.shield_outlined,
+            onTap: onSecurity,
+          ),
         ],
       ),
+    );
+  }
+}
+
+class _NavIconBtn extends StatelessWidget {
+  final IconData icon;
+  final bool hasDot;
+  final VoidCallback? onTap;
+
+  const _NavIconBtn({
+    required this.icon,
+    this.hasDot = false,
+    this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Material(
+          color: Colors.transparent,
+          child: InkWell(
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(12),
+            child: Container(
+              width: 38,
+              height: 38,
+              decoration: _cardDecor(radius: 12),
+              child: Icon(icon, size: 18, color: _W.navy),
+            ),
+          ),
+        ),
+        if (hasDot)
+          Positioned(
+            top: 7,
+            right: 7,
+            child: Container(
+              width: 8,
+              height: 8,
+              decoration: BoxDecoration(
+                color: _W.red,
+                shape: BoxShape.circle,
+                border: Border.all(color: _W.white, width: 1.5),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -246,12 +374,18 @@ class _HeroCard extends StatelessWidget {
   final String email;
   final String phone;
   final String status;
+  final int total;
+  final int active;
+  final int issues;
 
   const _HeroCard({
     required this.title,
     required this.email,
     required this.phone,
     required this.status,
+    required this.total,
+    required this.active,
+    required this.issues,
   });
 
   @override
@@ -281,77 +415,148 @@ class _HeroCard extends StatelessWidget {
               ),
             ),
           ),
-          Row(
+          Positioned(
+            bottom: -24,
+            right: 24,
+            child: Container(
+              width: 74,
+              height: 74,
+              decoration: const BoxDecoration(
+                color: _W.white03,
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+          Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 64,
-                height: 64,
-                decoration: BoxDecoration(
-                  color: _W.white13,
-                  border: Border.all(color: _W.white20, width: 2),
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: const Icon(
-                  Icons.storefront_outlined,
-                  color: Colors.white,
-                  size: 30,
+              Text(
+                'MERCHANT PROFILE',
+                style: _t(
+                  10,
+                  FontWeight.w700,
+                  color: _W.white70,
+                  spacing: 1.4,
                 ),
               ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+              const SizedBox(height: 8),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(
+                      color: _W.white13,
+                      border: Border.all(color: _W.white20, width: 2),
+                      borderRadius: BorderRadius.circular(20),
+                    ),
+                    child: const Icon(
+                      Icons.storefront_outlined,
+                      color: Colors.white,
+                      size: 30,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: _t(22, FontWeight.w900, color: Colors.white),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          email,
+                          style: _t(13, FontWeight.w500, color: _W.white70),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          phone,
+                          style: _t(13, FontWeight.w500, color: _W.white70),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                decoration: BoxDecoration(
+                  color: _W.white13,
+                  border: Border.all(color: _W.white20),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Text(
-                      title,
-                      style: _t(20, FontWeight.w900, color: Colors.white),
+                    const Icon(
+                      Icons.verified_user_outlined,
+                      size: 12,
+                      color: Colors.white,
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(width: 5),
                     Text(
-                      email,
-                      style: _t(13, FontWeight.w500, color: _W.white70),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      phone,
-                      style: _t(13, FontWeight.w500, color: _W.white70),
-                    ),
-                    const SizedBox(height: 10),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 11,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: _W.white13,
-                        border: Border.all(color: _W.white20),
-                        borderRadius: BorderRadius.circular(999),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          const Icon(
-                            Icons.verified_user_outlined,
-                            size: 12,
-                            color: Colors.white,
-                          ),
-                          const SizedBox(width: 5),
-                          Text(
-                            'Status · ${status.toUpperCase()}',
-                            style: _t(
-                              12,
-                              FontWeight.w700,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ],
-                      ),
+                      'Status · ${status.toUpperCase()}',
+                      style: _t(12, FontWeight.w700, color: Colors.white),
                     ),
                   ],
                 ),
               ),
+              const SizedBox(height: 14),
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  _HeroChip(
+                    icon: Icons.inventory_2_outlined,
+                    label: '$total orders total',
+                  ),
+                  _HeroChip(
+                    icon: Icons.local_shipping_outlined,
+                    label: '$active active now',
+                  ),
+                  _HeroChip(
+                    icon: Icons.error_outline,
+                    label: '$issues issues',
+                  ),
+                ],
+              ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _HeroChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+
+  const _HeroChip({required this.icon, required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: _W.white13,
+        border: Border.all(color: _W.white20),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: Colors.white),
+          const SizedBox(width: 6),
+          Text(
+            label,
+            style: _t(12, FontWeight.w700, color: Colors.white),
           ),
         ],
       ),
@@ -362,12 +567,12 @@ class _HeroCard extends StatelessWidget {
 class _StatsRow extends StatelessWidget {
   final int total;
   final int delivered;
-  final int failed;
+  final int issues;
 
   const _StatsRow({
     required this.total,
     required this.delivered,
-    required this.failed,
+    required this.issues,
   });
 
   @override
@@ -392,8 +597,8 @@ class _StatsRow extends StatelessWidget {
         const SizedBox(width: 10),
         Expanded(
           child: _StatCard(
-            value: '$failed',
-            label: 'Failed',
+            value: '$issues',
+            label: 'Issues',
             valueColor: _W.red,
           ),
         ),

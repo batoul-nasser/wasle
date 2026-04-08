@@ -54,14 +54,16 @@ BoxDecoration _cardDecor({double radius = 20}) {
 
 Color _statusColor(String s) {
   if (s == 'delivered') return _W.green;
-  if (s == 'failed') return _W.red;
+  if (s == 'failed' || s == 'cancelled') return _W.red;
+  if (s == 'returning' || s == 'returned_to_store') return _W.amber;
   if (s == 'assigned' || s == 'in_transit') return _W.blue;
   return _W.statusCreated;
 }
 
 Color _statusBg(String s) {
   if (s == 'delivered') return _W.greenLt;
-  if (s == 'failed') return _W.redLt;
+  if (s == 'failed' || s == 'cancelled') return _W.redLt;
+  if (s == 'returning' || s == 'returned_to_store') return _W.amberLt;
   if (s == 'assigned' || s == 'in_transit') return _W.blueLt;
   return _W.slateLt;
 }
@@ -72,6 +74,9 @@ String _statusLabel(String s) {
   if (s == 'in_transit') return 'In Transit';
   if (s == 'delivered') return 'Delivered';
   if (s == 'failed') return 'Failed';
+  if (s == 'cancelled') return 'Cancelled';
+  if (s == 'returning') return 'Returning';
+  if (s == 'returned_to_store') return 'Returned';
   return s;
 }
 
@@ -88,12 +93,17 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   late OrderModel _order;
   bool _loadingTimeline = true;
   bool _loadingAssignment = true;
+  bool _submittingCancellation = false;
 
   String? _assignedCompany;
   String? _driverName;
   String? _driverPhone;
   String? _assignmentTime;
   String? _expectedPickupTime;
+  String? _failedReason;
+  String? _resolution;
+  String? _cancellationReason;
+  String? _exceptionOccurredAt;
 
   @override
   void initState() {
@@ -106,6 +116,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     await Future.wait([
       _loadTimeline(),
       _loadAssignmentDetails(),
+      _loadExceptionDetails(),
     ]);
   }
 
@@ -145,8 +156,57 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
+  Future<void> _loadExceptionDetails() async {
+    final details = await orderService.loadExceptionDetails(_order.id);
+    if (!mounted) return;
+    setState(() {
+      _failedReason = details['failedReason'] ?? _order.failedReason;
+      _resolution = details['resolution'] ?? _order.resolution;
+      _cancellationReason = details['cancellationReason'];
+      _exceptionOccurredAt = details['occurredAt'];
+    });
+  }
+
   bool get _hasException =>
-      _order.failedReason != null || _order.resolution != null;
+      _order.status == 'failed' ||
+      _order.status == 'cancelled' ||
+      _order.status == 'returning' ||
+      _order.status == 'returned_to_store' ||
+      _failedReason != null ||
+      _resolution != null ||
+      _cancellationReason != null;
+
+  bool get _canRequestCancellation =>
+      _order.status == 'created' || _order.status == 'assigned';
+
+  String get _exceptionReasonText {
+    if (_order.status == 'cancelled') return 'Cancellation requested';
+    if (_failedReason != null && _failedReason!.trim().isNotEmpty) {
+      return _failedReason!;
+    }
+    if (_order.status == 'returning' || _order.status == 'returned_to_store') {
+      return 'Customer not available';
+    }
+    return 'Exception outcome';
+  }
+
+  String? get _exceptionResolutionText {
+    if (_order.status == 'cancelled') {
+      final note = _cancellationReason?.trim();
+      final when = _exceptionOccurredAt?.trim();
+      if (note != null && note.isNotEmpty && when != null && when.isNotEmpty) {
+        return 'Reason: $note · $when';
+      }
+      if (note != null && note.isNotEmpty) return 'Reason: $note';
+      return 'Requested by merchant before pickup.';
+    }
+    if (_resolution != null && _resolution!.trim().isNotEmpty) {
+      return _resolution;
+    }
+    if (_order.status == 'returning') return 'Return to store is in progress.';
+    if (_order.status == 'returned_to_store') return 'Parcel returned to store.';
+    return null;
+  }
 
   bool get _hasCompany =>
       _assignedCompany != null && _assignedCompany!.trim().isNotEmpty;
@@ -187,6 +247,82 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
 
+  Future<void> _openCancellationDialog() async {
+    if (!_canRequestCancellation) {
+      _showActionInfo('Cancellation is only available before pickup');
+      return;
+    }
+
+    final controller = TextEditingController();
+    final reason = await showDialog<String>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          title: const Text('Request Cancellation'),
+          content: TextField(
+            controller: controller,
+            minLines: 3,
+            maxLines: 5,
+            decoration: const InputDecoration(
+              hintText: 'Enter cancellation reason',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Close'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, controller.text.trim()),
+              child: const Text('Submit'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (reason == null || reason.trim().isEmpty) return;
+
+    setState(() => _submittingCancellation = true);
+    try {
+      await orderService.requestCancellation(
+        orderId: _order.id,
+        currentStatus: _order.status,
+        reason: reason,
+      );
+      final refreshed = await orderService.getOrderWithTimeline(_order.id);
+      if (!mounted) return;
+      setState(() {
+        if (refreshed != null) {
+          _order = refreshed;
+        } else {
+          _order = _order.copyWith(status: 'cancelled');
+        }
+      });
+      await _loadExceptionDetails();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Cancellation request submitted.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.toString().replaceFirst('Exception: ', '')),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _submittingCancellation = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -204,8 +340,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           const SizedBox(height: 12),
           if (_hasException) ...[
             _ExceptionBanner(
-              reason: _order.failedReason,
-              resolution: _order.resolution,
+              reason: _exceptionReasonText,
+              resolution: _exceptionResolutionText,
             ),
             const SizedBox(height: 12),
           ],
@@ -377,12 +513,20 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 ),
                 const SizedBox(height: 10),
                 _ActionBtn(
-                  icon: Icons.cancel_outlined,
-                  label: 'Request Cancellation',
+                  icon: _submittingCancellation ? Icons.hourglass_top_outlined : Icons.cancel_outlined,
+                  label: _order.status == 'cancelled'
+                      ? 'Cancellation Submitted'
+                      : _canRequestCancellation
+                          ? 'Request Cancellation'
+                          : 'Cancellation Unavailable',
                   color: _W.red,
                   bg: _W.redLt,
                   borderColor: _W.red.withOpacity(0.18),
-                  onTap: () => _showActionInfo('Cancellation request'),
+                  onTap: _submittingCancellation
+                      ? () {}
+                      : _canRequestCancellation
+                          ? _openCancellationDialog
+                          : () => _showActionInfo('Cancellation is no longer available for this order'),
                 ),
               ],
             ),

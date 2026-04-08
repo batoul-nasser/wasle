@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'models/order_model.dart';
 import 'services/order_service.dart';
 import 'order_details_screen.dart';
+import 'notifications_screen.dart';
+import 'package:wasle/ui/auth/auth_controller.dart';
 
 class _W {
   _W._();
@@ -70,109 +72,131 @@ class DashboardScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ValueListenableBuilder<List<OrderModel>>(
-      valueListenable: orderService,
-      builder: (context, orders, _) {
-        final active = orders
-            .where((o) => o.status != 'delivered' && o.status != 'failed')
-            .length;
-        final delivered = orders.where((o) => o.status == 'delivered').length;
-        final failed = orders.where((o) => o.status == 'failed').length;
+    return FutureBuilder<Map<String, dynamic>?>(
+      future: authController.getMyProfile(),
+      builder: (context, profileSnap) {
+        final profile = profileSnap.data;
+        final merchantName =
+            profile?["full_name"]?.toString().trim().isNotEmpty == true
+                ? profile!["full_name"].toString().trim()
+                : "Merchant Account";
+        final merchantSubtitle =
+            authController.currentUser?.email?.trim().isNotEmpty == true
+                ? authController.currentUser!.email!.trim()
+                : "Merchant account overview";
 
-        double codTotal = 0;
-        int codCount = 0;
-        for (final o in orders) {
-          if (o.status != 'delivered' && o.codAmount > 0) {
-            codTotal += o.codAmount;
-            codCount++;
-          }
-        }
+        return ValueListenableBuilder<List<OrderModel>>(
+          valueListenable: orderService,
+          builder: (context, orders, _) {
+            const exceptionStatuses = {'failed', 'cancelled', 'returning', 'returned_to_store'};
+            final active = orders
+                .where((o) => o.status != 'delivered' && !exceptionStatuses.contains(o.status))
+                .length;
+            final delivered = orders.where((o) => o.status == 'delivered').length;
+            final failed = orders.where((o) => exceptionStatuses.contains(o.status)).length;
 
-        return Container(
-          color: _W.bg,
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(
-              14,
-              0,
-              14,
-              28 + MediaQuery.of(context).padding.bottom,
-            ),
-            children: [
-              const _TopNav(),
-              const SizedBox(height: 4),
-              _HeroBanner(total: orders.length, active: active),
-              const SizedBox(height: 14),
-              Row(
+            double codTotal = 0;
+            int codCount = 0;
+            for (final o in orders) {
+              if (o.status != 'delivered' && o.codAmount > 0) {
+                codTotal += o.codAmount;
+                codCount++;
+              }
+            }
+
+            return Container(
+              color: _W.bg,
+              child: ListView(
+                padding: EdgeInsets.fromLTRB(
+                  14,
+                  0,
+                  14,
+                  28 + MediaQuery.of(context).padding.bottom,
+                ),
                 children: [
-                  Expanded(
-                    child: _StatCard(
-                      icon: Icons.local_shipping_outlined,
-                      iconColor: _W.blue,
-                      iconBg: _W.blueLt,
-                      value: '$active',
-                      label: 'Active',
-                      sublabel: 'In transit',
-                      valueColor: _W.blue,
-                    ),
+                  const _TopNav(),
+                  const SizedBox(height: 4),
+                  _HeroBanner(
+                    total: orders.length,
+                    active: active,
+                    issues: failed,
+                    merchantName: merchantName,
+                    merchantSubtitle: merchantSubtitle,
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: _StatCard(
-                      icon: Icons.check_circle_outline,
-                      iconColor: _W.green,
-                      iconBg: _W.greenLt,
-                      value: '$delivered',
-                      label: 'Delivered',
-                      sublabel: 'Completed',
-                      valueColor: _W.green,
-                    ),
+                  const SizedBox(height: 14),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: _StatCard(
+                          icon: Icons.local_shipping_outlined,
+                          iconColor: _W.blue,
+                          iconBg: _W.blueLt,
+                          value: '$active',
+                          label: 'Active',
+                          sublabel: 'In transit',
+                          valueColor: _W.blue,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: _StatCard(
+                          icon: Icons.check_circle_outline,
+                          iconColor: _W.green,
+                          iconBg: _W.greenLt,
+                          value: '$delivered',
+                          label: 'Delivered',
+                          sublabel: 'Completed',
+                          valueColor: _W.green,
+                        ),
+                      ),
+                    ],
                   ),
+                  const SizedBox(height: 10),
+                  _WideStatCard(
+                    icon: Icons.error_outline,
+                    iconColor: _W.red,
+                    iconBg: _W.redLt,
+                    value: '$failed',
+                    label: 'Failed / Issues',
+                    sublabel: 'Needs your attention now',
+                    valueColor: _W.red,
+                  ),
+                  const SizedBox(height: 10),
+                  if (codTotal > 0) ...[
+                    _CodCard(amount: codTotal, orderCount: codCount),
+                    const SizedBox(height: 20),
+                  ] else
+                    const SizedBox(height: 10),
+                  const _SectionTitle(text: 'Quick Actions'),
+                  const SizedBox(height: 12),
+                  _ActionsGrid(
+                    onGoToCreate: onGoToCreate,
+                    onGoToOrders: onGoToOrders,
+                    onGoToExceptions: onGoToExceptions,
+                  ),
+                  const SizedBox(height: 20),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const _SectionTitle(text: 'Recent Orders'),
+                      GestureDetector(
+                        onTap: onGoToOrders,
+                        child: Text(
+                          'View all →',
+                          style: _t(13, FontWeight.w700, color: _W.blue),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  if (orders.isEmpty)
+                    _EmptyOrdersCard(onGoToCreate: onGoToCreate)
+                  else
+                    ...orders.take(3).map((o) => _OrderCard(order: o)),
                 ],
               ),
-              const SizedBox(height: 10),
-              _WideStatCard(
-                icon: Icons.error_outline,
-                iconColor: _W.red,
-                iconBg: _W.redLt,
-                value: '$failed',
-                label: 'Failed / Issues',
-                sublabel: 'Needs your attention now',
-                valueColor: _W.red,
-              ),
-              const SizedBox(height: 10),
-              if (codTotal > 0) ...[
-                _CodCard(amount: codTotal, orderCount: codCount),
-                const SizedBox(height: 20),
-              ] else
-                const SizedBox(height: 10),
-              const _SectionTitle(text: 'Quick Actions'),
-              const SizedBox(height: 12),
-              _ActionsGrid(
-                onGoToCreate: onGoToCreate,
-                onGoToOrders: onGoToOrders,
-                onGoToExceptions: onGoToExceptions,
-              ),
-              const SizedBox(height: 20),
-              Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const _SectionTitle(text: 'Recent Orders'),
-                  GestureDetector(
-                    onTap: onGoToOrders,
-                    child: Text(
-                      'View all →',
-                      style: _t(13, FontWeight.w700, color: _W.blue),
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              if (orders.isEmpty)
-                _EmptyOrdersCard(onGoToCreate: onGoToCreate)
-              else
-                ...orders.take(3).map((o) => _OrderCard(order: o)),
-            ],
-          ),
+            );
+          },
         );
       },
     );
@@ -231,9 +255,10 @@ class _TopNav extends StatelessWidget {
           _NavIconBtn(
             icon: Icons.notifications_outlined,
             hasDot: true,
-            onTap: () => _showInfo(
-              context,
-              'Notifications center is coming soon.',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const MerchantNotificationsScreen(),
+              ),
             ),
           ),
           const SizedBox(width: 8),
@@ -300,8 +325,17 @@ class _NavIconBtn extends StatelessWidget {
 class _HeroBanner extends StatelessWidget {
   final int total;
   final int active;
+  final int issues;
+  final String merchantName;
+  final String merchantSubtitle;
 
-  const _HeroBanner({required this.total, required this.active});
+  const _HeroBanner({
+    required this.total,
+    required this.active,
+    required this.issues,
+    required this.merchantName,
+    required this.merchantSubtitle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -361,8 +395,17 @@ class _HeroBanner extends StatelessWidget {
               ),
               const SizedBox(height: 3),
               Text(
-                'Demo Commerce · Beirut',
+                merchantName,
+                style: _t(16, FontWeight.w800, color: Colors.white),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                merchantSubtitle,
                 style: _t(13, FontWeight.w500, color: _W.white70),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
               const SizedBox(height: 14),
               Wrap(
@@ -376,6 +419,10 @@ class _HeroBanner extends StatelessWidget {
                   _HeroChip(
                     icon: Icons.local_shipping_outlined,
                     label: '$active active now',
+                  ),
+                  _HeroChip(
+                    icon: Icons.error_outline,
+                    label: '$issues issues',
                   ),
                 ],
               ),

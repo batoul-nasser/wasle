@@ -330,6 +330,37 @@ class AuthController {
     }
   }
 
+
+  Future<Map<String, dynamic>> loadMerchantSecuritySnapshot() async {
+    final uid = currentUser?.id;
+
+    try {
+      final profile = await getMyProfile();
+      final memberships = uid == null
+          ? const []
+          : await _client
+              .from('merchant_users')
+              .select('id, merchant_id')
+              .eq('profile_id', uid);
+
+      return {
+        'hasSession': currentSession != null,
+        'userId': uid,
+        'profileRole': profile?['role']?.toString(),
+        'profileStatus': profile?['status']?.toString(),
+        'merchantMembershipCount': (memberships as List).length,
+      };
+    } catch (_) {
+      return {
+        'hasSession': currentSession != null,
+        'userId': uid,
+        'profileRole': null,
+        'profileStatus': null,
+        'merchantMembershipCount': 0,
+      };
+    }
+  }
+
   Future<bool> isMerchant() => hasCompleteMerchantAccess();
 
   Future<bool> hasCompleteMerchantAccess() async {
