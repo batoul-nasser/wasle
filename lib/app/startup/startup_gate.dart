@@ -34,7 +34,7 @@ class _StartupGateState extends State<StartupGate> {
 
       if (!mounted) return;
 
-      Navigator.pushReplacementNamed(context, '/');
+      Navigator.pushReplacementNamed(context, '/welcome');
     }
   }
 

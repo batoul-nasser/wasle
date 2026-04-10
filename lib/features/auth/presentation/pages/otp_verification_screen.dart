@@ -13,6 +13,8 @@ class OtpVerificationScreen extends StatefulWidget {
   final String? companyName;
   final String? location;
 
+  final String? businessName;
+
   const OtpVerificationScreen({
     super.key,
     required this.email,
@@ -23,6 +25,7 @@ class OtpVerificationScreen extends StatefulWidget {
     this.city,
     this.companyName,
     this.location,
+    this.businessName,
   });
 
   @override
@@ -95,6 +98,37 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           Navigator.pushNamedAndRemoveUntil(
             context,
             '/company-dashboard',
+            (_) => false,
+          );
+          break;
+
+        case AuthFlowMode.customerSignup:
+          await _authService.createCustomerProfile(
+            userId: userId,
+            fullName: widget.fullName ?? '',
+            phone: widget.phone ?? '',
+          );
+
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/customer-dashboard',
+            (_) => false,
+          );
+          break;
+
+        case AuthFlowMode.merchantSignup:
+          await _authService.createMerchantProfile(
+            userId: userId,
+            fullName: widget.fullName ?? '',
+            phone: widget.phone ?? '',
+            businessName: widget.businessName ?? '',
+          );
+
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/merchant-dashboard',
             (_) => false,
           );
           break;
