@@ -2,9 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:wasle/features/auth/presentation/pages/company_sign_up_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/customer_sign_up_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/driver_sign_up_screen.dart';
-// Add these when you create them:
-/// import 'package:wasle/features/auth/presentation/pages/merchant_sign_up_screen.dart';
-/// import 'package:wasle/features/auth/presentation/pages/pickup_point_sign_up_screen.dart';
+import 'package:wasle/features/auth/presentation/pages/merchant_sign_up_screen.dart';
 
 class SignUpRoleScreen extends StatelessWidget {
   const SignUpRoleScreen({super.key});
@@ -58,24 +56,13 @@ class SignUpRoleScreen extends StatelessWidget {
               icon: Icons.person_outline,
               screen: const CustomerSignUpScreen(),
             ),
-
-            // Add these later when the screens exist:
-            /*
             const SizedBox(height: 16),
             _buildRoleButton(
               context: context,
               title: 'Merchant',
-              icon: Icons.store_outlined,
+              icon: Icons.storefront_outlined,
               screen: const MerchantSignUpScreen(),
             ),
-            const SizedBox(height: 16),
-            _buildRoleButton(
-              context: context,
-              title: 'Pickup Point',
-              icon: Icons.location_on_outlined,
-              screen: const PickupPointSignUpScreen(),
-            ),
-            */
           ],
         ),
       ),

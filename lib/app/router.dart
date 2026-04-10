@@ -8,6 +8,7 @@ import 'package:wasle/features/auth/presentation/pages/welcome_screen.dart';
 import 'package:wasle/features/company/presentation/pages/company_dashboard_screen.dart';
 import 'package:wasle/features/customer/presentation/pages/customer_dashboard_screen.dart';
 import 'package:wasle/features/driver/presentation/pages/driver_dashboard_screen.dart';
+import 'package:wasle/features/merchant/presentation/widgets/merchant_dashboard_shell.dart';
 
 class AppRouter {
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
@@ -41,6 +42,11 @@ class AppRouter {
       case '/customer-dashboard':
         return MaterialPageRoute(
           builder: (_) => const CustomerDashboardScreen(),
+        );
+
+      case '/merchant-dashboard':
+        return MaterialPageRoute(
+          builder: (_) => const MerchantDashboardShell(),
         );
 
       default:

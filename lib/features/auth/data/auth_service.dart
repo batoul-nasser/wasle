@@ -1,6 +1,12 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-enum AuthFlowMode { login, driverSignup, companySignup, customerSignup }
+enum AuthFlowMode {
+  login,
+  driverSignup,
+  companySignup,
+  customerSignup,
+  merchantSignup,
+}
 
 class AuthService {
   final SupabaseClient _client = Supabase.instance.client;
@@ -41,8 +47,6 @@ class AuthService {
 
   Future<Map<String, dynamic>?> getCurrentProfile() async {
     final user = _client.auth.currentUser;
-    print('AUTH: getCurrentProfile user = ${user?.id}');
-
     if (user == null) return null;
 
     final result = await _client
@@ -51,7 +55,6 @@ class AuthService {
         .eq('id', user.id)
         .maybeSingle();
 
-    print('AUTH: profile result = $result');
     return result;
   }
 
@@ -85,24 +88,29 @@ class AuthService {
     return result;
   }
 
+  Future<Map<String, dynamic>?> getMerchantByProfileId(String profileId) async {
+    final result = await _client
+        .from('merchant_users')
+        .select()
+        .eq('profile_id', profileId)
+        .maybeSingle();
+
+    return result;
+  }
+
   Future<String?> getCurrentRole() async {
     final profile = await getCurrentProfile();
     return profile?['role']?.toString();
   }
 
   Future<String> resolveInitialRoute() async {
-    print('AUTH: resolveInitialRoute started');
-
     final user = _client.auth.currentUser;
-    print('AUTH: currentUser = ${user?.id}');
 
     if (user == null) {
-      print('AUTH: no user, going to /welcome');
       return '/welcome';
     }
 
     final role = await getCurrentRole();
-    print('AUTH: role = $role');
 
     switch (role) {
       case 'driver':
@@ -111,6 +119,8 @@ class AuthService {
         return '/company-dashboard';
       case 'customer':
         return '/customer-dashboard';
+      case 'merchant':
+        return '/merchant-dashboard';
       default:
         return '/welcome';
     }
@@ -170,7 +180,27 @@ class AuthService {
       'id': userId,
       'full_name': fullName,
       'phone': phone,
-      'role': 'customer', // 👈 THIS IS THE IMPORTANT LINE
+      'role': 'customer',
+    });
+  }
+
+  Future<void> createMerchantProfile({
+    required String userId,
+    required String fullName,
+    required String phone,
+    required String businessName,
+  }) async {
+    await _client.from('profiles').upsert({
+      'id': userId,
+      'full_name': fullName,
+      'phone': phone,
+      'role': 'merchant',
+    });
+
+    await _client.from('merchant_users').upsert({
+      'id': userId,
+      'profile_id': userId,
+      'business_name': businessName,
     });
   }
 
@@ -206,6 +236,19 @@ class AuthService {
         .from('orders')
         .select()
         .inFilter('id', orderIds)
+        .order('created_at', ascending: false);
+
+    return List<Map<String, dynamic>>.from(orders);
+  }
+
+  Future<List<Map<String, dynamic>>> getMerchantOrders() async {
+    final user = _client.auth.currentUser;
+    if (user == null) return [];
+
+    final orders = await _client
+        .from('orders')
+        .select()
+        .eq('merchant_id', user.id)
         .order('created_at', ascending: false);
 
     return List<Map<String, dynamic>>.from(orders);
