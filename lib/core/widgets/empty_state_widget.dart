@@ -7,35 +7,45 @@ class EmptyStateWidget extends StatelessWidget {
   final IconData icon;
   final String title;
   final String message;
+  final Widget? action;
 
   const EmptyStateWidget({
     super.key,
     required this.icon,
     required this.title,
     required this.message,
+    this.action,
   });
 
   @override
   Widget build(BuildContext context) {
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(AppSpacing.xxl),
+        padding: const EdgeInsets.all(AppSpacing.xl),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            CircleAvatar(
-              radius: 34,
-              backgroundColor: AppColors.primaryLight,
+            Container(
+              width: 72,
+              height: 72,
+              decoration: BoxDecoration(
+                color: AppColors.primarySoft,
+                borderRadius: BorderRadius.circular(20),
+              ),
               child: Icon(icon, size: 34, color: AppColors.primary),
             ),
-            const SizedBox(height: AppSpacing.lg),
-            Text(title, style: AppTextStyles.heading3),
+            const SizedBox(height: AppSpacing.md),
+            Text(title, style: AppTextStyles.heading2, textAlign: TextAlign.center),
             const SizedBox(height: AppSpacing.xs),
             Text(
               message,
-              style: AppTextStyles.body,
+              style: AppTextStyles.bodyMuted,
               textAlign: TextAlign.center,
             ),
+            if (action != null) ...[
+              const SizedBox(height: AppSpacing.lg),
+              action!,
+            ],
           ],
         ),
       ),

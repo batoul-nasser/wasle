@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:wasle/core/ui/ui.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
 import 'package:wasle/features/auth/presentation/pages/otp_verification_screen.dart';
+import 'package:wasle/features/auth/presentation/utils/auth_error_mapper.dart';
 
 class MerchantSignUpScreen extends StatefulWidget {
   const MerchantSignUpScreen({super.key});
@@ -12,6 +13,7 @@ class MerchantSignUpScreen extends StatefulWidget {
 
 class _MerchantSignUpScreenState extends State<MerchantSignUpScreen> {
   final AuthService _authService = AuthService();
+  static final RegExp _emailRegex = RegExp(r'^[^@]+@[^@]+\.[^@]+');
 
   final TextEditingController fullNameController = TextEditingController();
   final TextEditingController businessNameController = TextEditingController();
@@ -32,6 +34,11 @@ class _MerchantSignUpScreenState extends State<MerchantSignUpScreen> {
         phone.isEmpty ||
         email.isEmpty) {
       setState(() => errorText = 'Please fill all fields');
+      return;
+    }
+
+    if (!_emailRegex.hasMatch(email)) {
+      setState(() => errorText = 'Please enter a valid email address.');
       return;
     }
 
@@ -58,8 +65,14 @@ class _MerchantSignUpScreenState extends State<MerchantSignUpScreen> {
           ),
         ),
       );
-    } catch (e) {
-      setState(() => errorText = 'Failed to send OTP: $e');
+    } catch (error, stackTrace) {
+      AuthErrorMapper.log('otp_request_merchant_signup', error, stackTrace);
+      setState(
+        () => errorText = AuthErrorMapper.map(
+          error,
+          context: AuthErrorContext.otpRequest,
+        ),
+      );
     } finally {
       if (mounted) {
         setState(() => isLoading = false);

@@ -8,6 +8,9 @@ import 'package:wasle/features/auth/presentation/pages/welcome_screen.dart';
 import 'package:wasle/features/company/presentation/pages/company_dashboard_screen.dart';
 import 'package:wasle/features/customer/presentation/pages/customer_dashboard_screen.dart';
 import 'package:wasle/features/driver/presentation/pages/driver_dashboard_screen.dart';
+import 'package:wasle/features/driver/presentation/pages/rejected_screen.dart';
+import 'package:wasle/features/driver/presentation/pages/select_company_screen.dart';
+import 'package:wasle/features/driver/presentation/pages/waiting_approval_screen.dart';
 import 'package:wasle/features/merchant/presentation/widgets/merchant_dashboard_shell.dart';
 
 class AppRouter {
@@ -35,24 +38,28 @@ class AppRouter {
         return MaterialPageRoute(builder: (_) => const DriverDashboardScreen());
 
       case '/company-dashboard':
-        return MaterialPageRoute(
-          builder: (_) => const CompanyDashboardScreen(),
-        );
+        return MaterialPageRoute(builder: (_) => const CompanyDashboardScreen());
 
       case '/customer-dashboard':
-        return MaterialPageRoute(
-          builder: (_) => const CustomerDashboardScreen(),
-        );
+        return MaterialPageRoute(builder: (_) => const CustomerDashboardScreen());
 
       case '/merchant-dashboard':
-        return MaterialPageRoute(
-          builder: (_) => const MerchantDashboardShell(),
-        );
+        return MaterialPageRoute(builder: (_) => const MerchantDashboardShell());
+
+      case '/waiting-approval':
+        return MaterialPageRoute(builder: (_) => const WaitingApprovalScreen());
+
+      case '/rejected':
+        return MaterialPageRoute(builder: (_) => const RejectedScreen());
+
+      case '/select-company':
+        return MaterialPageRoute(builder: (_) => const SelectCompanyScreen());
 
       default:
         return MaterialPageRoute(
-          builder: (_) =>
-              const Scaffold(body: Center(child: Text('Route not found'))),
+          builder: (_) => const Scaffold(
+            body: Center(child: Text('Route not found')),
+          ),
         );
     }
   }
