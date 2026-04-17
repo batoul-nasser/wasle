@@ -3,14 +3,14 @@ import 'package:flutter/material.dart';
 import 'package:wasle/core/ui/ui.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
 
-class DriverProfileScreen extends StatefulWidget {
-  const DriverProfileScreen({super.key});
+class CompanyProfileScreen extends StatefulWidget {
+  const CompanyProfileScreen({super.key});
 
   @override
-  State<DriverProfileScreen> createState() => _DriverProfileScreenState();
+  State<CompanyProfileScreen> createState() => _CompanyProfileScreenState();
 }
 
-class _DriverProfileScreenState extends State<DriverProfileScreen> {
+class _CompanyProfileScreenState extends State<CompanyProfileScreen> {
   final AuthService _authService = AuthService();
 
   bool isLoading = true;
@@ -18,16 +18,15 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
   String? errorText;
 
   Map<String, dynamic>? profileData;
-  Map<String, dynamic>? driverData;
   Map<String, dynamic>? companyData;
 
   @override
   void initState() {
     super.initState();
-    _loadDriverProfile();
+    _loadCompanyProfile();
   }
 
-  Future<void> _loadDriverProfile() async {
+  Future<void> _loadCompanyProfile() async {
     try {
       final user = _authService.currentUser;
 
@@ -40,20 +39,12 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
       }
 
       final profile = await _authService.getProfileById(user.id);
-      final driver = await _authService.getDriverByProfileId(user.id);
-
-      Map<String, dynamic>? company;
-      final companyId = driver?['company_id'];
-
-      if (companyId != null) {
-        company = await _authService.getCompanyById(companyId.toString());
-      }
+      final company = await _authService.getCompanyById(user.id);
 
       if (!mounted) return;
 
       setState(() {
         profileData = profile;
-        driverData = driver;
         companyData = company;
         isLoading = false;
         errorText = null;
@@ -61,8 +52,8 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() {
-        errorText = e.toString();
         isLoading = false;
+        errorText = e.toString();
       });
     }
   }
@@ -76,7 +67,6 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
       await _authService.signOut();
 
       if (!mounted) return;
-
       Navigator.pushNamedAndRemoveUntil(context, '/welcome', (route) => false);
     } catch (e) {
       if (!mounted) return;
@@ -96,10 +86,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
     required IconData icon,
     required String label,
     required dynamic value,
-    bool showAsStatus = false,
   }) {
-    final textValue = value?.toString() ?? '-';
-
     return InfoCard(
       leading: Container(
         width: 34,
@@ -111,35 +98,20 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
         child: Icon(icon, size: 18, color: AppColors.primary),
       ),
       title: label,
-      child: Row(
-        children: [
-          Expanded(
-            child: Text(
-              textValue,
-              style: AppTextStyles.title,
-            ),
-          ),
-          if (showAsStatus)
-            StatusChip(
-              label: textValue,
-              tone: StatusChip.fromStatus(textValue),
-            ),
-        ],
+      child: Text(
+        value?.toString() ?? '-',
+        style: AppTextStyles.title,
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    final fullName = profileData?['full_name']?.toString() ?? 'No Name';
-    final phone = profileData?['phone'];
-    final role = profileData?['role'];
-    final verification = driverData?['verification_status'];
-    final company = companyData?['name'];
+    final companyName = companyData?['name']?.toString() ?? 'No company name';
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Driver Profile'),
+        title: const Text('Company Profile'),
       ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
@@ -151,7 +123,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                   action: SecondaryButton(
                     label: 'Try Again',
                     isExpanded: false,
-                    onPressed: _loadDriverProfile,
+                    onPressed: _loadCompanyProfile,
                   ),
                 )
               : ListView(
@@ -173,7 +145,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                               borderRadius: BorderRadius.circular(16),
                             ),
                             child: const Icon(
-                              Icons.person_outline_rounded,
+                              Icons.business_outlined,
                               color: Colors.white,
                               size: 30,
                             ),
@@ -184,12 +156,12 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(
-                                  fullName,
+                                  companyName,
                                   style: AppTextStyles.heading2.copyWith(color: Colors.white),
                                 ),
                                 const SizedBox(height: AppSpacing.xxs),
                                 Text(
-                                  'Driver Account',
+                                  'Company Admin Profile',
                                   style: AppTextStyles.body.copyWith(
                                     color: Colors.white.withValues(alpha: 0.9),
                                   ),
@@ -202,34 +174,33 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                     ),
                     const SizedBox(height: AppSpacing.xl),
                     _infoTile(
-                      icon: Icons.badge_outlined,
-                      label: 'Full Name',
-                      value: fullName,
+                      icon: Icons.person_outline_rounded,
+                      label: 'Admin Name',
+                      value: profileData?['full_name'],
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     _infoTile(
-                      icon: Icons.phone_outlined,
-                      label: 'Phone',
-                      value: phone,
+                      icon: Icons.email_outlined,
+                      label: 'Email',
+                      value: profileData?['email'],
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     _infoTile(
                       icon: Icons.work_outline_rounded,
                       label: 'Role',
-                      value: role,
+                      value: profileData?['role'],
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     _infoTile(
-                      icon: Icons.verified_user_outlined,
-                      label: 'Verification Status',
-                      value: verification,
-                      showAsStatus: true,
+                      icon: Icons.business_center_outlined,
+                      label: 'Company Name',
+                      value: companyData?['name'],
                     ),
                     const SizedBox(height: AppSpacing.sm),
                     _infoTile(
-                      icon: Icons.apartment_rounded,
-                      label: 'Company',
-                      value: company,
+                      icon: Icons.location_on_outlined,
+                      label: 'Location',
+                      value: companyData?['location'],
                     ),
                     const SizedBox(height: AppSpacing.xl),
                     PrimaryButton(
@@ -239,7 +210,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                       isLoading: isSigningOut,
                       onPressed: _signOut,
                     ),
-                    const SizedBox(height: AppSpacing.lg),
+                    const SizedBox(height: AppSpacing.xl),
                   ],
                 ),
     );

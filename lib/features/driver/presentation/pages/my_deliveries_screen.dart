@@ -1,5 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:wasle/features/auth/data/auth_service.dart';
+
+import 'package:wasle/core/ui/ui.dart';
+import '../../data/driver_deliveries_repository.dart';
+import '../../data/models/driver_delivery.dart';
+import '../widgets/delivery_order_card.dart';
+import 'order_details_screen.dart';
 
 class MyDeliveriesScreen extends StatefulWidget {
   const MyDeliveriesScreen({super.key});
@@ -9,12 +14,14 @@ class MyDeliveriesScreen extends StatefulWidget {
 }
 
 class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
-  final AuthService _authService = AuthService();
+  final DriverDeliveriesRepository _repository = DriverDeliveriesRepository();
+
+  DeliveryBucket _bucket = DeliveryBucket.active;
+  String _selectedStatus = 'all';
 
   bool isLoading = true;
   String? errorText;
-  List<Map<String, dynamic>> deliveries = [];
-  String selectedFilter = 'all';
+  List<DriverDelivery> deliveries = [];
 
   @override
   void initState() {
@@ -24,7 +31,10 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
 
   Future<void> _loadDeliveries() async {
     try {
-      final data = await _authService.getDriverDeliveries();
+      final data = await _repository.getDriverDeliveries(
+        bucket: _bucket,
+        status: _selectedStatus,
+      );
 
       if (!mounted) return;
       setState(() {
@@ -41,233 +51,132 @@ class _MyDeliveriesScreenState extends State<MyDeliveriesScreen> {
     }
   }
 
-  List<Map<String, dynamic>> get filteredDeliveries {
-    if (selectedFilter == 'all') return deliveries;
-    return deliveries.where((d) {
-      final status = d['status']?.toString().toLowerCase() ?? '';
-      return status == selectedFilter;
-    }).toList();
-  }
-
-  Color _statusColor(String status) {
-    final s = status.toLowerCase();
-    if (s == 'delivered' || s == 'completed') return Colors.green;
-    if (s == 'pending') return Colors.orange;
-    if (s == 'cancelled' || s == 'failed') return Colors.red;
-    return Colors.blue;
-  }
-
-  Widget _buildDeliveryCard(Map<String, dynamic> delivery) {
-    final orderId = delivery['id']?.toString() ?? '-';
-    final status = delivery['status']?.toString() ?? 'unknown';
-    final pickup =
-        delivery['pickup_address']?.toString() ?? 'No pickup address';
-    final dropoff =
-        delivery['dropoff_address']?.toString() ?? 'No dropoff address';
-    final createdAt = delivery['created_at']?.toString() ?? '';
-
-    return Card(
-      margin: const EdgeInsets.only(bottom: 14),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Order #$orderId',
-                    style: const TextStyle(
-                      fontSize: 17,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _statusColor(status).withOpacity(0.12),
-                    borderRadius: BorderRadius.circular(999),
-                  ),
-                  child: Text(
-                    status,
-                    style: TextStyle(
-                      color: _statusColor(status),
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(
-                  Icons.store_mall_directory_outlined,
-                  color: Colors.blue,
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(pickup, style: const TextStyle(fontSize: 14)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Icon(Icons.location_on_outlined, color: Colors.red),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(dropoff, style: const TextStyle(fontSize: 14)),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'Created at: $createdAt',
-              style: const TextStyle(color: Colors.black54, fontSize: 12),
-            ),
-          ],
-        ),
+  void _openOrderDetails(DriverDelivery delivery) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => OrderDetailsScreen(orderId: delivery.orderId),
       ),
-    );
+    ).then((_) => _loadDeliveries());
   }
 
   @override
   Widget build(BuildContext context) {
-    final visibleDeliveries = filteredDeliveries;
+    final bucketStatuses = _bucket == DeliveryBucket.active
+        ? DriverDeliveriesRepository.activeStatuses
+        : DriverDeliveriesRepository.completedStatuses;
+    final statusOptions = <String>['all', ...bucketStatuses];
+
+    if (!statusOptions.contains(_selectedStatus)) {
+      _selectedStatus = 'all';
+    }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FB),
-      appBar: AppBar(title: const Text('My Deliveries'), centerTitle: true),
+      appBar: AppBar(
+        title: const Text('My Deliveries'),
+      ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorText != null
-          ? Center(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.error_outline,
-                      size: 48,
-                      color: Colors.red,
-                    ),
-                    const SizedBox(height: 12),
-                    const Text(
-                      'Unable to load deliveries',
-                      style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      errorText!,
-                      textAlign: TextAlign.center,
-                      style: const TextStyle(color: Colors.black54),
-                    ),
-                    const SizedBox(height: 16),
-                    ElevatedButton(
-                      onPressed: _loadDeliveries,
-                      child: const Text('Try Again'),
-                    ),
-                  ],
-                ),
-              ),
-            )
-          : RefreshIndicator(
-              onRefresh: _loadDeliveries,
-              child: ListView(
-                padding: const EdgeInsets.all(20),
-                children: [
-                  const Text(
-                    'Assigned Orders',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              ? EmptyStateWidget(
+                  icon: Icons.error_outline_rounded,
+                  title: 'Unable to load deliveries',
+                  message: errorText!,
+                  action: SecondaryButton(
+                    label: 'Try Again',
+                    isExpanded: false,
+                    onPressed: _loadDeliveries,
                   ),
-                  const SizedBox(height: 6),
-                  const Text(
-                    'View all deliveries assigned to your account.',
-                    style: TextStyle(color: Colors.black54),
-                  ),
-                  const SizedBox(height: 16),
-                  DropdownButtonFormField<String>(
-                    value: selectedFilter,
-                    decoration: const InputDecoration(
-                      labelText: 'Filter by status',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const [
-                      DropdownMenuItem(value: 'all', child: Text('All')),
-                      DropdownMenuItem(
-                        value: 'pending',
-                        child: Text('Pending'),
+                )
+              : RefreshIndicator(
+                  onRefresh: _loadDeliveries,
+                  child: ListView(
+                    padding: const EdgeInsets.all(AppSpacing.xl),
+                    children: [
+                      const SectionHeader(
+                        title: 'Assigned Orders',
+                        subtitle: 'Only orders assigned to your driver account',
                       ),
-                      DropdownMenuItem(
-                        value: 'in_progress',
-                        child: Text('In Progress'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'delivered',
-                        child: Text('Delivered'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'cancelled',
-                        child: Text('Cancelled'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() {
-                        selectedFilter = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 20),
-                  if (visibleDeliveries.isEmpty)
-                    Container(
-                      padding: const EdgeInsets.all(24),
-                      decoration: BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.circular(18),
-                      ),
-                      child: const Column(
+                      const SizedBox(height: AppSpacing.md),
+                      Wrap(
+                        spacing: AppSpacing.xs,
+                        runSpacing: AppSpacing.xs,
                         children: [
-                          Icon(
-                            Icons.local_shipping_outlined,
-                            size: 48,
-                            color: Colors.grey,
+                          ChoiceChip(
+                            label: const Text('Active'),
+                            selected: _bucket == DeliveryBucket.active,
+                            onSelected: (_) {
+                              setState(() {
+                                _bucket = DeliveryBucket.active;
+                                _selectedStatus = 'all';
+                              });
+                              _loadDeliveries();
+                            },
                           ),
-                          SizedBox(height: 12),
-                          Text(
-                            'No deliveries found',
-                            style: TextStyle(
-                              fontSize: 17,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          SizedBox(height: 6),
-                          Text(
-                            'There are no deliveries matching the selected filter.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.black54),
+                          ChoiceChip(
+                            label: const Text('Completed'),
+                            selected: _bucket == DeliveryBucket.completed,
+                            onSelected: (_) {
+                              setState(() {
+                                _bucket = DeliveryBucket.completed;
+                                _selectedStatus = 'all';
+                              });
+                              _loadDeliveries();
+                            },
                           ),
                         ],
                       ),
-                    )
-                  else
-                    ...visibleDeliveries.map(_buildDeliveryCard),
-                ],
-              ),
-            ),
+                      const SizedBox(height: AppSpacing.sm),
+                      DropdownButtonFormField<String>(
+                        key: ValueKey('$_bucket-$_selectedStatus'),
+                        initialValue: _selectedStatus,
+                        decoration: const InputDecoration(
+                          labelText: 'Filter by status',
+                          prefixIcon: Icon(Icons.filter_alt_outlined),
+                        ),
+                        items: statusOptions.map((status) {
+                          return DropdownMenuItem<String>(
+                            value: status,
+                            child: Text(_label(status)),
+                          );
+                        }).toList(),
+                        onChanged: (value) {
+                          if (value == null) return;
+                          setState(() {
+                            _selectedStatus = value;
+                          });
+                          _loadDeliveries();
+                        },
+                      ),
+                      const SizedBox(height: AppSpacing.lg),
+                      if (deliveries.isEmpty)
+                        const EmptyStateWidget(
+                          icon: Icons.local_shipping_outlined,
+                          title: 'No deliveries found',
+                          message: 'No orders match the selected filters.',
+                        )
+                      else
+                        ...deliveries.map((delivery) {
+                          return Padding(
+                            padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                            child: DeliveryOrderCard(
+                              delivery: delivery,
+                              onTap: () => _openOrderDetails(delivery),
+                            ),
+                          );
+                        }),
+                    ],
+                  ),
+                ),
     );
+  }
+
+  String _label(String value) {
+    if (value == 'all') return 'All statuses';
+    return value
+        .replaceAll('_', ' ')
+        .split(' ')
+        .map((part) => part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+        .join(' ');
   }
 }

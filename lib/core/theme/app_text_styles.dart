@@ -2,11 +2,19 @@ import 'package:flutter/material.dart';
 import 'package:wasle/core/theme/app_colors.dart';
 
 class AppTextStyles {
+  static const TextStyle display = TextStyle(
+    fontSize: 30,
+    fontWeight: FontWeight.w700,
+    color: AppColors.textPrimary,
+    letterSpacing: -0.2,
+  );
+
   static const TextStyle heading1 = TextStyle(
     fontSize: 28,
     fontWeight: FontWeight.w700,
     color: AppColors.textPrimary,
     height: 1.2,
+    letterSpacing: -0.2,
   );
 
   static const TextStyle heading2 = TextStyle(
@@ -32,9 +40,16 @@ class AppTextStyles {
 
   static const TextStyle body = TextStyle(
     fontSize: 14,
-    fontWeight: FontWeight.w400,
+    fontWeight: FontWeight.w500,
+    color: AppColors.textPrimary,
+    height: 1.4,
+  );
+
+  static const TextStyle bodyMuted = TextStyle(
+    fontSize: 14,
+    fontWeight: FontWeight.w500,
     color: AppColors.textSecondary,
-    height: 1.5,
+    height: 1.4,
   );
 
   static const TextStyle bodyMedium = TextStyle(
@@ -42,6 +57,12 @@ class AppTextStyles {
     fontWeight: FontWeight.w500,
     color: AppColors.textPrimary,
     height: 1.4,
+  );
+
+  static const TextStyle label = TextStyle(
+    fontSize: 12,
+    fontWeight: FontWeight.w600,
+    color: AppColors.textSecondary,
   );
 
   static const TextStyle caption = TextStyle(
@@ -53,7 +74,7 @@ class AppTextStyles {
 
   static const TextStyle button = TextStyle(
     fontSize: 15,
-    fontWeight: FontWeight.w600,
+    fontWeight: FontWeight.w700,
     color: AppColors.white,
     height: 1.2,
   );
