@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -86,7 +84,8 @@ class AuthErrorMapper {
   }
 
   static bool _isNetworkError(Object error, String message) {
-    return error is SocketException ||
+    final runtimeType = error.runtimeType.toString();
+    return runtimeType == 'SocketException' ||
         message.contains('socketexception') ||
         message.contains('failed host lookup') ||
         message.contains('connection reset') ||

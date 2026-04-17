@@ -36,7 +36,7 @@ class OtpVerificationScreen extends StatefulWidget {
 }
 
 class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
-  static const int _otpLength = 8;
+  static const int _otpLength = 6;
 
   final AuthService _authService = AuthService();
   final TextEditingController _otpController = TextEditingController();
@@ -92,7 +92,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     }
 
     if (otp.length != _otpLength) {
-      return 'Please enter the full 8-digit verification code.';
+      return 'Please enter the full 6-digit verification code.';
     }
 
     return null;
