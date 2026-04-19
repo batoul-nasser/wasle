@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:wasle/features/auth/presentation/pages/company_sign_up_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/customer_sign_up_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/driver_sign_up_screen.dart';
+import 'package:wasle/features/auth/presentation/pages/login_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/merchant_sign_up_screen.dart';
 
 class SignUpRoleScreen extends StatelessWidget {
@@ -22,6 +23,29 @@ class SignUpRoleScreen extends StatelessWidget {
         icon: Icon(icon),
         label: Text(title),
         style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(vertical: 16),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildLoginOnlyButton({
+    required BuildContext context,
+    required String title,
+    required IconData icon,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: OutlinedButton.icon(
+        onPressed: () {
+          Navigator.push(
+            context,
+            MaterialPageRoute(builder: (_) => const LoginScreen()),
+          );
+        },
+        icon: Icon(icon),
+        label: Text(title),
+        style: OutlinedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 16),
         ),
       ),
@@ -62,6 +86,12 @@ class SignUpRoleScreen extends StatelessWidget {
               title: 'Merchant',
               icon: Icons.storefront_outlined,
               screen: const MerchantSignUpScreen(),
+            ),
+            const SizedBox(height: 16),
+            _buildLoginOnlyButton(
+              context: context,
+              title: 'Pickup Point',
+              icon: Icons.inventory_2_outlined,
             ),
           ],
         ),

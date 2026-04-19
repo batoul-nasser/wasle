@@ -1,20 +1,21 @@
 // lib/core/services/payment_service.dart
-//
-// RULE: Flutter NEVER writes payment status directly.
-//       All state changes go through Edge Functions.
- 
+
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/services/supabase_service.dart';
 import 'package:wasle/features/payment/data/payment_model.dart';
- 
+
 class PaymentService {
   SupabaseClient get _db => SupabaseService.client;
- 
+
+  // ✅ Helper: always get the current JWT token to pass to Edge Functions
+  Map<String, String> get _authHeaders {
+    final token = _db.auth.currentSession?.accessToken ?? '';
+    return {'Authorization': 'Bearer $token'};
+  }
+
   // ─── READ ────────────────────────────────────────────────────────────────
- 
-  /// Fetch the payment record for a given order.
-  /// Returns null if none exists yet.
+
   Future<PaymentModel?> getPaymentByOrderId(String orderId) async {
     try {
       final row = await _db
@@ -22,7 +23,7 @@ class PaymentService {
           .select()
           .eq('order_id', orderId)
           .maybeSingle();
- 
+
       if (row == null) return null;
       return PaymentModel.fromMap(row);
     } catch (e) {
@@ -30,9 +31,7 @@ class PaymentService {
       return null;
     }
   }
- 
-  /// Real-time stream: emits the payment row every time it changes.
-  /// Use in customer dashboard to watch for Whish webhook confirmation.
+
   Stream<PaymentModel?> watchPayment(String orderId) {
     return _db
         .from('payments')
@@ -43,13 +42,9 @@ class PaymentService {
           return PaymentModel.fromMap(rows.first);
         });
   }
- 
-  // ─── EDGE FUNCTION CALLS ─────────────────────────────────────────────────
-  // All payment state mutations go through Edge Functions, never direct DB writes.
- 
-  /// Called when a merchant creates an order with a payment method chosen.
-  /// Edge Function creates the order row AND the payment row atomically.
-  /// Returns: { order_id, payment_id, tracking_code }
+
+  // ─── CREATE ORDER + PAYMENT ──────────────────────────────────────────────
+
   Future<Map<String, dynamic>> createOrderWithPayment({
     required String merchantId,
     required String? branchId,
@@ -66,6 +61,8 @@ class PaymentService {
     try {
       final response = await _db.functions.invoke(
         'create_order',
+        // ✅ FIX: pass JWT token so Edge Function knows who is calling
+        headers: _authHeaders,
         body: {
           'merchant_id': merchantId,
           if (branchId != null) 'branch_id': branchId,
@@ -83,45 +80,49 @@ class PaymentService {
           if (notes != null && notes.isNotEmpty) 'notes': notes,
         },
       );
- 
+
+      // 🔥 IMPORTANT DEBUG (DO NOT REMOVE)
+      debugPrint('STATUS: ${response.status}');
+      debugPrint('DATA: ${response.data}');
+
       if (response.status != 200) {
-        throw Exception('create_order failed: ${response.data}');
+        throw Exception('Backend error: ${response.data}');
       }
- 
+
       return Map<String, dynamic>.from(response.data as Map);
-    } on FunctionException catch (e) {
-      throw Exception('Order creation failed: ${e.reasonPhrase}');
+    } catch (e, st) {
+      debugPrint('CREATE ORDER ERROR: $e');
+      debugPrint('$st');
+      rethrow;
     }
   }
- 
-  /// Mark a cash order as paid at pickup point.
-  /// Called by a field agent or pickup-point operator, NOT the customer.
-  /// Returns: { success: true }
+
+  // ─── CASH PAYMENT ────────────────────────────────────────────────────────
+
   Future<void> markCashPaid({
     required String orderId,
-    required String collectedBy, // agent profile_id
+    required String collectedBy,
   }) async {
     try {
       final response = await _db.functions.invoke(
         'mark_cash_paid',
+        headers: _authHeaders,
         body: {
           'order_id': orderId,
           'collected_by': collectedBy,
         },
       );
- 
+
       if (response.status != 200) {
         throw Exception('mark_cash_paid failed: ${response.data}');
       }
-    } on FunctionException catch (e) {
-      throw Exception('Cash payment confirmation failed: ${e.reasonPhrase}');
+    } catch (e) {
+      throw Exception('Cash payment confirmation failed: $e');
     }
   }
- 
-  /// Initiate a Whish online payment.
-  /// Edge Function calls Whish API and returns a redirect URL.
-  /// Flutter opens this URL in a WebView or browser.
-  /// Returns: { payment_url, payment_ref }
+
+  // ─── WHISH PAYMENT ───────────────────────────────────────────────────────
+
   Future<Map<String, dynamic>> initWhishPayment({
     required String orderId,
     required double amount,
@@ -130,26 +131,26 @@ class PaymentService {
     try {
       final response = await _db.functions.invoke(
         'init_whish_payment',
+        headers: _authHeaders,
         body: {
           'order_id': orderId,
           'amount': amount,
           'customer_phone': customerPhone,
         },
       );
- 
+
       if (response.status != 200) {
         throw Exception('init_whish_payment failed: ${response.data}');
       }
- 
+
       return Map<String, dynamic>.from(response.data as Map);
-    } on FunctionException catch (e) {
-      throw Exception('Whish payment init failed: ${e.reasonPhrase}');
+    } catch (e) {
+      throw Exception('Whish payment init failed: $e');
     }
   }
- 
-  /// Request a refund for an order.
-  /// Only callable with appropriate role (company_admin or platform_admin).
-  /// Returns: { success: true, refund_id }
+
+  // ─── REFUND ──────────────────────────────────────────────────────────────
+
   Future<Map<String, dynamic>> requestRefund({
     required String orderId,
     required String reason,
@@ -157,23 +158,25 @@ class PaymentService {
     try {
       final response = await _db.functions.invoke(
         'process_refund',
+        headers: _authHeaders,
         body: {
           'order_id': orderId,
           'reason': reason,
         },
       );
- 
+
       if (response.status != 200) {
         throw Exception('process_refund failed: ${response.data}');
       }
- 
+
       return Map<String, dynamic>.from(response.data as Map);
-    } on FunctionException catch (e) {
-      throw Exception('Refund request failed: ${e.reasonPhrase}');
+    } catch (e) {
+      throw Exception('Refund request failed: $e');
     }
   }
- 
-  /// Confirm an agent collection (field agent collected cash from pickup point).
+
+  // ─── AGENT COLLECTION ────────────────────────────────────────────────────
+
   Future<void> confirmAgentCollection({
     required String collectionId,
     required String agentId,
@@ -181,17 +184,18 @@ class PaymentService {
     try {
       final response = await _db.functions.invoke(
         'confirm_agent_collection',
+        headers: _authHeaders,
         body: {
           'collection_id': collectionId,
           'agent_id': agentId,
         },
       );
- 
+
       if (response.status != 200) {
         throw Exception('confirm_agent_collection failed: ${response.data}');
       }
-    } on FunctionException catch (e) {
-      throw Exception('Agent collection confirmation failed: ${e.reasonPhrase}');
+    } catch (e) {
+      throw Exception('Agent collection confirmation failed: $e');
     }
   }
 }

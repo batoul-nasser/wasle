@@ -14,11 +14,11 @@ class MerchantDashboardShell extends StatefulWidget {
 class _MerchantDashboardShellState extends State<MerchantDashboardShell> {
   int currentIndex = 0;
 
-  final List<Widget> pages = const [
-    MerchantDashboardScreen(),
-    MerchantCreateOrderScreen(),
+  final List<Widget> pages = [
+    const MerchantDashboardScreen(),
+    const MerchantCreateOrderScreen(),
     MerchantOrdersScreen(),
-    MerchantProfileScreen(),
+    const MerchantProfileScreen(),
   ];
 
   @override

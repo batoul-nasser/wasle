@@ -12,6 +12,8 @@ import 'package:wasle/features/driver/presentation/pages/rejected_screen.dart';
 import 'package:wasle/features/driver/presentation/pages/select_company_screen.dart';
 import 'package:wasle/features/driver/presentation/pages/waiting_approval_screen.dart';
 import 'package:wasle/features/merchant/presentation/widgets/merchant_dashboard_shell.dart';
+import 'package:wasle/features/pickup_point/presentation/pages/pickup_point_dashboard_screen.dart';
+import 'package:wasle/features/payment/presentation/pages/whish_webview_screen.dart';
 
 class AppRouter {
   static Route<dynamic> onGenerateRoute(RouteSettings settings) {
@@ -54,6 +56,20 @@ class AppRouter {
 
       case '/select-company':
         return MaterialPageRoute(builder: (_) => const SelectCompanyScreen());
+
+      case '/pickup-point-dashboard':
+        return MaterialPageRoute(
+          builder: (_) => const PickupPointDashboardScreen(),
+        );
+
+      case '/payment/whish-webview':
+        final args = settings.arguments as Map<String, dynamic>;
+        return MaterialPageRoute(
+          builder: (_) => WhishWebViewScreen(
+            url: args['url'] as String,
+            orderId: args['orderId'] as String,
+          ),
+        );
 
       default:
         return MaterialPageRoute(
