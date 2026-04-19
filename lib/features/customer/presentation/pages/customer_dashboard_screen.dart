@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'track_my_order_page.dart';
 import 'payment_method_page.dart';
 import 'pickup_point_page.dart';
 import 'package:wasle/features/payment/presentation/widgets/payment_status_card.dart';
 import 'package:wasle/core/services/payment_service.dart';
-
 
 class CustomerDashboardScreen extends StatelessWidget {
   const CustomerDashboardScreen({super.key});
@@ -153,6 +153,12 @@ class CustomerDashboardScreen extends StatelessWidget {
     }
   }
 
+  Future<void> _logout(BuildContext context) async {
+    await Supabase.instance.client.auth.signOut();
+
+    Navigator.of(context).pushNamedAndRemoveUntil('/login', (route) => false);
+  }
+
   @override
   Widget build(BuildContext context) {
     const orderId = 'ORD-1024';
@@ -169,6 +175,13 @@ class CustomerDashboardScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('Customer Dashboard'),
         centerTitle: true,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: 'Log out',
+            onPressed: () => _logout(context),
+          ),
+        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(20),
