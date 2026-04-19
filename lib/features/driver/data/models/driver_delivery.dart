@@ -20,6 +20,7 @@ class DriverDelivery {
 
   final String customerName;
   final String customerPhone;
+  final String? customerEmail;
 
   final String? branchName;
   final String? branchAddress;
@@ -44,6 +45,7 @@ class DriverDelivery {
     required this.dropoffAddress,
     required this.customerName,
     required this.customerPhone,
+    required this.customerEmail,
     required this.branchName,
     required this.branchAddress,
     required this.branchLat,

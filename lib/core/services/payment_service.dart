@@ -65,7 +65,7 @@ class PaymentService {
         headers: _authHeaders,
         body: {
           'merchant_id': merchantId,
-          if (branchId != null) 'branch_id': branchId,
+          if (branchId != null && branchId.isNotEmpty) 'branch_id': branchId,
           'customer_name': customerName,
           'customer_phone': customerPhone,
           if (customerEmail != null && customerEmail.isNotEmpty)
@@ -107,10 +107,7 @@ class PaymentService {
       final response = await _db.functions.invoke(
         'mark_cash_paid',
         headers: _authHeaders,
-        body: {
-          'order_id': orderId,
-          'collected_by': collectedBy,
-        },
+        body: {'order_id': orderId, 'collected_by': collectedBy},
       );
 
       if (response.status != 200) {
@@ -159,10 +156,7 @@ class PaymentService {
       final response = await _db.functions.invoke(
         'process_refund',
         headers: _authHeaders,
-        body: {
-          'order_id': orderId,
-          'reason': reason,
-        },
+        body: {'order_id': orderId, 'reason': reason},
       );
 
       if (response.status != 200) {
@@ -185,10 +179,7 @@ class PaymentService {
       final response = await _db.functions.invoke(
         'confirm_agent_collection',
         headers: _authHeaders,
-        body: {
-          'collection_id': collectionId,
-          'agent_id': agentId,
-        },
+        body: {'collection_id': collectionId, 'agent_id': agentId},
       );
 
       if (response.status != 200) {

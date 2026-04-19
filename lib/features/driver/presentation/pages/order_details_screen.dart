@@ -9,10 +9,7 @@ import '../../data/models/driver_order_details.dart';
 class OrderDetailsScreen extends StatefulWidget {
   final String orderId;
 
-  const OrderDetailsScreen({
-    super.key,
-    required this.orderId,
-  });
+  const OrderDetailsScreen({super.key, required this.orderId});
 
   @override
   State<OrderDetailsScreen> createState() => _OrderDetailsScreenState();
@@ -28,7 +25,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   String? errorText;
   DriverOrderDetails? details;
 
-  bool get _isBusy => isUpdating || isConfirmingPickup || isConfirmingDropoffAtPickup;
+  bool get _isBusy =>
+      isUpdating || isConfirmingPickup || isConfirmingDropoffAtPickup;
 
   @override
   void initState() {
@@ -72,16 +70,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
       final normalized = _repository.workflowStatusFromOrderStatus(newStatus);
       final label = successLabel ?? _statusLabel(normalized);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Status updated to $label')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Status updated to $label')));
 
       await _loadDetails();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update status: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to update status: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -111,9 +109,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Location Link'),
-        content: Text(
-          '$label map link copied to clipboard:\n$mapsUrl',
-        ),
+        content: Text('$label map link copied to clipboard:\n$mapsUrl'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -156,9 +152,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final mappedStatus = _repository.mapWorkflowActionToOrderStatus(action);
     if (mappedStatus == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid workflow action.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Invalid workflow action.')));
       return;
     }
 
@@ -175,7 +171,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         context: context,
         builder: (_) => AlertDialog(
           title: Text('Confirm ${_statusLabel(action)}'),
-          content: const Text('This action moves the order forward and cannot be undone.'),
+          content: const Text(
+            'This action moves the order forward and cannot be undone.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -219,11 +217,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     String primaryAction = allowedActions.first;
 
     // In transit prioritizes successful completion.
-    if (workflowStatus == 'in_transit' && allowedActions.contains('delivered')) {
+    if (workflowStatus == 'in_transit' &&
+        allowedActions.contains('delivered')) {
       primaryAction = 'delivered';
     }
 
-    final secondary = allowedActions.where((action) => action != primaryAction).toList();
+    final secondary = allowedActions
+        .where((action) => action != primaryAction)
+        .toList();
     return _WorkflowActionLayout(
       primaryAction: primaryAction,
       secondaryActions: secondary,
@@ -261,7 +262,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 left: AppSpacing.xl,
                 right: AppSpacing.xl,
                 top: AppSpacing.xl,
-                bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.xl,
+                bottom:
+                    MediaQuery.of(context).viewInsets.bottom + AppSpacing.xl,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -269,10 +271,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 children: [
                   Text(title, style: AppTextStyles.heading2),
                   const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    subtitle,
-                    style: AppTextStyles.bodyMuted,
-                  ),
+                  Text(subtitle, style: AppTextStyles.bodyMuted),
                   const SizedBox(height: AppSpacing.md),
                   DropdownButtonFormField<String>(
                     initialValue: selectedId,
@@ -322,7 +321,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   Future<void> _confirmPickupFlow() async {
-    if (details == null || isConfirmingPickup || isUpdating || isConfirmingDropoffAtPickup) return;
+    if (details == null ||
+        isConfirmingPickup ||
+        isUpdating ||
+        isConfirmingDropoffAtPickup) {
+      return;
+    }
 
     try {
       setState(() => isConfirmingPickup = true);
@@ -372,9 +376,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       await _loadDetails();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to confirm pickup: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to confirm pickup: $e')));
     } finally {
       if (mounted) {
         setState(() => isConfirmingPickup = false);
@@ -383,7 +387,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   Future<void> _confirmDropoffAtPickupPointFlow() async {
-    if (details == null || isConfirmingDropoffAtPickup || isUpdating || isConfirmingPickup) return;
+    if (details == null ||
+        isConfirmingDropoffAtPickup ||
+        isUpdating ||
+        isConfirmingPickup) {
+      return;
+    }
 
     try {
       setState(() => isConfirmingDropoffAtPickup = true);
@@ -396,7 +405,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
       if (selectedPoint == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pickup point is required for this action.')),
+          const SnackBar(
+            content: Text('Pickup point is required for this action.'),
+          ),
         );
         return;
       }
@@ -427,9 +438,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     if (errorText != null || details == null) {
@@ -449,17 +458,19 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
 
     final delivery = details!.delivery;
-    final workflowStatus = _repository.workflowStatusFromOrderStatus(delivery.status);
-    final allowedWorkflowActions = _repository.getAllowedWorkflowActions(delivery.status);
+    final workflowStatus = _repository.workflowStatusFromOrderStatus(
+      delivery.status,
+    );
+    final allowedWorkflowActions = _repository.getAllowedWorkflowActions(
+      delivery.status,
+    );
     final actionLayout = _resolveActionLayout(
       workflowStatus: workflowStatus,
       allowedActions: allowedWorkflowActions,
     );
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Order Details'),
-      ),
+      appBar: AppBar(title: const Text('Order Details')),
       body: RefreshIndicator(
         onRefresh: _loadDetails,
         child: ListView(
@@ -522,6 +533,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     'Phone: ${delivery.customerPhone}',
                     style: AppTextStyles.body,
                   ),
+                  if ((delivery.customerEmail ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      'Email: ${delivery.customerEmail ?? ''}',
+                      style: AppTextStyles.body,
+                    ),
+                  ],
                   if (details!.dropoffAddress != null) ...[
                     const SizedBox(height: AppSpacing.xs),
                     Text(
@@ -542,7 +560,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 ],
               ),
             ),
-            if (details!.orderNotes != null && details!.orderNotes!.isNotEmpty) ...[
+            if (details!.orderNotes != null &&
+                details!.orderNotes!.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
               InfoCard(
                 title: 'Order Notes',
@@ -556,10 +575,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               subtitle: 'Events from order_events',
               leading: _iconBox(Icons.timeline_outlined),
               child: details!.events.isEmpty
-                  ? Text(
-                      'No events found',
-                      style: AppTextStyles.bodyMuted,
-                    )
+                  ? Text('No events found', style: AppTextStyles.bodyMuted)
                   : Column(
                       children: details!.events.map((event) {
                         return Padding(
@@ -591,7 +607,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       isLoading: _isBusy,
                       onPressed: _isBusy
                           ? null
-                          : () => _onTapWorkflowAction(actionLayout.primaryAction!),
+                          : () => _onTapWorkflowAction(
+                              actionLayout.primaryAction!,
+                            ),
                     ),
                   if (actionLayout.secondaryActions.isNotEmpty) ...[
                     const SizedBox(height: AppSpacing.sm),
@@ -613,7 +631,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     Text(
                       'This order is already in a terminal state.',
                       style: AppTextStyles.bodyMuted,
-                    )
+                    ),
                   ],
                 ],
               ),
@@ -665,7 +683,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     return status
         .replaceAll('_', ' ')
         .split(' ')
-        .map((part) => part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+        .map(
+          (part) => part.isEmpty
+              ? part
+              : '${part[0].toUpperCase()}${part.substring(1)}',
+        )
         .join(' ');
   }
 
@@ -716,7 +738,11 @@ class _EventRow extends StatelessWidget {
     final eventLabel = event.eventType
         .replaceAll('_', ' ')
         .split(' ')
-        .map((part) => part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+        .map(
+          (part) => part.isEmpty
+              ? part
+              : '${part[0].toUpperCase()}${part.substring(1)}',
+        )
         .join(' ');
 
     final dateText = event.createdAt.toLocal().toString();
@@ -787,7 +813,9 @@ class _StatusActionButton extends StatelessWidget {
             backgroundColor: AppColors.surface,
             foregroundColor: palette.foreground,
             disabledForegroundColor: AppColors.textSecondary,
-            side: BorderSide(color: enabled ? palette.border : AppColors.border),
+            side: BorderSide(
+              color: enabled ? palette.border : AppColors.border,
+            ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
@@ -795,10 +823,7 @@ class _StatusActionButton extends StatelessWidget {
             textStyle: AppTextStyles.button.copyWith(fontSize: 13),
           ),
           onPressed: enabled ? onPressed : null,
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-          ),
+          child: Text(label, textAlign: TextAlign.center),
         ),
       ),
     );

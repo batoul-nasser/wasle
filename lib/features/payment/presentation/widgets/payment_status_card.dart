@@ -2,23 +2,22 @@
 //
 // Shows live payment status in the customer dashboard.
 // Uses watchPayment() stream so it auto-updates when Whish webhook fires.
- 
+
 import 'package:flutter/material.dart';
 import 'package:wasle/core/services/payment_service.dart';
 import 'package:wasle/features/payment/data/payment_model.dart';
 import 'package:wasle/core/services/supabase_service.dart';
 
 class PaymentStatusCard extends StatelessWidget {
-
   final String orderId;
   final PaymentService paymentService;
- 
+
   const PaymentStatusCard({
     super.key,
     required this.orderId,
     required this.paymentService,
   });
- 
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<PaymentModel?>(
@@ -35,9 +34,9 @@ class PaymentStatusCard extends StatelessWidget {
             ),
           );
         }
- 
+
         final payment = snapshot.data;
- 
+
         if (payment == null) {
           return _PaymentCardShell(
             child: _InfoRow(
@@ -48,7 +47,7 @@ class PaymentStatusCard extends StatelessWidget {
             ),
           );
         }
- 
+
         return _PaymentCardShell(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -80,13 +79,16 @@ class PaymentStatusCard extends StatelessWidget {
                   value: payment.transactionRef!,
                 ),
               ],
- 
+
               // Whish: show pay button if still pending
               if (payment.isWhish && payment.isPending) ...[
                 const SizedBox(height: 16),
-                _WhishPayButton(orderId: orderId, paymentService: paymentService),
+                _WhishPayButton(
+                  orderId: orderId,
+                  paymentService: paymentService,
+                ),
               ],
- 
+
               // Cash: show instructions if pending
               if (payment.isCash && payment.isPending) ...[
                 const SizedBox(height: 12),
@@ -96,12 +98,16 @@ class PaymentStatusCard extends StatelessWidget {
                     color: const Color(0xFFFFF8E6),
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: const Color(0xFFD4800A).withOpacity(0.25),
+                      color: const Color(0xFFD4800A).withValues(alpha: 0.25),
                     ),
                   ),
                   child: Row(
                     children: const [
-                      Icon(Icons.store_outlined, color: Color(0xFFD4800A), size: 18),
+                      Icon(
+                        Icons.store_outlined,
+                        color: Color(0xFFD4800A),
+                        size: 18,
+                      ),
                       SizedBox(width: 10),
                       Expanded(
                         child: Text(
@@ -124,13 +130,13 @@ class PaymentStatusCard extends StatelessWidget {
       },
     );
   }
- 
+
   IconData _methodIcon(PaymentMethod method) {
     return method == PaymentMethod.cashAtPickup
         ? Icons.store_outlined
         : Icons.phone_iphone_outlined;
   }
- 
+
   IconData _statusIcon(PaymentStatus status) {
     switch (status) {
       case PaymentStatus.paid:
@@ -143,7 +149,7 @@ class PaymentStatusCard extends StatelessWidget {
         return Icons.hourglass_empty;
     }
   }
- 
+
   Color _statusColor(PaymentStatus status) {
     switch (status) {
       case PaymentStatus.paid:
@@ -157,13 +163,13 @@ class PaymentStatusCard extends StatelessWidget {
     }
   }
 }
- 
+
 // ─── Sub-widgets ─────────────────────────────────────────────────────────────
- 
+
 class _PaymentCardShell extends StatelessWidget {
   final Widget child;
   const _PaymentCardShell({required this.child});
- 
+
   @override
   Widget build(BuildContext context) {
     return Container(
@@ -193,14 +199,14 @@ class _PaymentCardShell extends StatelessWidget {
     );
   }
 }
- 
+
 class _InfoRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
   final Color? valueColor;
   final Widget? trailing;
- 
+
   const _InfoRow({
     required this.icon,
     required this.label,
@@ -208,7 +214,7 @@ class _InfoRow extends StatelessWidget {
     this.valueColor,
     this.trailing,
   });
- 
+
   @override
   Widget build(BuildContext context) {
     return Row(
@@ -237,7 +243,7 @@ class _InfoRow extends StatelessWidget {
                       ),
                     ),
                   ),
-                  if (trailing != null) trailing!,
+                  ?trailing,
                 ],
               ),
             ],
@@ -247,16 +253,16 @@ class _InfoRow extends StatelessWidget {
     );
   }
 }
- 
+
 class _StatusChip extends StatelessWidget {
   final PaymentStatus status;
   const _StatusChip({required this.status});
- 
+
   @override
   Widget build(BuildContext context) {
     Color bg;
     Color fg;
- 
+
     switch (status) {
       case PaymentStatus.paid:
         bg = const Color(0xFFE6F7EF);
@@ -274,7 +280,7 @@ class _StatusChip extends StatelessWidget {
         bg = const Color(0xFFFEF4E2);
         fg = const Color(0xFFD4800A);
     }
- 
+
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
       decoration: BoxDecoration(
@@ -283,61 +289,53 @@ class _StatusChip extends StatelessWidget {
       ),
       child: Text(
         status.displayName,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w700,
-          color: fg,
-        ),
+        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: fg),
       ),
     );
   }
 }
- 
+
 class _WhishPayButton extends StatefulWidget {
   final String orderId;
   final PaymentService paymentService;
- 
-  const _WhishPayButton({
-    required this.orderId,
-    required this.paymentService,
-  });
- 
+
+  const _WhishPayButton({required this.orderId, required this.paymentService});
+
   @override
   State<_WhishPayButton> createState() => _WhishPayButtonState();
 }
- 
+
 class _WhishPayButtonState extends State<_WhishPayButton> {
   bool _loading = false;
- 
+
   Future<void> _openWhishPayment() async {
     setState(() => _loading = true);
     try {
       // Fetch current user phone for Whish
       final user = await _getCurrentUserPhone();
- 
+
       // Fetch payment amount
-      final payment = await widget.paymentService.getPaymentByOrderId(widget.orderId);
+      final payment = await widget.paymentService.getPaymentByOrderId(
+        widget.orderId,
+      );
       if (payment == null) throw Exception('Payment not found');
- 
+
       final result = await widget.paymentService.initWhishPayment(
         orderId: widget.orderId,
         amount: payment.amount,
         customerPhone: user,
       );
- 
+
       final paymentUrl = result['payment_url']?.toString();
       if (paymentUrl == null) throw Exception('No payment URL returned');
- 
+
       if (!mounted) return;
- 
+
       // Navigate to WebView screen with the Whish URL
       Navigator.pushNamed(
         context,
         '/payment/whish-webview',
-        arguments: {
-          'url': paymentUrl,
-          'orderId': widget.orderId,
-        },
+        arguments: {'url': paymentUrl, 'orderId': widget.orderId},
       );
     } catch (e) {
       if (!mounted) return;
@@ -352,20 +350,20 @@ class _WhishPayButtonState extends State<_WhishPayButton> {
       if (mounted) setState(() => _loading = false);
     }
   }
- 
+
   Future<String> _getCurrentUserPhone() async {
-  final uid = SupabaseService.client.auth.currentUser?.id;
-  if (uid == null) return '';
+    final uid = SupabaseService.client.auth.currentUser?.id;
+    if (uid == null) return '';
 
-  final row = await SupabaseService.client
-      .from('profiles')
-      .select('phone')
-      .eq('id', uid)
-      .maybeSingle();
+    final row = await SupabaseService.client
+        .from('profiles')
+        .select('phone')
+        .eq('id', uid)
+        .maybeSingle();
 
-  return row?['phone']?.toString() ?? '';
-}
- 
+    return row?['phone']?.toString() ?? '';
+  }
+
   @override
   Widget build(BuildContext context) {
     return SizedBox(

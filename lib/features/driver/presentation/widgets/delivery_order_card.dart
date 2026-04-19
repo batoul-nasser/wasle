@@ -7,11 +7,7 @@ class DeliveryOrderCard extends StatelessWidget {
   final DriverDelivery delivery;
   final VoidCallback? onTap;
 
-  const DeliveryOrderCard({
-    super.key,
-    required this.delivery,
-    this.onTap,
-  });
+  const DeliveryOrderCard({super.key, required this.delivery, this.onTap});
 
   @override
   Widget build(BuildContext context) {
@@ -52,6 +48,13 @@ class DeliveryOrderCard extends StatelessWidget {
             icon: Icons.person_outline_rounded,
             text: '${delivery.customerName} - ${delivery.customerPhone}',
           ),
+          if ((delivery.customerEmail ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: AppSpacing.xs),
+            _InfoLine(
+              icon: Icons.mail_outline_rounded,
+              text: delivery.customerEmail ?? '',
+            ),
+          ],
           if (onTap != null) ...[
             const SizedBox(height: AppSpacing.md),
             SecondaryButton(
@@ -105,10 +108,7 @@ class _InfoLine extends StatelessWidget {
   final IconData icon;
   final String text;
 
-  const _InfoLine({
-    required this.icon,
-    required this.text,
-  });
+  const _InfoLine({required this.icon, required this.text});
 
   @override
   Widget build(BuildContext context) {
@@ -120,12 +120,7 @@ class _InfoLine extends StatelessWidget {
           child: Icon(icon, size: 16, color: AppColors.textSecondary),
         ),
         const SizedBox(width: AppSpacing.xs),
-        Expanded(
-          child: Text(
-            text,
-            style: AppTextStyles.body,
-          ),
-        ),
+        Expanded(child: Text(text, style: AppTextStyles.body)),
       ],
     );
   }

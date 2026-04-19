@@ -2,16 +2,16 @@
 //
 // Drop-in widget for the CreateOrderScreen payment section.
 // Replace the plain COD amount field with this.
- 
+
 import 'package:flutter/material.dart';
 import 'package:wasle/features/payment/data/payment_model.dart';
- 
+
 class PaymentMethodSelector extends StatelessWidget {
   final PaymentMethod selected;
   final double amount;
   final ValueChanged<PaymentMethod> onMethodChanged;
   final ValueChanged<double> onAmountChanged;
- 
+
   const PaymentMethodSelector({
     super.key,
     required this.selected,
@@ -19,7 +19,7 @@ class PaymentMethodSelector extends StatelessWidget {
     required this.onMethodChanged,
     required this.onAmountChanged,
   });
- 
+
   @override
   Widget build(BuildContext context) {
     return Column(
@@ -35,30 +35,44 @@ class PaymentMethodSelector extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 10),
-        Row(
-          children: [
-            Expanded(
-              child: _MethodCard(
-                method: PaymentMethod.cashAtPickup,
-                selected: selected == PaymentMethod.cashAtPickup,
-                onTap: () => onMethodChanged(PaymentMethod.cashAtPickup),
-                icon: Icons.store_outlined,
-                label: 'Cash at Pickup',
-                sublabel: 'Pay when collected',
-              ),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: _MethodCard(
-                method: PaymentMethod.whishOnline,
-                selected: selected == PaymentMethod.whishOnline,
-                onTap: () => onMethodChanged(PaymentMethod.whishOnline),
-                icon: Icons.phone_iphone_outlined,
-                label: 'Whish Online',
-                sublabel: 'Pay via Whish app',
-              ),
-            ),
-          ],
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final useStackedCards =
+                constraints.maxWidth.isFinite && constraints.maxWidth < 340;
+            final cardWidth = constraints.maxWidth.isFinite
+                ? (constraints.maxWidth - 10) / 2
+                : 160.0;
+            final cashCard = _MethodCard(
+              method: PaymentMethod.cashAtPickup,
+              selected: selected == PaymentMethod.cashAtPickup,
+              onTap: () => onMethodChanged(PaymentMethod.cashAtPickup),
+              icon: Icons.store_outlined,
+              label: 'Cash at Pickup',
+              sublabel: 'Pay when collected',
+            );
+            final whishCard = _MethodCard(
+              method: PaymentMethod.whishOnline,
+              selected: selected == PaymentMethod.whishOnline,
+              onTap: () => onMethodChanged(PaymentMethod.whishOnline),
+              icon: Icons.phone_iphone_outlined,
+              label: 'Whish Online',
+              sublabel: 'Pay via Whish app',
+            );
+
+            if (useStackedCards) {
+              return Column(
+                children: [cashCard, const SizedBox(height: 10), whishCard],
+              );
+            }
+
+            return Row(
+              children: [
+                SizedBox(width: cardWidth, child: cashCard),
+                const SizedBox(width: 10),
+                SizedBox(width: cardWidth, child: whishCard),
+              ],
+            );
+          },
         ),
         const SizedBox(height: 14),
         _AmountField(
@@ -76,26 +90,40 @@ class PaymentMethodSelector extends StatelessWidget {
               color: const Color(0xFFF0F7FF),
               borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: const Color(0xFF1A56DB).withOpacity(0.15),
+                color: const Color(0xFF1A56DB).withValues(alpha: 0.15),
                 width: 1.4,
               ),
             ),
-            child: Row(
-              children: const [
-                Icon(Icons.info_outline, color: Color(0xFF1A56DB), size: 17),
-                SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    'Customer will receive a Whish payment link after order is created.',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w500,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                final textWidth = constraints.maxWidth.isFinite
+                    ? (constraints.maxWidth > 27
+                          ? constraints.maxWidth - 27
+                          : 0.0)
+                    : 220.0;
+                return Row(
+                  children: [
+                    const Icon(
+                      Icons.info_outline,
                       color: Color(0xFF1A56DB),
-                      height: 1.4,
+                      size: 17,
                     ),
-                  ),
-                ),
-              ],
+                    const SizedBox(width: 10),
+                    SizedBox(
+                      width: textWidth,
+                      child: const Text(
+                        'Customer will receive a Whish payment link after order is created.',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w500,
+                          color: Color(0xFF1A56DB),
+                          height: 1.4,
+                        ),
+                      ),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
         ],
@@ -103,7 +131,7 @@ class PaymentMethodSelector extends StatelessWidget {
     );
   }
 }
- 
+
 class _MethodCard extends StatelessWidget {
   final PaymentMethod method;
   final bool selected;
@@ -111,7 +139,7 @@ class _MethodCard extends StatelessWidget {
   final IconData icon;
   final String label;
   final String sublabel;
- 
+
   const _MethodCard({
     required this.method,
     required this.selected,
@@ -120,7 +148,7 @@ class _MethodCard extends StatelessWidget {
     required this.label,
     required this.sublabel,
   });
- 
+
   @override
   Widget build(BuildContext context) {
     const blue = Color(0xFF1A56DB);
@@ -128,7 +156,7 @@ class _MethodCard extends StatelessWidget {
     const border = Color(0xFFDDE5F7);
     const gray = Color(0xFF6B7A99);
     const navy = Color(0xFF0B1D3F);
- 
+
     return GestureDetector(
       onTap: onTap,
       child: AnimatedContainer(
@@ -146,9 +174,9 @@ class _MethodCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Icon(icon, size: 18, color: selected ? blue : gray),
-                const Spacer(),
                 AnimatedContainer(
                   duration: const Duration(milliseconds: 150),
                   width: 18,
@@ -191,18 +219,18 @@ class _MethodCard extends StatelessWidget {
     );
   }
 }
- 
+
 class _AmountField extends StatelessWidget {
   final double amount;
   final ValueChanged<double> onChanged;
   final String label;
- 
+
   const _AmountField({
     required this.amount,
     required this.onChanged,
     required this.label,
   });
- 
+
   @override
   Widget build(BuildContext context) {
     return TextFormField(
@@ -230,7 +258,10 @@ class _AmountField extends StatelessWidget {
         ),
         filled: true,
         fillColor: const Color(0xFFF4F7FF),
-        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 14,
+          vertical: 13,
+        ),
         border: OutlineInputBorder(
           borderRadius: BorderRadius.circular(12),
           borderSide: const BorderSide(color: Color(0xFFDDE5F7), width: 1.5),

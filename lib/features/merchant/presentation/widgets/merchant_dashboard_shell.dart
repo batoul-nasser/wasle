@@ -14,12 +14,20 @@ class MerchantDashboardShell extends StatefulWidget {
 class _MerchantDashboardShellState extends State<MerchantDashboardShell> {
   int currentIndex = 0;
 
-  final List<Widget> pages = [
-    const MerchantDashboardScreen(),
+  late final List<Widget> pages = [
+    MerchantDashboardScreen(
+      onOpenCreate: () => _goToTab(1),
+      onOpenOrders: () => _goToTab(2),
+    ),
     const MerchantCreateOrderScreen(),
-    MerchantOrdersScreen(),
+    const MerchantOrdersScreen(),
     const MerchantProfileScreen(),
   ];
+
+  void _goToTab(int index) {
+    if (!mounted) return;
+    setState(() => currentIndex = index);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,9 +35,7 @@ class _MerchantDashboardShellState extends State<MerchantDashboardShell> {
       body: pages[currentIndex],
       bottomNavigationBar: NavigationBar(
         selectedIndex: currentIndex,
-        onDestinationSelected: (index) {
-          setState(() => currentIndex = index);
-        },
+        onDestinationSelected: _goToTab,
         destinations: const [
           NavigationDestination(
             icon: Icon(Icons.dashboard_outlined),
