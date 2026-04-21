@@ -141,7 +141,7 @@ class AuthService {
         .from('merchant_users')
         .select()
         .eq('profile_id', profileId)
-        .maybeSingle();y
+        .maybeSingle();
 
     return result;
   }
