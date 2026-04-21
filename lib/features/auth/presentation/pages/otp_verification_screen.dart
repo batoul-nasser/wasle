@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -17,6 +18,32 @@ class OtpVerificationScreen extends StatefulWidget {
   final String? companyName;
   final String? location;
   final String? businessName;
+  final String? pickupPointName;
+  final String? addressText;
+  final String? confirmAddressText;
+  final String? area;
+  final int? maxOrdersPerDay;
+  final List<String>? workingDays;
+  final String? opensAt;
+  final String? closesAt;
+  final double? commissionPercentage;
+  final String? preferredPaymentMethod;
+  final String? paymentHandlingMethod;
+  final String? commissionType;
+  final double? commissionValue;
+  final String? commissionPlan;
+  final String? storageTier;
+  final double? estimatedStorageSqm;
+  final bool? hasShelves;
+  final int? estimatedCapacityUnits;
+  final Uint8List? shopImageBytes;
+  final Uint8List? idImageBytes;
+  final Uint8List? storageAreaImageBytes;
+  final Uint8List? shelvesImageBytes;
+  final String? shopImageFileName;
+  final String? idImageFileName;
+  final String? storageAreaImageFileName;
+  final String? shelvesImageFileName;
 
   const OtpVerificationScreen({
     super.key,
@@ -29,6 +56,32 @@ class OtpVerificationScreen extends StatefulWidget {
     this.companyName,
     this.location,
     this.businessName,
+    this.pickupPointName,
+    this.addressText,
+    this.confirmAddressText,
+    this.area,
+    this.maxOrdersPerDay,
+    this.workingDays,
+    this.opensAt,
+    this.closesAt,
+    this.commissionPercentage,
+    this.preferredPaymentMethod,
+    this.paymentHandlingMethod,
+    this.commissionType,
+    this.commissionValue,
+    this.commissionPlan,
+    this.storageTier,
+    this.estimatedStorageSqm,
+    this.hasShelves,
+    this.estimatedCapacityUnits,
+    this.shopImageBytes,
+    this.idImageBytes,
+    this.storageAreaImageBytes,
+    this.shelvesImageBytes,
+    this.shopImageFileName,
+    this.idImageFileName,
+    this.storageAreaImageFileName,
+    this.shelvesImageFileName,
   });
 
   @override
@@ -82,6 +135,26 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     return text;
   }
 
+  Uint8List _requiredBytes(Uint8List? value, String fieldName) {
+    if (value == null || value.isEmpty) {
+      throw Exception('$fieldName is required');
+    }
+    return value;
+  }
+
+  String _fileExtension(String? fileName) {
+    if (fileName == null || !fileName.contains('.')) {
+      return 'jpg';
+    }
+    final ext = fileName.split('.').last.trim().toLowerCase();
+    if (ext.isEmpty) return 'jpg';
+    return ext;
+  }
+
+  String _safeEmail() {
+    return widget.email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+  }
+
   String? _validateOtpInput(String otp) {
     if (otp.isEmpty) {
       return 'Please enter the verification code.';
@@ -91,8 +164,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       return 'OTP code must contain numbers only.';
     }
 
-    if (otp.length != _otpLength) {
-      return 'Please enter the full 8-digit verification code.';
+    if (otp.length < _otpLength) {
+      return 'Please enter the full verification code.';
     }
 
     return null;
@@ -120,6 +193,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       final response = await _authService.verifyOtp(
         email: widget.email,
         token: otp,
+        mode: widget.mode,
       );
 
       final userId = response.user?.id ?? _authService.currentUser?.id;
@@ -167,6 +241,86 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           _goTo('/merchant-dashboard');
           return;
 
+        case AuthFlowMode.pickupPointSignup:
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final safeEmail = _safeEmail();
+
+          final shopFileName =
+              '${safeEmail}_shop_$timestamp.${_fileExtension(widget.shopImageFileName)}';
+          final idFileName =
+              '${safeEmail}_id_$timestamp.${_fileExtension(widget.idImageFileName)}';
+          final storageAreaFileName =
+              '${safeEmail}_storage_$timestamp.${_fileExtension(widget.storageAreaImageFileName)}';
+          final shelvesFileName =
+              '${safeEmail}_shelves_$timestamp.${_fileExtension(widget.shelvesImageFileName)}';
+
+          final shopUrl = await _authService.uploadPickupPointShopImage(
+            fileName: shopFileName,
+            bytes: _requiredBytes(widget.shopImageBytes, 'Shop image'),
+          );
+
+          final idUrl = await _authService.uploadPickupPointIdImage(
+            fileName: idFileName,
+            bytes: _requiredBytes(widget.idImageBytes, 'ID image'),
+          );
+
+          final storageAreaUrl =
+              await _authService.uploadPickupPointStorageAreaImage(
+            fileName: storageAreaFileName,
+            bytes: _requiredBytes(
+              widget.storageAreaImageBytes,
+              'Storage area image',
+            ),
+          );
+
+          final shelvesUrl = await _authService.uploadPickupPointShelvesImage(
+            fileName: shelvesFileName,
+            bytes: _requiredBytes(widget.shelvesImageBytes, 'Shelves image'),
+          );
+
+          if (shopUrl == null ||
+              idUrl == null ||
+              storageAreaUrl == null ||
+              shelvesUrl == null) {
+            throw Exception('Failed to upload pickup point images');
+          }
+
+          await _authService.createPickupPointApplication(
+            userId: userId,
+            ownerName: _required(widget.fullName, 'Owner name'),
+            phone: _required(widget.phone, 'Phone'),
+            email: widget.email,
+            pickupPointName:
+                _required(widget.pickupPointName, 'Pickup point name'),
+            addressText: _required(widget.addressText, 'Address'),
+            confirmAddressText:
+                _required(widget.confirmAddressText, 'Confirm address'),
+            city: _required(widget.city, 'City'),
+            area: _required(widget.area, 'Area'),
+            maxOrdersPerDay: widget.maxOrdersPerDay,
+            workingDays: widget.workingDays,
+            opensAt: _required(widget.opensAt, 'Opening time'),
+            closesAt: _required(widget.closesAt, 'Closing time'),
+            commissionType: widget.commissionType ?? 'custom',
+            commissionValue: widget.commissionValue,
+            commissionPlan: widget.commissionPlan,
+            preferredPaymentMethod: _required(
+              widget.preferredPaymentMethod,
+              'Preferred payment method',
+            ),
+            paymentHandlingMethod: widget.paymentHandlingMethod,
+            storageTier: widget.storageTier,
+            estimatedStorageSqm: widget.estimatedStorageSqm,
+            hasShelves: widget.hasShelves ?? false,
+            estimatedCapacityUnits: widget.estimatedCapacityUnits,
+            shopImageUrl: shopUrl,
+            idImageUrl: idUrl,
+            storageAreaImageUrl: storageAreaUrl,
+            shelvesImageUrl: shelvesUrl,
+          );
+          _goTo('/pickup-application-pending');
+          return;
+
         case AuthFlowMode.login:
           final route = await _authService.resolveInitialRoute();
           _goTo(route);
@@ -193,10 +347,11 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     try {
       setState(() => _errorText = null);
 
-      await _authService.sendOtp(
-        email: widget.email,
-        shouldCreateUser: widget.mode != AuthFlowMode.login,
-      );
+      if (widget.mode == AuthFlowMode.login) {
+        await _authService.resendLoginOtp(email: widget.email);
+      } else {
+        await _authService.resendSignupOtp(email: widget.email);
+      }
 
       _startTimer();
 
@@ -294,7 +449,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                       ),
                       Text(
                         timeText,
-                        style: AppTextStyles.title.copyWith(color: AppColors.primary),
+                        style: AppTextStyles.title.copyWith(
+                          color: AppColors.primary,
+                        ),
                       ),
                     ],
                   ),

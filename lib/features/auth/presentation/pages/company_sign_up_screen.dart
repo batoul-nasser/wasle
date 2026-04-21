@@ -19,6 +19,8 @@ class _CompanySignUpScreenState extends State<CompanySignUpScreen> {
   final TextEditingController adminNameController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
   final TextEditingController locationController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  final TextEditingController confirmPasswordController = TextEditingController();
 
   String? errorText;
   bool isLoading = false;
@@ -28,11 +30,15 @@ class _CompanySignUpScreenState extends State<CompanySignUpScreen> {
     final adminName = adminNameController.text.trim();
     final email = emailController.text.trim();
     final location = locationController.text.trim();
+    final password = passwordController.text;
+    final confirmPassword = confirmPasswordController.text;
 
     if (companyName.isEmpty ||
         adminName.isEmpty ||
         email.isEmpty ||
-        location.isEmpty) {
+        location.isEmpty ||
+        password.isEmpty ||
+        confirmPassword.isEmpty) {
       setState(() {
         errorText = 'Please fill all fields';
       });
@@ -43,6 +49,20 @@ class _CompanySignUpScreenState extends State<CompanySignUpScreen> {
     if (!emailValid) {
       setState(() {
         errorText = 'Please enter a valid email address.';
+      });
+      return;
+    }
+
+    if (password.length < 6) {
+      setState(() {
+        errorText = 'Password must be at least 6 characters.';
+      });
+      return;
+    }
+
+    if (password != confirmPassword) {
+      setState(() {
+        errorText = 'Password and confirm password do not match.';
       });
       return;
     }
@@ -96,6 +116,8 @@ class _CompanySignUpScreenState extends State<CompanySignUpScreen> {
     adminNameController.dispose();
     emailController.dispose();
     locationController.dispose();
+    passwordController.dispose();
+    confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -135,6 +157,22 @@ class _CompanySignUpScreenState extends State<CompanySignUpScreen> {
               controller: locationController,
               decoration: const InputDecoration(
                 labelText: 'Company Location',
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Password',
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: confirmPasswordController,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: 'Confirm Password',
               ),
             ),
             if (errorText != null) ...[

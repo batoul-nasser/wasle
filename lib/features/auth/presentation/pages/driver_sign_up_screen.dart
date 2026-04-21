@@ -19,6 +19,8 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController cityController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  final TextEditingController confirmPasswordController = TextEditingController();
 
   String? errorText;
   bool isLoading = false;
@@ -36,8 +38,15 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
     final email = emailController.text.trim();
     final phone = phoneController.text.trim();
     final city = cityController.text.trim();
+    final password = passwordController.text;
+    final confirmPassword = confirmPasswordController.text;
 
-    if (fullName.isEmpty || email.isEmpty || phone.isEmpty || city.isEmpty) {
+    if (fullName.isEmpty ||
+        email.isEmpty ||
+        phone.isEmpty ||
+        city.isEmpty ||
+        password.isEmpty ||
+        confirmPassword.isEmpty) {
       setState(() => errorText = 'Please fill all fields');
       return;
     }
@@ -55,6 +64,16 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
 
     if (!_isValidPhoneLength(phone)) {
       setState(() => errorText = 'Phone number must be between 7 and 15 digits');
+      return;
+    }
+
+    if (password.length < 6) {
+      setState(() => errorText = 'Password must be at least 6 characters.');
+      return;
+    }
+
+    if (password != confirmPassword) {
+      setState(() => errorText = 'Password and confirm password do not match.');
       return;
     }
 
@@ -105,6 +124,8 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
     emailController.dispose();
     phoneController.dispose();
     cityController.dispose();
+    passwordController.dispose();
+    confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -138,6 +159,18 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
             TextField(
               controller: cityController,
               decoration: const InputDecoration(labelText: 'City / Location'),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password'),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: confirmPasswordController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Confirm Password'),
             ),
             if (errorText != null) ...[
               const SizedBox(height: 12),
