@@ -24,6 +24,11 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   final _timeWindowCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
 
+  final _parcelDescriptionCtrl = TextEditingController();
+  final _itemCountCtrl = TextEditingController(text: '1');
+  final _estimatedWeightCtrl = TextEditingController();
+  final _estimatedVolumeCtrl = TextEditingController();
+
   String? _merchantId;
   String? _loadError;
   bool _loadingFormData = false;
@@ -52,6 +57,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       _addressCtrl,
       _timeWindowCtrl,
       _notesCtrl,
+      _parcelDescriptionCtrl,
+      _itemCountCtrl,
+      _estimatedWeightCtrl,
+      _estimatedVolumeCtrl,
     ]) {
       controller.addListener(_refresh);
     }
@@ -202,6 +211,18 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     return RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(email);
   }
 
+  int? _parseItemCount() {
+    final raw = _itemCountCtrl.text.trim();
+    if (raw.isEmpty) return null;
+    return int.tryParse(raw);
+  }
+
+  double? _parsePositiveDouble(String raw) {
+    final value = raw.trim();
+    if (value.isEmpty) return null;
+    return double.tryParse(value);
+  }
+
   bool get _canSubmit {
     final hasCustomer = _customerNameCtrl.text.trim().isNotEmpty;
     final hasPhone = _phoneCtrl.text.trim().isNotEmpty;
@@ -211,6 +232,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         _pickupMethod != _pickupPoint || _selectedPickupPointId != null;
     final companyOk =
         _deliveryCompanies.isEmpty || _selectedDeliveryCompanyId != null;
+    final itemCount = _parseItemCount();
+    final itemCountOk = itemCount == null || itemCount > 0;
 
     return !_loadingFormData &&
         !_submitting &&
@@ -220,7 +243,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         hasAddress &&
         hasPaymentAmount &&
         pickupOk &&
-        companyOk;
+        companyOk &&
+        itemCountOk;
   }
 
   Future<void> _submitOrder() async {
@@ -252,6 +276,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       return;
     }
 
+    final itemCount = _parseItemCount();
+    if (itemCount != null && itemCount <= 0) {
+      _showSnackBar('Item count must be greater than zero.', isError: true);
+      return;
+    }
+
     setState(() => _submitting = true);
 
     try {
@@ -273,10 +303,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         notes: _mergedNotes(),
       );
 
+      final orderId = _resultValue(result, ['id', 'orderId', 'order_id']);
+      await _saveOrderExtras(orderId);
+
       if (!mounted) return;
       setState(() => _submitting = false);
 
-      final orderId = _resultValue(result, ['id', 'orderId', 'order_id']);
       final trackingCode = _resultValue(result, [
         'trackingCode',
         'tracking_code',
@@ -290,6 +322,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           pickupMethod: _summaryPickup,
           paymentMethod: _paymentMethod.displayName,
           amount: _summaryPaymentAmount,
+          packageType: _summaryPackageType,
+          itemCount: _summaryItemCount,
+          weight: _summaryWeight,
+          volume: _summaryVolume,
         ),
       );
 
@@ -302,6 +338,20 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         isError: true,
       );
     }
+  }
+
+  Future<void> _saveOrderExtras(String orderId) async {
+    if (orderId.trim().isEmpty || orderId == '-') return;
+
+    await _client.from('orders').update({
+      'parcel_description': _parcelDescriptionCtrl.text.trim().isEmpty
+          ? null
+          : _parcelDescriptionCtrl.text.trim(),
+      'item_count': _parseItemCount(),
+      'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
+      'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', orderId);
   }
 
   String? _mergedNotes() {
@@ -352,6 +402,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     _addressCtrl.clear();
     _timeWindowCtrl.clear();
     _notesCtrl.clear();
+    _parcelDescriptionCtrl.clear();
+    _itemCountCtrl.text = '1';
+    _estimatedWeightCtrl.clear();
+    _estimatedVolumeCtrl.clear();
 
     setState(() {
       _pickupMethod = _pickupFromStore;
@@ -416,6 +470,26 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     return '\$${_paymentAmount.toStringAsFixed(2)}';
   }
 
+  String get _summaryPackageType =>
+      _parcelDescriptionCtrl.text.trim().isEmpty
+      ? '-'
+      : _parcelDescriptionCtrl.text.trim();
+
+  String get _summaryItemCount {
+    final value = _itemCountCtrl.text.trim();
+    return value.isEmpty ? '-' : value;
+  }
+
+  String get _summaryWeight {
+    final value = _estimatedWeightCtrl.text.trim();
+    return value.isEmpty ? '-' : '$value kg';
+  }
+
+  String get _summaryVolume {
+    final value = _estimatedVolumeCtrl.text.trim();
+    return value.isEmpty ? '-' : '$value m³';
+  }
+
   String get _submitHint {
     if (_loadingFormData) return 'Loading merchant delivery data...';
     if (_submitting) return 'Creating order and payment...';
@@ -442,6 +516,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     if (_paymentAmount <= 0) {
       return 'Enter the payment amount to continue.';
     }
+    final itemCount = _parseItemCount();
+    if (itemCount != null && itemCount <= 0) {
+      return 'Item count must be greater than zero.';
+    }
 
     return 'Complete the required fields to continue.';
   }
@@ -462,6 +540,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       _addressCtrl,
       _timeWindowCtrl,
       _notesCtrl,
+      _parcelDescriptionCtrl,
+      _itemCountCtrl,
+      _estimatedWeightCtrl,
+      _estimatedVolumeCtrl,
     ]) {
       controller.removeListener(_refresh);
       controller.dispose();
@@ -473,10 +555,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: _W.bg,
+      resizeToAvoidBottomInset: true,
       body: SafeArea(
         child: Form(
           key: _formKey,
           child: ListView(
+            keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
             padding: EdgeInsets.fromLTRB(
               14,
               0,
@@ -670,6 +754,87 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
               ),
               const SizedBox(height: 12),
               _SectionCard(
+                icon: Icons.inventory_2_outlined,
+                iconColor: _W.slate,
+                iconBg: _W.slateLt,
+                title: 'Package Information',
+                subtitle: 'Optional shipment details',
+                child: Column(
+                  children: [
+                    _FormField(
+                      controller: _parcelDescriptionCtrl,
+                      label: 'Package Description',
+                      hint: 'Documents, clothes, electronics...',
+                      icon: Icons.inventory_2_outlined,
+                    ),
+                    const SizedBox(height: 12),
+                    _FormField(
+                      controller: _itemCountCtrl,
+                      label: 'Item Count',
+                      hint: '1',
+                      icon: Icons.format_list_numbered_outlined,
+                      keyboardType: TextInputType.number,
+                      validator: (value) {
+                        final raw = value?.trim() ?? '';
+                        if (raw.isEmpty) return null;
+                        final parsed = int.tryParse(raw);
+                        if (parsed == null || parsed <= 0) {
+                          return 'Enter a valid item count';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 12),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _FormField(
+                            controller: _estimatedWeightCtrl,
+                            label: 'Weight (kg)',
+                            hint: '2.5',
+                            icon: Icons.scale_outlined,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            validator: (value) {
+                              final raw = value?.trim() ?? '';
+                              if (raw.isEmpty) return null;
+                              final parsed = double.tryParse(raw);
+                              if (parsed == null || parsed <= 0) {
+                                return 'Invalid weight';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: _FormField(
+                            controller: _estimatedVolumeCtrl,
+                            label: 'Volume (m³)',
+                            hint: '0.02',
+                            icon: Icons.straighten_outlined,
+                            keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true,
+                            ),
+                            validator: (value) {
+                              final raw = value?.trim() ?? '';
+                              if (raw.isEmpty) return null;
+                              final parsed = double.tryParse(raw);
+                              if (parsed == null || parsed <= 0) {
+                                return 'Invalid volume';
+                              }
+                              return null;
+                            },
+                          ),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              _SectionCard(
                 icon: Icons.local_shipping_outlined,
                 iconColor: _W.blue,
                 iconBg: _W.blueLt,
@@ -747,6 +912,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                     _SummaryRow(label: 'Email', value: _summaryEmail),
                     _SummaryRow(label: 'Pickup', value: _summaryPickup),
                     _SummaryRow(label: 'Company', value: _summaryCompany),
+                    _SummaryRow(label: 'Package', value: _summaryPackageType),
+                    _SummaryRow(label: 'Items', value: _summaryItemCount),
+                    _SummaryRow(label: 'Weight', value: _summaryWeight),
+                    _SummaryRow(label: 'Volume', value: _summaryVolume),
                     _SummaryRow(
                       label: 'Payment',
                       value: _paymentMethod.displayName,
@@ -943,7 +1112,7 @@ class _HeroBanner extends StatelessWidget {
           ),
           const SizedBox(height: 5),
           Text(
-            'Customer, delivery, and payment details in one flow.',
+            'Customer, delivery, payment, and package details in one flow.',
             style: _t(
               13,
               FontWeight.w500,
@@ -958,7 +1127,8 @@ class _HeroBanner extends StatelessWidget {
             children: [
               _StepChip(number: '1', label: 'Customer'),
               _StepChip(number: '2', label: 'Delivery'),
-              _StepChip(number: '3', label: 'Payment'),
+              _StepChip(number: '3', label: 'Package'),
+              _StepChip(number: '4', label: 'Payment'),
             ],
           ),
         ],
@@ -1038,9 +1208,7 @@ class _SectionCard extends StatelessWidget {
           LayoutBuilder(
             builder: (context, constraints) {
               final textWidth = constraints.maxWidth.isFinite
-                  ? (constraints.maxWidth > 46
-                        ? constraints.maxWidth - 46
-                        : 0.0)
+                  ? (constraints.maxWidth > 46 ? constraints.maxWidth - 46 : 0.0)
                   : 220.0;
               return Row(
                 children: [
@@ -1166,9 +1334,7 @@ class _SegmentButton extends StatelessWidget {
           child: LayoutBuilder(
             builder: (context, constraints) {
               final textWidth = constraints.maxWidth.isFinite
-                  ? (constraints.maxWidth > 23
-                        ? constraints.maxWidth - 23
-                        : 0.0)
+                  ? (constraints.maxWidth > 23 ? constraints.maxWidth - 23 : 0.0)
                   : 90.0;
               return Row(
                 mainAxisAlignment: MainAxisAlignment.center,
@@ -1335,9 +1501,7 @@ class _SubmitButton extends StatelessWidget {
                 : LayoutBuilder(
                     builder: (context, constraints) {
                       final textWidth = constraints.maxWidth.isFinite
-                          ? (constraints.maxWidth > 30
-                                ? constraints.maxWidth - 30
-                                : 0.0)
+                          ? (constraints.maxWidth > 30 ? constraints.maxWidth - 30 : 0.0)
                           : 180.0;
                       return Row(
                         mainAxisAlignment: MainAxisAlignment.center,
@@ -1381,6 +1545,10 @@ class _SuccessDialog extends StatelessWidget {
   final String pickupMethod;
   final String paymentMethod;
   final String amount;
+  final String packageType;
+  final String itemCount;
+  final String weight;
+  final String volume;
 
   const _SuccessDialog({
     required this.orderId,
@@ -1388,6 +1556,10 @@ class _SuccessDialog extends StatelessWidget {
     required this.pickupMethod,
     required this.paymentMethod,
     required this.amount,
+    required this.packageType,
+    required this.itemCount,
+    required this.weight,
+    required this.volume,
   });
 
   @override
@@ -1400,61 +1572,71 @@ class _SuccessDialog extends StatelessWidget {
           color: _W.white,
           borderRadius: BorderRadius.circular(8),
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 60,
-              height: 60,
-              decoration: const BoxDecoration(
-                color: _W.greenLt,
-                shape: BoxShape.circle,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Container(
+                width: 60,
+                height: 60,
+                decoration: const BoxDecoration(
+                  color: _W.greenLt,
+                  shape: BoxShape.circle,
+                ),
+                child: const Icon(
+                  Icons.check_circle_outline,
+                  color: _W.green,
+                  size: 32,
+                ),
               ),
-              child: const Icon(
-                Icons.check_circle_outline,
-                color: _W.green,
-                size: 32,
+              const SizedBox(height: 16),
+              Text('Order Created', style: _t(20, FontWeight.w900)),
+              const SizedBox(height: 6),
+              Text(
+                'The delivery order and payment record were created successfully.',
+                style: _t(13, FontWeight.w500, color: _W.gray, height: 1.5),
+                textAlign: TextAlign.center,
               ),
-            ),
-            const SizedBox(height: 16),
-            Text('Order Created', style: _t(20, FontWeight.w900)),
-            const SizedBox(height: 6),
-            Text(
-              'The delivery order and payment record were created successfully.',
-              style: _t(13, FontWeight.w500, color: _W.gray, height: 1.5),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 20),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: _W.bg,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: _W.border),
+              const SizedBox(height: 20),
+              Container(
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: _W.bg,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: _W.border),
+                ),
+                child: Column(
+                  children: [
+                    _DialogRow(label: 'Tracking', value: trackingCode),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Order ID', value: orderId),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Pickup', value: pickupMethod),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Package', value: packageType),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Items', value: itemCount),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Weight', value: weight),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Volume', value: volume),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Payment', value: paymentMethod),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Amount', value: amount),
+                  ],
+                ),
               ),
-              child: Column(
-                children: [
-                  _DialogRow(label: 'Tracking', value: trackingCode),
-                  const SizedBox(height: 8),
-                  _DialogRow(label: 'Order ID', value: orderId),
-                  const SizedBox(height: 8),
-                  _DialogRow(label: 'Pickup', value: pickupMethod),
-                  const SizedBox(height: 8),
-                  _DialogRow(label: 'Payment', value: paymentMethod),
-                  const SizedBox(height: 8),
-                  _DialogRow(label: 'Amount', value: amount),
-                ],
+              const SizedBox(height: 20),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Done'),
+                ),
               ),
-            ),
-            const SizedBox(height: 20),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('Done'),
-              ),
-            ),
-          ],
+            ],
+          ),
         ),
       ),
     );

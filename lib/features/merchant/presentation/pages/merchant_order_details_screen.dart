@@ -6,7 +6,10 @@ import 'package:wasle/features/orders/data/order_service.dart';
 class MerchantOrderDetailsScreen extends StatefulWidget {
   final Map<String, dynamic> initialOrder;
 
-  const MerchantOrderDetailsScreen({super.key, required this.initialOrder});
+  const MerchantOrderDetailsScreen({
+    super.key,
+    required this.initialOrder,
+  });
 
   @override
   State<MerchantOrderDetailsScreen> createState() =>
@@ -20,6 +23,7 @@ class _MerchantOrderDetailsScreenState
   late Map<String, dynamic> _order;
   List<Map<String, dynamic>> _events = [];
   String? _companyName;
+  Map<String, String>? _pickupPointDetails;
 
   bool _loading = true;
   bool _loadingTimeline = true;
@@ -52,7 +56,11 @@ class _MerchantOrderDetailsScreenState
         }
       }
 
-      await Future.wait([_loadTimeline(), _loadAssignmentDetails()]);
+      await Future.wait([
+        _loadTimeline(),
+        _loadAssignmentDetails(),
+        _loadPickupPointDetails(),
+      ]);
     } catch (_) {
       // keep current snapshot
     } finally {
@@ -120,6 +128,32 @@ class _MerchantOrderDetailsScreenState
     }
   }
 
+  Future<void> _loadPickupPointDetails() async {
+    try {
+      final pickupPointId = _safe(_order['pickup_point_id'], fallback: '');
+
+      if (pickupPointId.isEmpty || pickupPointId == '-') {
+        if (!mounted) return;
+        setState(() {
+          _pickupPointDetails = null;
+        });
+        return;
+      }
+
+      final details = await _ordersService.getPickupPointById(pickupPointId);
+
+      if (!mounted) return;
+      setState(() {
+        _pickupPointDetails = details;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _pickupPointDetails = null;
+      });
+    }
+  }
+
   String _safe(dynamic value, {String fallback = '-'}) {
     final text = value?.toString().trim() ?? '';
     return text.isEmpty ? fallback : text;
@@ -131,6 +165,14 @@ class _MerchantOrderDetailsScreenState
     return DateTime.tryParse(raw);
   }
 
+  String _labelFromKey(String value) {
+    return value
+        .split('_')
+        .where((part) => part.trim().isNotEmpty)
+        .map((part) => part[0].toUpperCase() + part.substring(1))
+        .join(' ');
+  }
+
   String get _currentStatus {
     return _safe(_order['status'], fallback: 'created').toLowerCase();
   }
@@ -139,9 +181,13 @@ class _MerchantOrderDetailsScreenState
     const cancellableStatuses = {
       'created',
       'pending',
+      'confirmed_by_merchant',
+      'ready_for_driver_pickup',
       'assigned',
       'assigned_to_company',
       'assigned_to_driver',
+      'pending_driver_receipt',
+      'driver_received_order',
     };
     return cancellableStatuses.contains(_currentStatus);
   }
@@ -163,17 +209,13 @@ class _MerchantOrderDetailsScreenState
       case 'card':
         return 'Card';
       default:
-        return method.isEmpty ? 'Payment' : method.replaceAll('_', ' ');
+        return method.isEmpty ? 'Payment' : _labelFromKey(method);
     }
   }
 
   String get _paymentStatusLabel {
     final status = _safe(_order['payment_status'], fallback: 'pending');
-    return status
-        .split('_')
-        .where((part) => part.isNotEmpty)
-        .map((part) => part[0].toUpperCase() + part.substring(1))
-        .join(' ');
+    return _labelFromKey(status);
   }
 
   String get _paymentAmountLabel {
@@ -181,6 +223,61 @@ class _MerchantOrderDetailsScreenState
     if (amount is num) return '\$${amount.toStringAsFixed(2)}';
     final text = _safe(amount, fallback: '');
     return text.isEmpty ? '-' : '\$$text';
+  }
+
+  bool get _hasPickupPoint {
+    final pickupPointId = _safe(_order['pickup_point_id'], fallback: '');
+    return pickupPointId.isNotEmpty && pickupPointId != '-';
+  }
+
+  String get _pickupMethodLabel {
+    return _hasPickupPoint ? 'Pickup Point' : 'From Store';
+  }
+
+  String get _pickupPointDisplay {
+    final pickupPointName = _pickupPointDetails?['name']?.trim() ?? '';
+    final pickupPointAddress = _pickupPointDetails?['address']?.trim() ?? '';
+
+    if (pickupPointName.isNotEmpty) {
+      if (pickupPointAddress.isNotEmpty) {
+        return '$pickupPointName — $pickupPointAddress';
+      }
+      return pickupPointName;
+    }
+
+    return '-';
+  }
+
+  String get _dropoffAddressDisplay {
+    return _safe(
+      _order['customer_address_text'],
+      fallback: 'No address provided',
+    );
+  }
+
+  String get _packageDescriptionDisplay {
+    return _safe(_order['parcel_description'], fallback: '-');
+  }
+
+  String get _itemCountDisplay {
+    final value = _order['item_count'];
+    if (value == null) return '-';
+    final text = value.toString().trim();
+    return text.isEmpty ? '-' : text;
+  }
+
+  String get _weightDisplay {
+    final value = _order['estimated_weight'];
+    if (value == null) return '-';
+    final text = value.toString().trim();
+    return text.isEmpty ? '-' : '$text kg';
+  }
+
+  String get _volumeDisplay {
+    final value = _order['estimated_volume'];
+    if (value == null) return '-';
+    final text = value.toString().trim();
+    return text.isEmpty ? '-' : '$text m³';
   }
 
   List<Map<String, dynamic>> get _timelineEvents {
@@ -248,8 +345,10 @@ class _MerchantOrderDetailsScreenState
 
     if (lower.contains('return to store') ||
         lower.contains('returned to store') ||
-        lower.contains('returning to store')) {
-      return 'Return to Store';
+        lower.contains('returning to store') ||
+        lower.contains('returned to merchant') ||
+        lower.contains('returning to merchant')) {
+      return 'Return to Merchant';
     }
 
     if (lower.contains('rescheduled') || lower.contains('reschedule')) {
@@ -264,24 +363,37 @@ class _MerchantOrderDetailsScreenState
   }
 
   String? get _rootReason {
-    final customerNotAvailable = _latestEventOfTypes([
-      'customer_not_available',
-    ]);
-    if (customerNotAvailable != null) return 'Customer not available';
-
-    final failed = _latestEventOfTypes(['failed']);
+    final failed = _latestEventOfTypes(['delivery_failed', 'failed']);
     final failedNote = _safe(failed?['note'], fallback: '').toLowerCase();
+
     if (failedNote.contains('customer not available')) {
       return 'Customer not available';
     }
 
-    if (_currentStatus == 'cancelled') return 'Cancellation requested';
-    if (_currentStatus == 'returned_to_store') return 'Returned to store';
-    if (_currentStatus == 'returning' ||
-        _currentStatus == 'returning_to_store') {
-      return 'Returning to store';
+    if (failed != null) {
+      return 'Delivery failed';
     }
-    if (_currentStatus == 'failed') return 'Delivery failed';
+
+    if (_currentStatus == 'cancelled') return 'Cancellation requested';
+
+    if (_currentStatus == 'dropped_at_pickup_point') {
+      return 'Dropped at pickup point';
+    }
+
+    if (_currentStatus == 'rescheduled') {
+      return 'Delivery rescheduled';
+    }
+
+    if (_currentStatus == 'returned_to_store' ||
+        _currentStatus == 'returned_to_merchant') {
+      return 'Returned to merchant';
+    }
+
+    if (_currentStatus == 'returning' ||
+        _currentStatus == 'returning_to_store' ||
+        _currentStatus == 'return_in_progress') {
+      return 'Returning to merchant';
+    }
 
     return null;
   }
@@ -293,13 +405,23 @@ class _MerchantOrderDetailsScreenState
       if (resolution != null) return resolution;
     }
 
-    if (_currentStatus == 'returned_to_store') {
-      return 'Return to Store Completed';
+    if (_currentStatus == 'dropped_at_pickup_point') {
+      return 'Pickup Point Drop';
+    }
+
+    if (_currentStatus == 'rescheduled') {
+      return 'Rescheduled';
+    }
+
+    if (_currentStatus == 'returned_to_store' ||
+        _currentStatus == 'returned_to_merchant') {
+      return 'Return to Merchant Completed';
     }
 
     if (_currentStatus == 'returning' ||
-        _currentStatus == 'returning_to_store') {
-      return 'Return to Store In Progress';
+        _currentStatus == 'returning_to_store' ||
+        _currentStatus == 'return_in_progress') {
+      return 'Return to Merchant In Progress';
     }
 
     if (_currentStatus == 'cancelled') {
@@ -316,72 +438,68 @@ class _MerchantOrderDetailsScreenState
 
   bool get _hasException => _rootReason != null;
 
-  String _prettyStatus(String s) {
-    switch (s) {
-      case 'created':
-        return 'Created';
-      case 'pending':
-        return 'Pending';
-      case 'assigned':
-      case 'assigned_to_company':
-      case 'assigned_to_driver':
-        return 'Assigned';
-      case 'picked_up':
-        return 'Picked Up';
-      case 'in_transit':
-        return 'In Transit';
-      case 'delivered':
-      case 'completed':
-        return 'Delivered';
-      case 'failed':
-        return 'Failed';
-      case 'cancelled':
-        return 'Cancelled';
-      case 'customer_not_available':
-        return 'Customer Not Available';
-      case 'returning':
-      case 'returning_to_store':
-        return 'Returning to Store';
-      case 'returned_to_store':
-        return 'Returned to Store';
-      default:
-        return s;
-    }
-  }
-
   String _eventTitle(String raw) {
     switch (raw.toLowerCase()) {
       case 'order_created':
-        return 'Order created';
+        return 'Order Created';
+      case 'confirmed_by_merchant':
+        return 'Confirmed by Merchant';
+      case 'ready_for_driver_pickup':
+        return 'Ready for Driver Pickup';
+      case 'pending_driver_receipt':
+        return 'Pending Driver Receipt';
+      case 'driver_received_order':
+        return 'Driver Received Order';
       case 'assigned_to_company':
-        return 'Assigned to company';
+        return 'Assigned to Company';
       case 'assigned_to_driver':
-        return 'Assigned to driver';
+        return 'Assigned to Driver';
       case 'picked_up':
-        return 'Picked up';
+        return 'Picked Up';
+      case 'picked_up_from_merchant':
+        return 'Picked Up from Merchant';
       case 'in_transit':
-        return 'In transit';
+        return 'In Transit';
+      case 'in_transit_to_pickup_point':
+        return 'In Transit to Pickup Point';
+      case 'arrived_at_pickup_point':
+        return 'Arrived at Pickup Point';
+      case 'stored_at_pickup_point':
+        return 'Stored at Pickup Point';
+      case 'ready_for_customer_pickup':
+        return 'Ready for Customer Pickup';
+      case 'picked_up_by_customer':
+        return 'Picked Up by Customer';
+      case 'dropped_at_pickup_point':
+        return 'Dropped at Pickup Point';
       case 'delivered':
         return 'Delivered';
       case 'completed':
         return 'Completed';
+      case 'delivery_failed':
+      case 'failed':
+        return 'Delivery Failed';
       case 'cancelled':
         return 'Cancelled';
+      case 'rescheduled':
+        return 'Rescheduled';
       case 'customer_not_available':
-        return 'Customer not available';
-      case 'failed':
-        return 'Delivery failed';
+        return 'Customer Not Available';
       case 'returning':
       case 'returning_to_store':
-        return 'Returning to store';
+      case 'return_in_progress':
+        return 'Returning to Merchant';
       case 'returned_to_store':
-        return 'Returned to store';
+      case 'returned_to_merchant':
+        return 'Returned to Merchant';
+      case 'note_added':
+        return 'Note Added';
+      case 'agent_cash_collected':
+        return 'Cash Collected';
+      case 'remittance_sent':
+        return 'Remittance Sent';
       default:
-        return raw
-            .split('_')
-            .where((part) => part.isNotEmpty)
-            .map((part) => part[0].toUpperCase() + part.substring(1))
-            .join(' ');
+        return _labelFromKey(raw);
     }
   }
 
@@ -396,27 +514,12 @@ class _MerchantOrderDetailsScreenState
       if (!mounted) return;
 
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+        SnackBar(
+          content: Text(message),
+          behavior: SnackBarBehavior.floating,
+        ),
       );
     });
-  }
-
-  Future<void> _copySupportPayload({required bool urgent}) async {
-    final payload = StringBuffer()
-      ..writeln(urgent ? 'URGENT PICKUP REQUEST' : 'SUPPORT REQUEST')
-      ..writeln('Tracking: ${_safe(_order['tracking_code'])}')
-      ..writeln('Order ID: ${_safe(_order['id'])}')
-      ..writeln('Customer: ${_safe(_order['customer_name'])}')
-      ..writeln('Phone: ${_safe(_order['customer_phone'])}')
-      ..writeln('Status: ${_prettyStatus(_currentStatus)}')
-      ..writeln(
-        'Address: ${_safe(_order['customer_address_text'], fallback: 'No address')}',
-      );
-
-    await Clipboard.setData(ClipboardData(text: payload.toString()));
-    _showSafeSnack(
-      urgent ? 'Urgent pickup payload copied.' : 'Support payload copied.',
-    );
   }
 
   Future<String?> _openCancellationReasonPage() async {
@@ -469,15 +572,19 @@ class _MerchantOrderDetailsScreenState
     final trackingCode = _safe(_order['tracking_code']);
     final companyId = _safe(_order['delivery_company_id'], fallback: '');
     final hasCompany = companyId.isNotEmpty && companyId != '-';
+    final branchId = _safe(_order['branch_id'], fallback: '');
 
     return Scaffold(
       backgroundColor: _W.bg,
+      resizeToAvoidBottomInset: true,
       appBar: _buildAppBar(context),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _loadDetails,
               child: ListView(
+                keyboardDismissBehavior:
+                    ScrollViewKeyboardDismissBehavior.onDrag,
                 padding: EdgeInsets.fromLTRB(
                   14,
                   8,
@@ -574,10 +681,8 @@ class _MerchantOrderDetailsScreenState
                           value: _safe(_order['customer_phone']),
                           valueColor: _W.blue,
                         ),
-                        if (_safe(
-                          _order['customer_email'],
-                          fallback: '',
-                        ).isNotEmpty)
+                        if (_safe(_order['customer_email'], fallback: '')
+                            .isNotEmpty)
                           _InfoRow(
                             label: 'Email',
                             value: _safe(_order['customer_email']),
@@ -600,22 +705,49 @@ class _MerchantOrderDetailsScreenState
                     child: Column(
                       children: [
                         _InfoRow(
-                          label: 'Address',
-                          value: _safe(
-                            _order['customer_address_text'],
-                            fallback: 'No address',
+                          label: 'Pickup Method',
+                          value: _pickupMethodLabel,
+                        ),
+                        if (_hasPickupPoint && _pickupPointDisplay != '-')
+                          _InfoRow(
+                            label: 'Pickup Point',
+                            value: _pickupPointDisplay,
                           ),
+                        _InfoRow(
+                          label: 'Dropoff Address',
+                          value: _dropoffAddressDisplay,
+                        ),
+                        if (branchId.isNotEmpty && branchId != '-')
+                          _InfoRow(
+                            label: 'Branch',
+                            value: branchId,
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  _SectionCard(
+                    icon: Icons.inventory_2_outlined,
+                    iconColor: _W.slate,
+                    iconBg: _W.slateLt,
+                    title: 'Package Information',
+                    child: Column(
+                      children: [
+                        _InfoRow(
+                          label: 'Description',
+                          value: _packageDescriptionDisplay,
                         ),
                         _InfoRow(
-                          label: 'Pickup Point ID',
-                          value: _safe(
-                            _order['pickup_point_id'],
-                            fallback: '-',
-                          ),
+                          label: 'Item Count',
+                          value: _itemCountDisplay,
                         ),
                         _InfoRow(
-                          label: 'Branch ID',
-                          value: _safe(_order['branch_id'], fallback: '-'),
+                          label: 'Weight',
+                          value: _weightDisplay,
+                        ),
+                        _InfoRow(
+                          label: 'Volume',
+                          value: _volumeDisplay,
                         ),
                       ],
                     ),
@@ -652,10 +784,9 @@ class _MerchantOrderDetailsScreenState
                               _InfoRow(
                                 label: 'Delivery Company',
                                 value: hasCompany
-                                    ? ((_companyName?.trim().isNotEmpty ??
-                                              false)
-                                          ? _companyName!
-                                          : companyId)
+                                    ? ((_companyName?.trim().isNotEmpty ?? false)
+                                        ? _companyName!
+                                        : companyId)
                                     : 'Waiting for assignment',
                               ),
                             ],
@@ -678,32 +809,36 @@ class _MerchantOrderDetailsScreenState
                             ),
                           )
                         : _timelineEvents.isEmpty
-                        ? Text(
-                            'No timeline events yet.',
-                            style: _t(13, FontWeight.w500, color: _W.gray),
-                          )
-                        : Column(
-                            children: List.generate(_timelineEvents.length, (
-                              i,
-                            ) {
-                              final event = _timelineEvents[i];
-                              final title = _eventTitle(
-                                _safe(event['event_type'], fallback: 'event'),
-                              );
-                              final note = _safe(event['note'], fallback: '');
-                              final createdAt = _formatDate(
-                                event['created_at'],
-                              );
+                            ? Text(
+                                'No timeline events yet.',
+                                style: _t(
+                                  13,
+                                  FontWeight.w500,
+                                  color: _W.gray,
+                                ),
+                              )
+                            : Column(
+                                children: List.generate(_timelineEvents.length, (
+                                  i,
+                                ) {
+                                  final event = _timelineEvents[i];
+                                  final title = _eventTitle(
+                                    _safe(event['event_type'], fallback: 'event'),
+                                  );
+                                  final note = _safe(event['note'], fallback: '');
+                                  final createdAt = _formatDate(
+                                    event['created_at'],
+                                  );
 
-                              return _TimelineStep(
-                                title: title,
-                                subtitle: note.isEmpty
-                                    ? createdAt
-                                    : '$createdAt\n$note',
-                                isLast: i == _timelineEvents.length - 1,
-                              );
-                            }),
-                          ),
+                                  return _TimelineStep(
+                                    title: title,
+                                    subtitle: note.isEmpty
+                                        ? createdAt
+                                        : '$createdAt\n$note',
+                                    isLast: i == _timelineEvents.length - 1,
+                                  );
+                                }),
+                              ),
                   ),
                   const SizedBox(height: 12),
                   _SectionCard(
@@ -714,30 +849,6 @@ class _MerchantOrderDetailsScreenState
                     child: Column(
                       children: [
                         _ActionBtn(
-                          icon: Icons.flash_on_outlined,
-                          label: 'Urgent Pickup',
-                          sublabel: 'Copy urgent request payload',
-                          color: _W.amber,
-                          bg: _W.amberLt,
-                          borderColor: _W.amber.withValues(alpha: 0.20),
-                          onTap: _actionLoading
-                              ? null
-                              : () => _copySupportPayload(urgent: true),
-                        ),
-                        const SizedBox(height: 10),
-                        _ActionBtn(
-                          icon: Icons.chat_bubble_outline,
-                          label: 'Contact Support',
-                          sublabel: 'Copy support order payload',
-                          color: _W.blue,
-                          bg: _W.blueLt,
-                          borderColor: _W.blue.withValues(alpha: 0.20),
-                          onTap: _actionLoading
-                              ? null
-                              : () => _copySupportPayload(urgent: false),
-                        ),
-                        const SizedBox(height: 10),
-                        _ActionBtn(
                           icon: Icons.cancel_outlined,
                           label: status == 'cancelled'
                               ? 'Cancellation Submitted'
@@ -745,8 +856,8 @@ class _MerchantOrderDetailsScreenState
                           sublabel: status == 'cancelled'
                               ? 'This order is already cancelled.'
                               : _canCancel
-                              ? 'Cancel this order before pickup.'
-                              : 'Cancellation is closed after pickup.',
+                                  ? 'Cancel this order before pickup.'
+                                  : 'Cancellation is closed after pickup.',
                           color: _W.red,
                           bg: _W.redLt,
                           borderColor: _W.red.withValues(alpha: 0.18),
@@ -782,7 +893,11 @@ class _MerchantOrderDetailsScreenState
               borderRadius: BorderRadius.circular(12),
               border: Border.all(color: _W.border, width: 1.5),
             ),
-            child: const Icon(Icons.chevron_left, size: 22, color: _W.navy),
+            child: const Icon(
+              Icons.chevron_left,
+              size: 22,
+              color: _W.navy,
+            ),
           ),
         ),
       ),
@@ -829,70 +944,81 @@ class _CancellationReasonScreenState extends State<_CancellationReasonScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final bottomInset = MediaQuery.of(context).viewInsets.bottom;
+
     return Scaffold(
       backgroundColor: _W.bg,
+      resizeToAvoidBottomInset: true,
       appBar: AppBar(
         backgroundColor: _W.bg,
         surfaceTintColor: Colors.transparent,
         elevation: 0,
         title: Text('Cancellation Reason', style: _t(18, FontWeight.w900)),
       ),
-      body: Padding(
-        padding: EdgeInsets.fromLTRB(
-          16,
-          16,
-          16,
-          24 + MediaQuery.of(context).padding.bottom,
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: _W.white,
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: _W.border, width: 1.5),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Why are you cancelling this order?',
-                    style: _t(15, FontWeight.w800),
+      body: SafeArea(
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            return SingleChildScrollView(
+              keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
+              padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + bottomInset),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(minHeight: constraints.maxHeight),
+                child: IntrinsicHeight(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: _W.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(color: _W.border, width: 1.5),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              'Why are you cancelling this order?',
+                              style: _t(15, FontWeight.w800),
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'Write a clear reason before submitting.',
+                              style: _t(
+                                13,
+                                FontWeight.w500,
+                                color: _W.gray,
+                                height: 1.45,
+                              ),
+                            ),
+                            const SizedBox(height: 16),
+                            TextField(
+                              controller: _controller,
+                              minLines: 3,
+                              maxLines: 4,
+                              textInputAction: TextInputAction.done,
+                              decoration: const InputDecoration(
+                                hintText: 'Customer requested cancellation...',
+                                border: OutlineInputBorder(),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        width: double.infinity,
+                        child: FilledButton(
+                          onPressed: _submitting ? null : _submit,
+                          child: const Text('Submit Cancellation'),
+                        ),
+                      ),
+                    ],
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    'Write a clear reason before submitting.',
-                    style: _t(
-                      13,
-                      FontWeight.w500,
-                      color: _W.gray,
-                      height: 1.45,
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  TextField(
-                    controller: _controller,
-                    minLines: 4,
-                    maxLines: 6,
-                    decoration: const InputDecoration(
-                      hintText: 'Customer requested cancellation...',
-                      border: OutlineInputBorder(),
-                    ),
-                  ),
-                ],
+                ),
               ),
-            ),
-            const Spacer(),
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(
-                onPressed: _submitting ? null : _submit,
-                child: const Text('Submit Cancellation'),
-              ),
-            ),
-          ],
+            );
+          },
         ),
       ),
     );
@@ -1204,7 +1330,13 @@ class _SectionCard extends StatelessWidget {
                 child: Icon(icon, size: 16, color: iconColor),
               ),
               const SizedBox(width: 10),
-              Text(title, style: _t(14.5, FontWeight.w800)),
+              Expanded(
+                child: Text(
+                  title,
+                  style: _t(14.5, FontWeight.w800),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ),
             ],
           ),
           const SizedBox(height: 12),
@@ -1234,24 +1366,58 @@ class _InfoRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(
-            width: 120,
-            child: Text(label, style: _t(12, FontWeight.w600, color: _W.gray)),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child:
-                child ??
-                Text(
-                  value ?? '-',
-                  style: _t(13, FontWeight.w700, color: valueColor ?? _W.navy),
-                  textAlign: TextAlign.right,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final isNarrow = constraints.maxWidth < 320;
+
+          if (isNarrow) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: _t(12, FontWeight.w600, color: _W.gray)),
+                const SizedBox(height: 6),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: child ??
+                      Text(
+                        value ?? '-',
+                        style: _t(
+                          13,
+                          FontWeight.w700,
+                          color: valueColor ?? _W.navy,
+                        ),
+                      ),
                 ),
-          ),
-        ],
+              ],
+            );
+          }
+
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(
+                width: 120,
+                child: Text(
+                  label,
+                  style: _t(12, FontWeight.w600, color: _W.gray),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: child ??
+                    Text(
+                      value ?? '-',
+                      style: _t(
+                        13,
+                        FontWeight.w700,
+                        color: valueColor ?? _W.navy,
+                      ),
+                      textAlign: TextAlign.right,
+                    ),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
@@ -1269,7 +1435,9 @@ class _StatusBadge extends StatelessWidget {
       decoration: BoxDecoration(
         color: _statusBg(status),
         borderRadius: BorderRadius.circular(999),
-        border: Border.all(color: _statusColor(status).withValues(alpha: 0.25)),
+        border: Border.all(
+          color: _statusColor(status).withValues(alpha: 0.25),
+        ),
       ),
       child: Text(
         _statusLabel(status),
@@ -1408,74 +1576,159 @@ class _ActionBtn extends StatelessWidget {
 }
 
 String _statusLabel(String s) {
-  switch (s) {
+  switch (s.toLowerCase()) {
     case 'created':
       return 'Created';
     case 'pending':
       return 'Pending';
+    case 'confirmed_by_merchant':
+      return 'Confirmed by Merchant';
+    case 'ready_for_driver_pickup':
+      return 'Ready for Driver Pickup';
+    case 'pending_driver_receipt':
+      return 'Pending Driver Receipt';
+    case 'driver_received_order':
+      return 'Driver Received Order';
     case 'assigned':
-    case 'assigned_to_company':
-    case 'assigned_to_driver':
       return 'Assigned';
+    case 'assigned_to_company':
+      return 'Assigned to Company';
+    case 'assigned_to_driver':
+      return 'Assigned to Driver';
     case 'picked_up':
       return 'Picked Up';
+    case 'picked_up_from_merchant':
+      return 'Picked Up from Merchant';
     case 'in_transit':
       return 'In Transit';
+    case 'in_transit_to_pickup_point':
+      return 'In Transit to Pickup Point';
+    case 'arrived_at_pickup_point':
+      return 'Arrived at Pickup Point';
+    case 'stored_at_pickup_point':
+      return 'Stored at Pickup Point';
+    case 'ready_for_customer_pickup':
+      return 'Ready for Customer Pickup';
+    case 'picked_up_by_customer':
+      return 'Picked Up by Customer';
+    case 'dropped_at_pickup_point':
+      return 'Dropped at Pickup Point';
     case 'delivered':
     case 'completed':
       return 'Delivered';
+    case 'delivery_failed':
     case 'failed':
-      return 'Failed';
+      return 'Delivery Failed';
     case 'cancelled':
       return 'Cancelled';
+    case 'rescheduled':
+      return 'Rescheduled';
     case 'returning':
     case 'returning_to_store':
-      return 'Returning';
+    case 'return_in_progress':
+      return 'Returning to Merchant';
     case 'returned_to_store':
-      return 'Returned';
+    case 'returned_to_merchant':
+      return 'Returned to Merchant';
     case 'customer_not_available':
       return 'Customer Not Available';
     default:
-      return s;
+      return s
+          .split('_')
+          .where((part) => part.isNotEmpty)
+          .map((part) => part[0].toUpperCase() + part.substring(1))
+          .join(' ');
   }
 }
 
 Color _statusColor(String s) {
-  if (s == 'delivered' || s == 'completed') return _W.green;
-  if (s == 'failed' || s == 'cancelled' || s == 'customer_not_available') {
+  final status = s.toLowerCase();
+
+  if (status == 'delivered' ||
+      status == 'completed' ||
+      status == 'ready_for_customer_pickup' ||
+      status == 'picked_up_by_customer' ||
+      status == 'stored_at_pickup_point' ||
+      status == 'dropped_at_pickup_point') {
+    return _W.green;
+  }
+
+  if (status == 'delivery_failed' ||
+      status == 'failed' ||
+      status == 'cancelled' ||
+      status == 'customer_not_available') {
     return _W.red;
   }
-  if (s == 'returning' ||
-      s == 'returning_to_store' ||
-      s == 'returned_to_store') {
+
+  if (status == 'returning' ||
+      status == 'returning_to_store' ||
+      status == 'return_in_progress' ||
+      status == 'returned_to_store' ||
+      status == 'returned_to_merchant' ||
+      status == 'rescheduled') {
     return _W.amber;
   }
-  if (s == 'assigned' ||
-      s == 'assigned_to_company' ||
-      s == 'assigned_to_driver' ||
-      s == 'in_transit' ||
-      s == 'picked_up') {
+
+  if (status == 'assigned' ||
+      status == 'assigned_to_company' ||
+      status == 'assigned_to_driver' ||
+      status == 'in_transit' ||
+      status == 'in_transit_to_pickup_point' ||
+      status == 'picked_up' ||
+      status == 'picked_up_from_merchant' ||
+      status == 'confirmed_by_merchant' ||
+      status == 'ready_for_driver_pickup' ||
+      status == 'pending_driver_receipt' ||
+      status == 'driver_received_order' ||
+      status == 'arrived_at_pickup_point') {
     return _W.blue;
   }
+
   return _W.slate;
 }
 
 Color _statusBg(String s) {
-  if (s == 'delivered' || s == 'completed') return _W.greenLt;
-  if (s == 'failed' || s == 'cancelled' || s == 'customer_not_available') {
+  final status = s.toLowerCase();
+
+  if (status == 'delivered' ||
+      status == 'completed' ||
+      status == 'ready_for_customer_pickup' ||
+      status == 'picked_up_by_customer' ||
+      status == 'stored_at_pickup_point' ||
+      status == 'dropped_at_pickup_point') {
+    return _W.greenLt;
+  }
+
+  if (status == 'delivery_failed' ||
+      status == 'failed' ||
+      status == 'cancelled' ||
+      status == 'customer_not_available') {
     return _W.redLt;
   }
-  if (s == 'returning' ||
-      s == 'returning_to_store' ||
-      s == 'returned_to_store') {
+
+  if (status == 'returning' ||
+      status == 'returning_to_store' ||
+      status == 'return_in_progress' ||
+      status == 'returned_to_store' ||
+      status == 'returned_to_merchant' ||
+      status == 'rescheduled') {
     return _W.amberLt;
   }
-  if (s == 'assigned' ||
-      s == 'assigned_to_company' ||
-      s == 'assigned_to_driver' ||
-      s == 'in_transit' ||
-      s == 'picked_up') {
+
+  if (status == 'assigned' ||
+      status == 'assigned_to_company' ||
+      status == 'assigned_to_driver' ||
+      status == 'in_transit' ||
+      status == 'in_transit_to_pickup_point' ||
+      status == 'picked_up' ||
+      status == 'picked_up_from_merchant' ||
+      status == 'confirmed_by_merchant' ||
+      status == 'ready_for_driver_pickup' ||
+      status == 'pending_driver_receipt' ||
+      status == 'driver_received_order' ||
+      status == 'arrived_at_pickup_point') {
     return _W.blueLt;
   }
+
   return _W.slateLt;
 }
