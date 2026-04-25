@@ -7,9 +7,18 @@ class PickupPointRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
   Future<Map<String, dynamic>?> getMyPickupPoint() async {
-    final user = _client.auth.currentUser;
-    if (user == null) return null;
+  final user = _client.auth.currentUser;
+  if (user == null) return null;
 
+  // Check pickup_point_operators first (signup flow writes here)
+  final link = await _client
+      .from('pickup_point_operators')
+      .select('pickup_point_id')
+      .eq('profile_id', user.id)
+      .maybeSingle();
+
+  if (link != null) {
+    final ppId = link['pickup_point_id'].toString();
     final row = await _client
         .from('pickup_points')
         .select(
@@ -17,11 +26,23 @@ class PickupPointRepository {
           'image_url, opens_at, closes_at, opening_hours, preferred_payment_method, '
           'payment_handling_method, working_days, max_orders_per_day, status, is_active',
         )
-        .eq('owner_profile_id', user.id)
+        .eq('id', ppId)
         .maybeSingle();
-
     return row;
   }
+
+  // Fallback: check owner_profile_id
+  final row = await _client
+      .from('pickup_points')
+      .select(
+        'id, name, owner_name, address_text, phone, email, city, area, '
+        'image_url, opens_at, closes_at, opening_hours, preferred_payment_method, '
+        'payment_handling_method, working_days, max_orders_per_day, status, is_active',
+      )
+      .eq('owner_profile_id', user.id)
+      .maybeSingle();
+  return row;
+}
 
   Future<List<Map<String, dynamic>>> getPickupPointsForSearch() async {
     final rows = await _client

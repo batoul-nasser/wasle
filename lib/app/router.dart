@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:wasle/features/admin/presentation/pages/admin_home_screen.dart';
+import 'package:wasle/features/agent/presentation/pages/agent_dashboard_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/company_sign_up_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/customer_sign_up_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/driver_sign_up_screen.dart';
@@ -15,7 +17,6 @@ import 'package:wasle/features/driver/presentation/pages/waiting_approval_screen
 import 'package:wasle/features/merchant/presentation/widgets/merchant_dashboard_shell.dart';
 import 'package:wasle/features/payment/presentation/pages/whish_webview_screen.dart';
 import 'package:wasle/features/pickup_point/presentation/pages/pickup_dashboard_screen.dart';
-import 'package:wasle/features/pickup_point/presentation/pages/pickup_point_dashboard_screen.dart';
 import 'package:wasle/features/pickup_point/presentation/pages/pickup_application_pending_screen.dart';
 import 'package:wasle/features/pickup_point/presentation/pages/pickup_application_rejected_screen.dart';
 
@@ -56,7 +57,14 @@ class AppRouter {
       case '/merchant-dashboard':
         return MaterialPageRoute(builder: (_) => const MerchantDashboardShell());
 
+      case '/admin-dashboard':
+        return MaterialPageRoute(builder: (_) => const AdminHomeScreen());
+
+      case '/agent-dashboard':
+        return MaterialPageRoute(builder: (_) => const AgentDashboardScreen());
+
       case '/pickup-dashboard':
+      case '/pickup-point-dashboard':
         return MaterialPageRoute(builder: (_) => const PickupDashboardScreen());
 
       case '/waiting-approval':
@@ -68,22 +76,11 @@ class AppRouter {
       case '/select-company':
         return MaterialPageRoute(builder: (_) => const SelectCompanyScreen());
 
-      case '/pickup-point-dashboard':
-        return MaterialPageRoute(
-          builder: (_) => const PickupPointDashboardScreen(),
-        );
       case '/pickup-application-pending':
-
-
-        return MaterialPageRoute(
-          builder: (_) => const PickupApplicationPendingScreen(),
-        );
+        return MaterialPageRoute(builder: (_) => const PickupApplicationPendingScreen());
 
       case '/pickup-application-rejected':
-        return MaterialPageRoute(
-          builder: (_) => const PickupApplicationRejectedScreen(),
-        );
-
+        return MaterialPageRoute(builder: (_) => const PickupApplicationRejectedScreen());
 
       case '/payment/whish-webview':
         final args = settings.arguments as Map<String, dynamic>;

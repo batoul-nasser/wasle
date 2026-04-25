@@ -219,6 +219,12 @@ class AuthService {
       case 'pickup_point_operator':
         return '/pickup-point-dashboard';
 
+      case 'platform_admin':
+        return '/admin-dashboard';
+
+      case 'agent':
+        return '/agent-dashboard';
+      
       case 'pickup_point':
         return '/pickup-dashboard';
 

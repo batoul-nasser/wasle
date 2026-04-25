@@ -4,6 +4,7 @@ import 'package:wasle/features/auth/presentation/pages/customer_sign_up_screen.d
 import 'package:wasle/features/auth/presentation/pages/driver_sign_up_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/login_screen.dart';
 import 'package:wasle/features/auth/presentation/pages/pickup_point_sign_up_screen.dart';
+import 'package:wasle/features/auth/presentation/pages/merchant_sign_up_screen.dart';
 
 class SignUpRoleScreen extends StatelessWidget {
   const SignUpRoleScreen({super.key});
@@ -81,10 +82,11 @@ class SignUpRoleScreen extends StatelessWidget {
               screen: const CustomerSignUpScreen(),
             ),
             const SizedBox(height: 16),
-            _buildLoginOnlyButton(
+            _buildRoleButton(
               context: context,
               title: 'Merchant',
               icon: Icons.storefront_outlined,
+              screen: const MerchantSignUpScreen(),
             ),
             const SizedBox(height: 16),
             _buildRoleButton(

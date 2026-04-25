@@ -53,14 +53,7 @@ class _PickupPointDashboardScreenState
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FB),
-      appBar: AppBar(
-        title: const Text('Pickup Point'),
-        centerTitle: true,
-        actions: [
-          IconButton(
-              icon: const Icon(Icons.logout_outlined), onPressed: _signOut),
-        ],
-      ),
+      
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
