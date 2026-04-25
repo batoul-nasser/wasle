@@ -5,6 +5,11 @@ import 'package:wasle/core/services/payment_service.dart';
 import 'package:wasle/features/payment/data/payment_model.dart';
 import 'package:wasle/features/payment/presentation/widgets/payment_method_selector.dart';
 
+enum DeliveryCompanyMode {
+  allApproved,
+  linkedOnly,
+}
+
 class MerchantCreateOrderScreen extends StatefulWidget {
   const MerchantCreateOrderScreen({super.key});
 
@@ -51,6 +56,9 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   static const _pickupFromStore = 'From Store';
   static const _pickupPoint = 'Pickup Point';
 
+  static const DeliveryCompanyMode _deliveryCompanyMode =
+      DeliveryCompanyMode.linkedOnly;
+
   @override
   void initState() {
     super.initState();
@@ -79,18 +87,18 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
     try {
       final merchantId = await _resolveMerchantId();
-      final results = await Future.wait([
-        _loadPickupPoints(merchantId),
-        _loadDeliveryCompanies(),
-      ]);
+      final pickupPoints = await _loadPickupPoints();
+
+      if (!mounted) return;
+      setState(() {
+        _merchantId = merchantId;
+      });
+
+      final deliveryCompanies = await _loadDeliveryCompanies();
 
       if (!mounted) return;
 
-      final pickupPoints = results[0];
-      final deliveryCompanies = results[1];
-
       setState(() {
-        _merchantId = merchantId;
         _pickupPoints = pickupPoints;
         _deliveryCompanies = deliveryCompanies;
         _selectedPickupPointId =
@@ -130,12 +138,21 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     return merchantId;
   }
 
-  Future<List<_SelectOption>> _loadPickupPoints(String merchantId) async {
+  Future<List<_SelectOption>> _loadPickupPoints() async {
     try {
       final rows = await _client
           .from('pickup_points')
-          .select('id, name, address_text, city, area')
-          .eq('merchant_id', merchantId)
+          .select('''
+            id,
+            name,
+            address_text,
+            merchant_id,
+            branch_id,
+            merchant_branches:branch_id (
+              name,
+              address_text
+            )
+          ''')
           .eq('is_active', true)
           .order('name');
 
@@ -143,20 +160,29 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
       final options = raw
           .map((row) {
-            final name = (row['name']?.toString() ?? '').trim();
-            final address = (row['address_text']?.toString() ?? '').trim();
-            final city = (row['city']?.toString() ?? '').trim();
-            final area = (row['area']?.toString() ?? '').trim();
+            final pickupName = (row['name']?.toString() ?? '').trim();
+            final pickupAddress = (row['address_text']?.toString() ?? '').trim();
 
-            final subtitleParts = <String>[];
-            if (address.isNotEmpty) subtitleParts.add(address);
-            if (city.isNotEmpty) subtitleParts.add(city);
-            if (area.isNotEmpty) subtitleParts.add(area);
+            final branch = row['merchant_branches'];
+            String branchName = '';
+
+            if (branch is Map<String, dynamic>) {
+              branchName = (branch['name']?.toString() ?? '').trim();
+            } else if (branch is List && branch.isNotEmpty) {
+              final first = branch.first;
+              if (first is Map<String, dynamic>) {
+                branchName = (first['name']?.toString() ?? '').trim();
+              }
+            }
+
+            final title = branchName.isNotEmpty
+                ? '$pickupName — $branchName'
+                : pickupName;
 
             return _SelectOption(
               id: row['id']?.toString() ?? '',
-              name: name,
-              subtitle: subtitleParts.isEmpty ? null : subtitleParts.join(' • '),
+              name: title,
+              subtitle: pickupAddress.isEmpty ? null : pickupAddress,
             );
           })
           .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
@@ -174,6 +200,20 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   }
 
   Future<List<_SelectOption>> _loadDeliveryCompanies() async {
+    final merchantId = _merchantId;
+    if (merchantId == null || merchantId.isEmpty) {
+      return const [];
+    }
+
+    switch (_deliveryCompanyMode) {
+      case DeliveryCompanyMode.allApproved:
+        return _loadApprovedDeliveryCompanies();
+      case DeliveryCompanyMode.linkedOnly:
+        return _loadLinkedDeliveryCompanies(merchantId);
+    }
+  }
+
+  Future<List<_SelectOption>> _loadApprovedDeliveryCompanies() async {
     try {
       final companyRows = await _client
           .from('delivery_companies')
@@ -185,7 +225,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           .map(
             (row) => _SelectOption(
               id: row['id']?.toString() ?? '',
-              name: row['name']?.toString() ?? '',
+              name: (row['name']?.toString() ?? '').trim(),
             ),
           )
           .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
@@ -197,30 +237,68 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
       return options;
     } catch (_) {
-      try {
-        final companyRows = await _client
-            .from('delivery_companies')
-            .select('id, name')
-            .order('name');
+      return const [];
+    }
+  }
 
-        final options = List<Map<String, dynamic>>.from(companyRows)
-            .map(
-              (row) => _SelectOption(
-                id: row['id']?.toString() ?? '',
-                name: row['name']?.toString() ?? '',
-              ),
+  Future<List<_SelectOption>> _loadLinkedDeliveryCompanies(
+    String merchantId,
+  ) async {
+    try {
+      final rows = await _client
+          .from('merchant_delivery_companies')
+          .select('''
+            company_id,
+            is_active,
+            delivery_companies:company_id (
+              id,
+              name,
+              verification_status
             )
-            .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
-            .toList();
+          ''')
+          .eq('merchant_id', merchantId)
+          .eq('is_active', true);
 
-        options.sort(
-          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-        );
+      final raw = List<Map<String, dynamic>>.from(rows);
 
-        return options;
-      } catch (_) {
-        return const [];
-      }
+      final options = raw
+          .map((row) {
+            final company = row['delivery_companies'];
+            Map<String, dynamic>? companyMap;
+
+            if (company is Map<String, dynamic>) {
+              companyMap = company;
+            } else if (company is List &&
+                company.isNotEmpty &&
+                company.first is Map<String, dynamic>) {
+              companyMap = company.first as Map<String, dynamic>;
+            }
+
+            if (companyMap == null) {
+              return const _SelectOption(id: '', name: '');
+            }
+
+            final status =
+                (companyMap['verification_status']?.toString() ?? '').trim();
+            final id = (companyMap['id']?.toString() ?? '').trim();
+            final name = (companyMap['name']?.toString() ?? '').trim();
+
+            if (status != 'approved') {
+              return const _SelectOption(id: '', name: '');
+            }
+
+            return _SelectOption(id: id, name: name);
+          })
+          .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
+          .toList();
+
+      options.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
+
+      return options;
+    } catch (_) {
+      return const [];
     }
   }
 
@@ -512,7 +590,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   }
 
   String get _summaryCompany {
-    if (_deliveryCompanies.isEmpty) return 'No approved companies';
+    if (_deliveryCompanies.isEmpty) return 'No companies found';
     return _selectedCompany()?.name ?? 'Not selected';
   }
 
@@ -546,6 +624,15 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       return 'Not selected';
     }
     return '${_selectedCustomerLat!.toStringAsFixed(6)}, ${_selectedCustomerLng!.toStringAsFixed(6)}';
+  }
+
+  String get _deliveryCompanySubtitle {
+    switch (_deliveryCompanyMode) {
+      case DeliveryCompanyMode.allApproved:
+        return 'Select any approved delivery company';
+      case DeliveryCompanyMode.linkedOnly:
+        return 'Select a delivery company linked to this merchant';
+    }
   }
 
   String get _submitHint {
@@ -789,7 +876,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       if (_pickupPoints.isEmpty)
                         const _InfoBox(
                           icon: Icons.info_outline,
-                          text: 'No pickup points found for this merchant.',
+                          text: 'No pickup points found in the system.',
                           color: _W.amber,
                           background: _W.amberLt,
                         )
@@ -918,11 +1005,11 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                 iconColor: _W.blue,
                 iconBg: _W.blueLt,
                 title: 'Delivery Company',
-                subtitle: 'Select any approved delivery company',
+                subtitle: _deliveryCompanySubtitle,
                 child: _deliveryCompanies.isEmpty
                     ? const _InfoBox(
                         icon: Icons.info_outline,
-                        text: 'No approved delivery companies found.',
+                        text: 'No delivery companies found.',
                         color: _W.amber,
                         background: _W.amberLt,
                       )
