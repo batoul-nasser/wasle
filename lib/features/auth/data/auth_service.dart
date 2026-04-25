@@ -57,22 +57,12 @@ class AuthService {
     );
   }
 
-  Future<void> resendSignupOtp({
-    required String email,
-  }) async {
-    await _client.auth.resend(
-      type: OtpType.signup,
-      email: email,
-    );
+  Future<void> resendSignupOtp({required String email}) async {
+    await _client.auth.resend(type: OtpType.signup, email: email);
   }
 
-  Future<void> resendLoginOtp({
-    required String email,
-  }) async {
-    await _client.auth.resend(
-      type: OtpType.email,
-      email: email,
-    );
+  Future<void> resendLoginOtp({required String email}) async {
+    await _client.auth.resend(type: OtpType.email, email: email);
   }
 
   Future<AuthResponse> verifyOtp({
@@ -134,9 +124,7 @@ class AuthService {
     return response;
   }
 
-  Future<Map<String, dynamic>?> getMerchantByProfileId(
-    String profileId,
-  ) async {
+  Future<Map<String, dynamic>?> getMerchantByProfileId(String profileId) async {
     final result = await _client
         .from('merchant_users')
         .select()
@@ -224,7 +212,7 @@ class AuthService {
 
       case 'agent':
         return '/agent-dashboard';
-      
+
       case 'pickup_point':
         return '/pickup-dashboard';
 
@@ -255,7 +243,9 @@ class AuthService {
   }) async {
     final path = 'storage/$fileName';
 
-    await _client.storage.from('pickup-point-storage').uploadBinary(
+    await _client.storage
+        .from('pickup-point-storage')
+        .uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -270,7 +260,9 @@ class AuthService {
   }) async {
     final path = 'shelves/$fileName';
 
-    await _client.storage.from('pickup-point-shelves').uploadBinary(
+    await _client.storage
+        .from('pickup-point-shelves')
+        .uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -285,7 +277,9 @@ class AuthService {
   }) async {
     final path = 'shops/$fileName';
 
-    await _client.storage.from('pickup-point-shops').uploadBinary(
+    await _client.storage
+        .from('pickup-point-shops')
+        .uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -300,7 +294,9 @@ class AuthService {
   }) async {
     final path = 'ids/$fileName';
 
-    await _client.storage.from('pickup-point-ids').uploadBinary(
+    await _client.storage
+        .from('pickup-point-ids')
+        .uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -315,23 +311,17 @@ class AuthService {
     required String phone,
     required String city,
   }) async {
-    await _client.from('profiles').upsert(
-      {
-        'id': userId,
-        'full_name': fullName,
-        'phone': phone,
-        'role': 'driver',
-      },
-      onConflict: 'id',
-    );
+    await _client.from('profiles').upsert({
+      'id': userId,
+      'full_name': fullName,
+      'phone': phone,
+      'role': 'driver',
+    }, onConflict: 'id');
 
-    await _client.from('drivers').upsert(
-      {
-        'profile_id': userId,
-        'verification_status': 'pending',
-      },
-      onConflict: 'profile_id',
-    );
+    await _client.from('drivers').upsert({
+      'profile_id': userId,
+      'verification_status': 'pending',
+    }, onConflict: 'profile_id');
 
     final driverRow = await _client
         .from('drivers')
@@ -341,14 +331,11 @@ class AuthService {
 
     if (driverRow != null) {
       final driverId = driverRow['id'] as String;
-      await _client.from('driver_locations').upsert(
-        {
-          'driver_id': driverId,
-          'city': city.isEmpty ? null : city,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        },
-        onConflict: 'driver_id',
-      );
+      await _client.from('driver_locations').upsert({
+        'driver_id': driverId,
+        'city': city.isEmpty ? null : city,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }, onConflict: 'driver_id');
     }
   }
 
@@ -390,6 +377,7 @@ class AuthService {
     required String phone,
     required String businessName,
   }) async {
+    // Step 1: Upsert the profile row (idempotent).
     await _client.from('profiles').upsert({
       'id': userId,
       'full_name': fullName,
@@ -397,6 +385,17 @@ class AuthService {
       'role': 'merchant',
     }, onConflict: 'id');
 
+    // Step 2: If a merchant_users link already exists (e.g. retry after a
+    // network error), there is nothing more to do.
+    final existing = await _client
+        .from('merchant_users')
+        .select('merchant_id')
+        .eq('profile_id', userId)
+        .maybeSingle();
+
+    if (existing != null) return;
+
+    // Step 3: Create the merchant business record.
     final business = await _client
         .from('merchant_businesses')
         .insert({'name': businessName})
@@ -405,11 +404,12 @@ class AuthService {
 
     final merchantId = business['id'] as String;
 
+    // Step 4: Link the profile to the merchant business.
+    // Note: merchant_users schema columns: id, profile_id, merchant_id, role.
     await _client.from('merchant_users').insert({
       'profile_id': userId,
       'merchant_id': merchantId,
       'role': 'owner',
-      'business_name': businessName,
     });
   }
 
@@ -500,7 +500,8 @@ class AuthService {
     });
   }
 
-  Future<List<Map<String, dynamic>>> getDriverRequestsForCurrentCompany() async {
+  Future<List<Map<String, dynamic>>>
+  getDriverRequestsForCurrentCompany() async {
     final user = _client.auth.currentUser;
 
     if (user == null) {
@@ -562,10 +563,7 @@ class AuthService {
 
     await _client
         .from('drivers')
-        .update({
-          'verification_status': 'approved',
-          'company_id': user.id,
-        })
+        .update({'verification_status': 'approved', 'company_id': user.id})
         .eq('profile_id', driverProfileId);
   }
 
@@ -580,9 +578,7 @@ class AuthService {
 
     await _client
         .from('drivers')
-        .update({
-          'verification_status': 'rejected',
-        })
+        .update({'verification_status': 'rejected'})
         .eq('profile_id', driverProfileId);
   }
 
@@ -636,10 +632,13 @@ class AuthService {
       throw Exception('No active delivery company mapping found for merchant');
     }
 
-    await _client.from('orders').update({
-      'delivery_company_id': companyId,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', orderId);
+    await _client
+        .from('orders')
+        .update({
+          'delivery_company_id': companyId,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', orderId);
   }
 
   Future<List<Map<String, dynamic>>> getCompanyAssignmentsOrders() async {
@@ -829,18 +828,21 @@ class AuthService {
       final hasValidDriver =
           rawDriverId != null && rawDriverId.isNotEmpty && driver != null;
       final driverProfileId = driver?['profile_id']?.toString();
-      final driverProfile =
-          driverProfileId == null ? null : profileById[driverProfileId];
+      final driverProfile = driverProfileId == null
+          ? null
+          : profileById[driverProfileId];
 
       final customerProfileId = order['customer_profile_id']?.toString();
-      final customerProfile =
-          customerProfileId == null ? null : profileById[customerProfileId];
+      final customerProfile = customerProfileId == null
+          ? null
+          : profileById[customerProfileId];
       final branch = branchById[order['branch_id']?.toString()];
       final pickup = pickupById[order['pickup_point_id']?.toString()];
-      final merchant = merchantById[_firstNonEmpty([
-        order['merchant_id'],
-        branch?['merchant_id'],
-      ])];
+      final merchant =
+          merchantById[_firstNonEmpty([
+            order['merchant_id'],
+            branch?['merchant_id'],
+          ])];
       final address = orderAddressByOrderId[orderId];
 
       return {
@@ -850,42 +852,45 @@ class AuthService {
         'status': order['status']?.toString() ?? 'created',
         'pickup_name':
             _firstNonEmpty([pickup?['name'], branch?['name']]) ??
-                'Pickup point',
+            'Pickup point',
         'pickup_address':
             _firstNonEmpty([
               pickup?['address_text'],
               branch?['address_text'],
             ]) ??
-                'No pickup address',
+            'No pickup address',
         'merchant_name':
             _firstNonEmpty([merchant?['name']]) ?? 'Unknown merchant',
         'driver_id': hasValidDriver ? rawDriverId : null,
-        'driver_name':
-            hasValidDriver ? (driverProfile?['full_name']?.toString()) : null,
-        'driver_phone':
-            hasValidDriver ? (driverProfile?['phone']?.toString()) : null,
-        'vehicle_type':
-            hasValidDriver ? (driver?['vehicle_type']?.toString()) : null,
+        'driver_name': hasValidDriver
+            ? (driverProfile?['full_name']?.toString())
+            : null,
+        'driver_phone': hasValidDriver
+            ? (driverProfile?['phone']?.toString())
+            : null,
+        'vehicle_type': hasValidDriver
+            ? (driver?['vehicle_type']?.toString())
+            : null,
         'accepted_at': assignment?['accepted_at'],
         'customer_name':
             _firstNonEmpty([
               customerProfile?['full_name'],
               order['customer_name'],
             ]) ??
-                'Unknown customer',
+            'Unknown customer',
         'customer_phone':
             _firstNonEmpty([
               customerProfile?['phone'],
               order['customer_phone'],
             ]) ??
-                'No phone',
+            'No phone',
         'dropoff_address':
             _firstNonEmpty([
               address?['dropoff_address_text'],
               address?['dropoff_address'],
               order['customer_address_text'],
             ]) ??
-                'No dropoff address',
+            'No dropoff address',
       };
     }).toList();
   }
@@ -906,10 +911,14 @@ class AuthService {
             .toList();
 
         if (orderIds.isNotEmpty) {
-          await _client.from('orders').update({
-            'delivery_company_id': companyId,
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          }).inFilter('id', orderIds).isFilter('delivery_company_id', null);
+          await _client
+              .from('orders')
+              .update({
+                'delivery_company_id': companyId,
+                'updated_at': DateTime.now().toUtc().toIso8601String(),
+              })
+              .inFilter('id', orderIds)
+              .isFilter('delivery_company_id', null);
         }
       } catch (_) {}
 
@@ -963,24 +972,28 @@ class AuthService {
 
       if (safeMerchantIds.isEmpty) return;
 
-      await _client.from('orders').update({
-        'delivery_company_id': companyId,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).inFilter('merchant_id', safeMerchantIds).isFilter(
-            'delivery_company_id',
-            null,
-          );
+      await _client
+          .from('orders')
+          .update({
+            'delivery_company_id': companyId,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .inFilter('merchant_id', safeMerchantIds)
+          .isFilter('delivery_company_id', null);
     } catch (_) {}
   }
 
-  Future<List<Map<String, dynamic>>> getApprovedDriversForCurrentCompany() async {
+  Future<List<Map<String, dynamic>>>
+  getApprovedDriversForCurrentCompany() async {
     final user = _client.auth.currentUser;
     if (user == null) throw Exception('User not logged in');
 
     final driversRows = List<Map<String, dynamic>>.from(
       await _client
           .from('drivers')
-          .select('id, profile_id, company_id, vehicle_type, verification_status')
+          .select(
+            'id, profile_id, company_id, vehicle_type, verification_status',
+          )
           .eq('company_id', user.id)
           .eq('verification_status', 'approved'),
     );
@@ -1049,8 +1062,8 @@ class AuthService {
     }
 
     final order = orderList.first;
-    final currentStatus =
-        (order['status']?.toString() ?? 'created').toLowerCase();
+    final currentStatus = (order['status']?.toString() ?? 'created')
+        .toLowerCase();
     final orderCompanyId = order['delivery_company_id']?.toString();
 
     if (orderCompanyId == null || orderCompanyId.isEmpty) {
@@ -1093,10 +1106,12 @@ class AuthService {
         .order('assigned_at', ascending: false)
         .limit(1);
 
-    final existingAssignments =
-        List<Map<String, dynamic>>.from(existingAssignmentRows);
-    final existingAssignment =
-        existingAssignments.isEmpty ? null : existingAssignments.first;
+    final existingAssignments = List<Map<String, dynamic>>.from(
+      existingAssignmentRows,
+    );
+    final existingAssignment = existingAssignments.isEmpty
+        ? null
+        : existingAssignments.first;
 
     final previousDriverId = existingAssignment?['driver_id']?.toString();
     if (previousDriverId == driverId && currentStatus == 'assigned') {
@@ -1143,9 +1158,7 @@ class AuthService {
     });
   }
 
-  Future<void> unassignOrderFromDriver({
-    required String orderId,
-  }) async {
+  Future<void> unassignOrderFromDriver({required String orderId}) async {
     final user = _client.auth.currentUser;
     if (user == null) throw Exception('User not logged in');
 
@@ -1161,8 +1174,8 @@ class AuthService {
     }
 
     final order = orderList.first;
-    final currentStatus =
-        (order['status']?.toString() ?? 'created').toLowerCase();
+    final currentStatus = (order['status']?.toString() ?? 'created')
+        .toLowerCase();
     final orderCompanyId = order['delivery_company_id']?.toString();
 
     if (orderCompanyId == null || orderCompanyId.isEmpty) {

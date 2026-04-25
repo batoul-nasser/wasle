@@ -43,19 +43,27 @@ class AppRouter {
         return MaterialPageRoute(builder: (_) => const CustomerSignUpScreen());
 
       case '/pickup-point-signup':
-        return MaterialPageRoute(builder: (_) => const PickupPointSignUpScreen());
+        return MaterialPageRoute(
+          builder: (_) => const PickupPointSignUpScreen(),
+        );
 
       case '/driver-dashboard':
         return MaterialPageRoute(builder: (_) => const DriverDashboardScreen());
 
       case '/company-dashboard':
-        return MaterialPageRoute(builder: (_) => const CompanyDashboardScreen());
+        return MaterialPageRoute(
+          builder: (_) => const CompanyDashboardScreen(),
+        );
 
       case '/customer-dashboard':
-        return MaterialPageRoute(builder: (_) => const CustomerDashboardScreen());
+        return MaterialPageRoute(
+          builder: (_) => const CustomerDashboardScreen(),
+        );
 
       case '/merchant-dashboard':
-        return MaterialPageRoute(builder: (_) => const MerchantDashboardShell());
+        return MaterialPageRoute(
+          builder: (_) => const MerchantDashboardShell(),
+        );
 
       case '/admin-dashboard':
         return MaterialPageRoute(builder: (_) => const AdminHomeScreen());
@@ -77,10 +85,14 @@ class AppRouter {
         return MaterialPageRoute(builder: (_) => const SelectCompanyScreen());
 
       case '/pickup-application-pending':
-        return MaterialPageRoute(builder: (_) => const PickupApplicationPendingScreen());
+        return MaterialPageRoute(
+          builder: (_) => const PickupApplicationPendingScreen(),
+        );
 
       case '/pickup-application-rejected':
-        return MaterialPageRoute(builder: (_) => const PickupApplicationRejectedScreen());
+        return MaterialPageRoute(
+          builder: (_) => const PickupApplicationRejectedScreen(),
+        );
 
       case '/payment/whish-webview':
         final args = settings.arguments as Map<String, dynamic>;

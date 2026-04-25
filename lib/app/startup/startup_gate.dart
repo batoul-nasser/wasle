@@ -16,19 +16,21 @@ class StartupGate extends StatefulWidget {
 class _StartupGateState extends State<StartupGate> {
   final AuthService _authService = AuthService();
   StreamSubscription<AuthState>? _authSubscription;
+
   bool _isResolvingRoute = false;
   String? _errorText;
 
   @override
   void initState() {
     super.initState();
+
     _errorText = widget.startupError;
 
-    if (_errorText != null) {
-      return;
-    }
+    if (_errorText != null) return;
 
-    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((_) {
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((
+      _,
+    ) {
       _resolveAndNavigate();
     });
 
@@ -44,19 +46,21 @@ class _StartupGateState extends State<StartupGate> {
   }
 
   Future<void> _resolveAndNavigate() async {
-    if (_isResolvingRoute || !mounted) {
-      return;
-    }
+    if (_isResolvingRoute || !mounted) return;
 
     _isResolvingRoute = true;
 
     try {
       final route = await _authService.resolveInitialRoute();
 
+      debugPrint('STARTUP ROUTE = $route');
+
       if (!mounted) return;
+
       Navigator.pushReplacementNamed(context, route);
     } catch (error) {
       if (!mounted) return;
+
       setState(() {
         _errorText = 'Startup failed: $error';
       });
@@ -84,17 +88,11 @@ class _StartupGateState extends State<StartupGate> {
                   const SizedBox(height: 16),
                   const Text(
                     'App configuration error',
-                    style: TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600),
                     textAlign: TextAlign.center,
                   ),
                   const SizedBox(height: 12),
-                  Text(
-                    _errorText!,
-                    textAlign: TextAlign.center,
-                  ),
+                  Text(_errorText!, textAlign: TextAlign.center),
                 ],
               ),
             ),
@@ -103,8 +101,6 @@ class _StartupGateState extends State<StartupGate> {
       );
     }
 
-    return const Scaffold(
-      body: Center(child: CircularProgressIndicator()),
-    );
+    return const Scaffold(body: Center(child: CircularProgressIndicator()));
   }
 }

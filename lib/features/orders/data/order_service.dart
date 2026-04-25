@@ -201,7 +201,10 @@ class OrdersService {
 
     final merchantId = row?['merchant_id']?.toString();
     if (merchantId == null || merchantId.isEmpty) {
-      throw Exception('Merchant profile not found. Please contact support.');
+      throw Exception(
+        'Your merchant account setup is incomplete. '
+        'Please sign out, then sign up again to complete registration.',
+      );
     }
 
     return merchantId;
