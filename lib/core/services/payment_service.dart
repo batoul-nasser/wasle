@@ -1,20 +1,20 @@
-// lib/core/services/payment_service.dart
+// File: lib/core/services/payment_service.dart
 
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:wasle/core/domain/delivery_constraints.dart';
 import 'package:wasle/core/services/supabase_service.dart';
 import 'package:wasle/features/payment/data/payment_model.dart';
 
 class PaymentService {
   SupabaseClient get _db => SupabaseService.client;
 
-  // ✅ Helper: always get the current JWT token to pass to Edge Functions
   Map<String, String> get _authHeaders {
     final token = _db.auth.currentSession?.accessToken ?? '';
     return {'Authorization': 'Bearer $token'};
   }
 
-  // ─── READ ────────────────────────────────────────────────────────────────
+  // ─── READ ─────────────────────────────────────────────────────────────────
 
   Future<PaymentModel?> getPaymentByOrderId(String orderId) async {
     try {
@@ -23,7 +23,6 @@ class PaymentService {
           .select()
           .eq('order_id', orderId)
           .maybeSingle();
-
       if (row == null) return null;
       return PaymentModel.fromMap(row);
     } catch (e) {
@@ -43,8 +42,11 @@ class PaymentService {
         });
   }
 
-  // ─── CREATE ORDER + PAYMENT ──────────────────────────────────────────────
+  // ─── CREATE ORDER + PAYMENT ───────────────────────────────────────────────
 
+  /// Creates a new order via Edge Function.
+  /// [itemCount], [estimatedWeightKg], [estimatedVolumeCm3] are required by
+  /// the routing algorithm (PDF §4) for driver capacity matching.
   Future<Map<String, dynamic>> createOrderWithPayment({
     required String merchantId,
     required String? branchId,
@@ -57,11 +59,19 @@ class PaymentService {
     String? pickupPointId,
     String? deliveryCompanyId,
     String? notes,
+    int itemCount = 1,
+    double estimatedWeightKg = 1.0,
+    double estimatedVolumeCm3 = 500.0,
   }) async {
     try {
+      final normalizedDemand = DeliveryConstraintDefaults.normalizeOrderDemand(
+        itemCount: itemCount,
+        weightKg: estimatedWeightKg,
+        volumeCm3: estimatedVolumeCm3,
+      );
+
       final response = await _db.functions.invoke(
         'create_order',
-        // ✅ FIX: pass JWT token so Edge Function knows who is calling
         headers: _authHeaders,
         body: {
           'merchant_id': merchantId,
@@ -78,26 +88,31 @@ class PaymentService {
           if (deliveryCompanyId != null && deliveryCompanyId.isNotEmpty)
             'delivery_company_id': deliveryCompanyId,
           if (notes != null && notes.isNotEmpty) 'notes': notes,
+          'item_count': normalizedDemand.itemCount,
+          'estimated_weight': normalizedDemand.weightKg,
+          'estimated_volume': normalizedDemand.volumeCm3,
         },
       );
 
-      // 🔥 IMPORTANT DEBUG (DO NOT REMOVE)
-      debugPrint('STATUS: ${response.status}');
-      debugPrint('DATA: ${response.data}');
+      debugPrint('[PaymentService] create_order status: ${response.status}');
+      debugPrint('[PaymentService] create_order data: ${response.data}');
 
       if (response.status != 200) {
-        throw Exception('Backend error: ${response.data}');
+        final errorMsg = response.data is Map
+            ? (response.data['error'] ?? response.data.toString())
+            : response.data?.toString() ?? 'Unknown error';
+        throw Exception('Order creation failed: $errorMsg');
       }
 
       return Map<String, dynamic>.from(response.data as Map);
     } catch (e, st) {
-      debugPrint('CREATE ORDER ERROR: $e');
+      debugPrint('[PaymentService] createOrderWithPayment error: $e');
       debugPrint('$st');
       rethrow;
     }
   }
 
-  // ─── CASH PAYMENT ────────────────────────────────────────────────────────
+  // ─── CASH PAYMENT ──────────────────────────────────────────────────────────
 
   Future<void> markCashPaid({
     required String orderId,
@@ -107,12 +122,8 @@ class PaymentService {
       final response = await _db.functions.invoke(
         'mark_cash_paid',
         headers: _authHeaders,
-        body: {
-          'order_id': orderId,
-          'collected_by': collectedBy,
-        },
+        body: {'order_id': orderId, 'collected_by': collectedBy},
       );
-
       if (response.status != 200) {
         throw Exception('mark_cash_paid failed: ${response.data}');
       }
@@ -121,7 +132,7 @@ class PaymentService {
     }
   }
 
-  // ─── WHISH PAYMENT ───────────────────────────────────────────────────────
+  // ─── WHISH PAYMENT ────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> initWhishPayment({
     required String orderId,
@@ -138,18 +149,16 @@ class PaymentService {
           'customer_phone': customerPhone,
         },
       );
-
       if (response.status != 200) {
         throw Exception('init_whish_payment failed: ${response.data}');
       }
-
       return Map<String, dynamic>.from(response.data as Map);
     } catch (e) {
       throw Exception('Whish payment init failed: $e');
     }
   }
 
-  // ─── REFUND ──────────────────────────────────────────────────────────────
+  // ─── REFUND ───────────────────────────────────────────────────────────────
 
   Future<Map<String, dynamic>> requestRefund({
     required String orderId,
@@ -159,23 +168,18 @@ class PaymentService {
       final response = await _db.functions.invoke(
         'process_refund',
         headers: _authHeaders,
-        body: {
-          'order_id': orderId,
-          'reason': reason,
-        },
+        body: {'order_id': orderId, 'reason': reason},
       );
-
       if (response.status != 200) {
         throw Exception('process_refund failed: ${response.data}');
       }
-
       return Map<String, dynamic>.from(response.data as Map);
     } catch (e) {
       throw Exception('Refund request failed: $e');
     }
   }
 
-  // ─── AGENT COLLECTION ────────────────────────────────────────────────────
+  // ─── AGENT COLLECTION ─────────────────────────────────────────────────────
 
   Future<void> confirmAgentCollection({
     required String collectionId,
@@ -185,12 +189,8 @@ class PaymentService {
       final response = await _db.functions.invoke(
         'confirm_agent_collection',
         headers: _authHeaders,
-        body: {
-          'collection_id': collectionId,
-          'agent_id': agentId,
-        },
+        body: {'collection_id': collectionId, 'agent_id': agentId},
       );
-
       if (response.status != 200) {
         throw Exception('confirm_agent_collection failed: ${response.data}');
       }

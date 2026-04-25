@@ -16,10 +16,16 @@ class DriverDelivery {
   final String pickupAddress;
   final double? pickupLat;
   final double? pickupLng;
+  final String? dropoffName;
   final String? dropoffAddress;
+  final double? dropoffLat;
+  final double? dropoffLng;
 
   final String customerName;
   final String customerPhone;
+  final int? itemCount;
+  final double? estimatedWeightKg;
+  final double? estimatedVolumeCm3;
 
   final String? branchName;
   final String? branchAddress;
@@ -41,9 +47,15 @@ class DriverDelivery {
     required this.pickupAddress,
     required this.pickupLat,
     required this.pickupLng,
+    required this.dropoffName,
     required this.dropoffAddress,
+    required this.dropoffLat,
+    required this.dropoffLng,
     required this.customerName,
     required this.customerPhone,
+    required this.itemCount,
+    required this.estimatedWeightKg,
+    required this.estimatedVolumeCm3,
     required this.branchName,
     required this.branchAddress,
     required this.branchLat,

@@ -1,3 +1,5 @@
+// File: lib/features/merchant/presentation/pages/merchant_dashboard_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:wasle/core/ui/ui.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
@@ -14,6 +16,7 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
   final AuthService _authService = AuthService();
 
   bool isLoading = true;
+  String? errorText;
   Map<String, dynamic>? profile;
   List<Map<String, dynamic>> orders = [];
 
@@ -25,19 +28,25 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
 
   Future<void> _loadData() async {
     try {
+      setState(() {
+        isLoading = true;
+        errorText = null;
+      });
       final loadedProfile = await _authService.getCurrentProfile();
       final loadedOrders = await _authService.getMerchantOrders();
 
       if (!mounted) return;
-
       setState(() {
         profile = loadedProfile;
         orders = loadedOrders;
         isLoading = false;
       });
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
-      setState(() => isLoading = false);
+      setState(() {
+        isLoading = false;
+        errorText = e.toString();
+      });
     }
   }
 
@@ -47,18 +56,33 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
 
     final totalOrders = orders.length;
     final pendingOrders = orders
-        .where((o) => (o['status'] ?? '').toString().toLowerCase() == 'pending')
+        .where(
+          (o) => !{
+            'delivered',
+            'cancelled',
+            'returned_to_store',
+          }.contains(o['status']?.toString().toLowerCase()),
+        )
         .length;
     final completedOrders = orders
-        .where(
-          (o) => (o['status'] ?? '').toString().toLowerCase() == 'completed',
-        )
+        .where((o) => o['status']?.toString().toLowerCase() == 'delivered')
         .length;
 
     return Scaffold(
       appBar: AppBar(title: const Text('Merchant Dashboard')),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
+          : errorText != null
+          ? EmptyStateWidget(
+              icon: Icons.error_outline_rounded,
+              title: 'Unable to load dashboard',
+              message: errorText!,
+              action: SecondaryButton(
+                label: 'Try Again',
+                isExpanded: false,
+                onPressed: _loadData,
+              ),
+            )
           : RefreshIndicator(
               onRefresh: _loadData,
               child: ListView(
@@ -67,19 +91,31 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                   Container(
                     padding: const EdgeInsets.all(AppSpacing.xl),
                     decoration: BoxDecoration(
-                      color: AppColors.primary,
+                      gradient: const LinearGradient(
+                        colors: [AppColors.primary, AppColors.primaryDark],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
                       borderRadius: BorderRadius.circular(20),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          'Welcome, $fullName',
-                          style: AppTextStyles.heading3.copyWith(
-                            color: Colors.white,
+                          'MERCHANT PORTAL',
+                          style: AppTextStyles.label.copyWith(
+                            color: Colors.white.withOpacity(0.85),
+                            letterSpacing: 0.8,
                           ),
                         ),
                         const SizedBox(height: AppSpacing.xs),
+                        Text(
+                          'Welcome, $fullName',
+                          style: AppTextStyles.heading2.copyWith(
+                            color: Colors.white,
+                          ),
+                        ),
+                        const SizedBox(height: AppSpacing.xxs),
                         Text(
                           'Manage your orders and monitor activity.',
                           style: AppTextStyles.body.copyWith(
@@ -90,37 +126,41 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.xl),
-                  GridView.count(
-                    crossAxisCount: 2,
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    crossAxisSpacing: AppSpacing.md,
-                    mainAxisSpacing: AppSpacing.md,
-                    childAspectRatio: 1.25,
+
+                  // Stat cards (3-column row)
+                  Row(
                     children: [
-                      DashboardStatCard(
-                        title: 'Total Orders',
-                        value: '$totalOrders',
-                        icon: Icons.inventory_2_outlined,
+                      Expanded(
+                        child: DashboardStatCard(
+                          icon: Icons.inventory_2_outlined,
+                          value: '$totalOrders',
+                          label: 'Total Orders',
+                        ),
                       ),
-                      DashboardStatCard(
-                        title: 'Pending',
-                        value: '$pendingOrders',
-                        icon: Icons.pending_actions_outlined,
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: DashboardStatCard(
+                          icon: Icons.pending_actions_outlined,
+                          value: '$pendingOrders',
+                          label: 'In Progress',
+                          accentColor: AppColors.warning,
+                          accentSoftColor: AppColors.warningSoft,
+                        ),
                       ),
-                      DashboardStatCard(
-                        title: 'Completed',
-                        value: '$completedOrders',
-                        icon: Icons.check_circle_outline,
-                      ),
-                      const DashboardStatCard(
-                        title: 'Role',
-                        value: 'Merchant',
-                        icon: Icons.storefront_outlined,
+                      const SizedBox(width: AppSpacing.md),
+                      Expanded(
+                        child: DashboardStatCard(
+                          icon: Icons.check_circle_outline,
+                          value: '$completedOrders',
+                          label: 'Delivered',
+                          accentColor: AppColors.success,
+                          accentSoftColor: AppColors.successSoft,
+                        ),
                       ),
                     ],
                   ),
                   const SizedBox(height: AppSpacing.xl),
+
                   const SectionHeader(title: 'Recent Orders'),
                   const SizedBox(height: AppSpacing.sm),
                   if (orders.isEmpty)
@@ -132,27 +172,59 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
                     )
                   else
                     ...orders
-                        .take(5)
+                        .take(10)
                         .map(
-                          (order) => Card(
-                            child: ListTile(
-                              title: Text(
-                                order['customer_name']?.toString() ??
-                                    'Customer',
-                              ),
-                              subtitle: Text(
-                                order['delivery_address']?.toString() ??
-                                    'No address',
-                              ),
+                          (order) => Padding(
+                            padding: const EdgeInsets.only(
+                              bottom: AppSpacing.sm,
+                            ),
+                            child: InfoCard(
+                              title:
+                                  order['customer_name']?.toString() ??
+                                  order['tracking_code']?.toString() ??
+                                  'Order',
+                              subtitle:
+                                  order['customer_address_text']?.toString() ??
+                                  order['customer_phone']?.toString() ??
+                                  '',
                               trailing: StatusChip(
-                                label: order['status']?.toString() ?? 'pending',
+                                label: _formatStatus(
+                                  order['status']?.toString(),
+                                ),
+                                tone: StatusChip.fromStatus(
+                                  order['status']?.toString(),
+                                ),
+                              ),
+                              child: Text(
+                                'Placed: ${_formatDate(order['created_at']?.toString())}',
+                                style: AppTextStyles.caption,
                               ),
                             ),
                           ),
                         ),
+                  const SizedBox(height: AppSpacing.xl),
                 ],
               ),
             ),
     );
+  }
+
+  String _formatStatus(String? raw) {
+    if (raw == null || raw.isEmpty) return 'Unknown';
+    return raw
+        .replaceAll('_', ' ')
+        .split(' ')
+        .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
+        .join(' ');
+  }
+
+  String _formatDate(String? raw) {
+    if (raw == null) return '-';
+    try {
+      final dt = DateTime.parse(raw).toLocal();
+      return '${dt.day}/${dt.month}/${dt.year}';
+    } catch (_) {
+      return raw;
+    }
   }
 }

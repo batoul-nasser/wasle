@@ -4,10 +4,7 @@ import 'models/delivery_timeline_event.dart';
 import 'models/driver_delivery.dart';
 import 'models/driver_order_details.dart';
 
-enum DeliveryBucket {
-  active,
-  completed,
-}
+enum DeliveryBucket { active, completed }
 
 class DriverDeliveriesRepository {
   final SupabaseClient _client = Supabase.instance.client;
@@ -78,7 +75,12 @@ class DriverDeliveriesRepository {
     'driver_received_order': ['in_transit'],
     'picked_up': ['in_transit'],
     'in_transit': ['delivered', 'failed'],
-    'failed': ['rescheduled', 'assigned', 'dropped_at_pickup_point', 'returning_to_store'],
+    'failed': [
+      'rescheduled',
+      'assigned',
+      'dropped_at_pickup_point',
+      'returning_to_store',
+    ],
     'rescheduled': ['pending_driver_receipt', 'assigned'],
     'returning_to_store': ['returned_to_store'],
     'dropped_at_pickup_point': [],
@@ -108,7 +110,9 @@ class DriverDeliveriesRepository {
   }
 
   List<String> getAvailableStatusUpdates(String currentStatus) {
-    return List<String>.from(_nextStatuses[currentStatus.toLowerCase()] ?? const []);
+    return List<String>.from(
+      _nextStatuses[currentStatus.toLowerCase()] ?? const [],
+    );
   }
 
   String workflowStatusFromOrderStatus(String status) {
@@ -149,14 +153,12 @@ class DriverDeliveriesRepository {
   Future<Map<String, int>> getDriverDeliveryCounts() async {
     final all = await getDriverDeliveries();
 
-    final completed = all.where((delivery) => isCompletedStatus(delivery.status)).length;
+    final completed = all
+        .where((delivery) => isCompletedStatus(delivery.status))
+        .length;
     final active = all.length - completed;
 
-    return {
-      'assigned': all.length,
-      'active': active,
-      'completed': completed,
-    };
+    return {'assigned': all.length, 'active': active, 'completed': completed};
   }
 
   Future<List<DriverDelivery>> getDriverDeliveries({
@@ -167,7 +169,9 @@ class DriverDeliveriesRepository {
 
     final assignmentRows = await _client
         .from('assignments')
-        .select('id, order_id, company_id, driver_id, assigned_at, completed_at')
+        .select(
+          'id, order_id, company_id, driver_id, assigned_at, completed_at',
+        )
         .eq('driver_id', driverId)
         .order('assigned_at', ascending: false);
 
@@ -175,7 +179,8 @@ class DriverDeliveriesRepository {
     final deliveries = await _hydrateDeliveriesFromAssignments(assignments);
 
     return deliveries.where((delivery) {
-      final statusMatch = status == null || status == 'all' || delivery.status == status;
+      final statusMatch =
+          status == null || status == 'all' || delivery.status == status;
       if (!statusMatch) return false;
 
       if (bucket == null) return true;
@@ -191,7 +196,9 @@ class DriverDeliveriesRepository {
 
     final assignmentRows = await _client
         .from('assignments')
-        .select('id, order_id, company_id, driver_id, assigned_at, completed_at')
+        .select(
+          'id, order_id, company_id, driver_id, assigned_at, completed_at',
+        )
         .eq('driver_id', driverId)
         .eq('order_id', orderId)
         .limit(1);
@@ -214,11 +221,16 @@ class DriverDeliveriesRepository {
 
     final orderAddressRows = await _client
         .from('order_addresses')
-        .select('dropoff_address_text, dropoff_lat, dropoff_lng')
+        .select(
+          'pickup_address_text, pickup_lat, pickup_lng, '
+          'dropoff_address_text, dropoff_lat, dropoff_lng',
+        )
         .eq('order_id', orderId)
         .limit(1);
     final orderAddressList = List<Map<String, dynamic>>.from(orderAddressRows);
-    final orderAddress = orderAddressList.isEmpty ? null : orderAddressList.first;
+    final orderAddress = orderAddressList.isEmpty
+        ? null
+        : orderAddressList.first;
 
     String? openingHours;
     final pickupOrderRows = (await _client
@@ -227,7 +239,9 @@ class DriverDeliveriesRepository {
         .eq('id', orderId)
         .limit(1));
     final pickupOrderList = List<Map<String, dynamic>>.from(pickupOrderRows);
-    final pickupPointId = pickupOrderList.isEmpty ? null : pickupOrderList.first;
+    final pickupPointId = pickupOrderList.isEmpty
+        ? null
+        : pickupOrderList.first;
 
     final orderNotes = pickupPointId?['notes']?.toString();
 
@@ -290,9 +304,14 @@ class DriverDeliveriesRepository {
     return DriverOrderDetails(
       delivery: delivery,
       orderNotes: orderNotes ?? delivery.notes,
-      dropoffAddress: orderAddress?['dropoff_address_text']?.toString(),
-      dropoffLat: _toDouble(orderAddress?['dropoff_lat']),
-      dropoffLng: _toDouble(orderAddress?['dropoff_lng']),
+      dropoffAddress: _firstNonEmpty([
+        orderAddress?['dropoff_address_text'],
+        delivery.dropoffAddress,
+      ]),
+      dropoffLat:
+          _toDouble(orderAddress?['dropoff_lat']) ?? delivery.dropoffLat,
+      dropoffLng:
+          _toDouble(orderAddress?['dropoff_lng']) ?? delivery.dropoffLng,
       pickupOpeningHours: openingHours,
       events: events,
     );
@@ -355,9 +374,10 @@ class DriverDeliveriesRepository {
 
     // Optional enrichment only: do not fail pickup confirmation if this column is policy-restricted.
     try {
-      await _client.from('orders').update({
-        'pickup_point_id': pickupPointId,
-      }).eq('id', orderId);
+      await _client
+          .from('orders')
+          .update({'pickup_point_id': pickupPointId})
+          .eq('id', orderId);
     } catch (_) {}
   }
 
@@ -378,9 +398,10 @@ class DriverDeliveriesRepository {
 
     // Optional enrichment only: do not fail status transition if this update is restricted.
     try {
-      await _client.from('orders').update({
-        'pickup_point_id': pickupPointId,
-      }).eq('id', orderId);
+      await _client
+          .from('orders')
+          .update({'pickup_point_id': pickupPointId})
+          .eq('id', orderId);
     } catch (_) {}
   }
 
@@ -390,7 +411,8 @@ class DriverDeliveriesRepository {
     String? note,
   }) async {
     final requestedStatus = newStatus.toLowerCase();
-    final normalizedNewStatus = mapWorkflowActionToOrderStatus(requestedStatus) ?? requestedStatus;
+    final normalizedNewStatus =
+        mapWorkflowActionToOrderStatus(requestedStatus) ?? requestedStatus;
     if (!orderStatuses.contains(normalizedNewStatus)) {
       throw Exception('Invalid order status: $newStatus');
     }
@@ -415,19 +437,24 @@ class DriverDeliveriesRepository {
         .eq('id', orderId)
         .limit(1);
     final currentOrderList = List<Map<String, dynamic>>.from(currentOrderRows);
-    final currentOrder = currentOrderList.isEmpty ? null : currentOrderList.first;
+    final currentOrder = currentOrderList.isEmpty
+        ? null
+        : currentOrderList.first;
 
     if (currentOrder == null) {
       throw Exception('Order not found');
     }
 
-    final currentStatus = (currentOrder['status']?.toString() ?? 'created').toLowerCase();
+    final currentStatus = (currentOrder['status']?.toString() ?? 'created')
+        .toLowerCase();
     if (currentStatus == normalizedNewStatus) {
       return;
     }
     final allowed = getAvailableStatusUpdates(currentStatus);
     if (!allowed.contains(normalizedNewStatus)) {
-      throw Exception('Invalid status transition from $currentStatus to $normalizedNewStatus');
+      throw Exception(
+        'Invalid status transition from $currentStatus to $normalizedNewStatus',
+      );
     }
 
     final eventType = _statusToEventType[normalizedNewStatus];
@@ -453,15 +480,22 @@ class DriverDeliveriesRepository {
         .select('status')
         .eq('id', orderId)
         .limit(1);
-    final latestAfterOptimisticList = List<Map<String, dynamic>>.from(latestAfterOptimisticRows);
-    final latestAfterOptimistic =
-        latestAfterOptimisticList.isEmpty ? '' : (latestAfterOptimisticList.first['status']?.toString() ?? '').toLowerCase();
+    final latestAfterOptimisticList = List<Map<String, dynamic>>.from(
+      latestAfterOptimisticRows,
+    );
+    final latestAfterOptimistic = latestAfterOptimisticList.isEmpty
+        ? ''
+        : (latestAfterOptimisticList.first['status']?.toString() ?? '')
+              .toLowerCase();
 
     if (latestAfterOptimistic != normalizedNewStatus) {
       // If new transition is still valid from the latest status, retry without optimistic filter.
       final latestAllowed = getAvailableStatusUpdates(latestAfterOptimistic);
       if (latestAllowed.contains(normalizedNewStatus)) {
-        await _client.from('orders').update(statusUpdatePayload).eq('id', orderId);
+        await _client
+            .from('orders')
+            .update(statusUpdatePayload)
+            .eq('id', orderId);
 
         final verifyRows = await _client
             .from('orders')
@@ -469,16 +503,21 @@ class DriverDeliveriesRepository {
             .eq('id', orderId)
             .limit(1);
         final verifyList = List<Map<String, dynamic>>.from(verifyRows);
-        final verifyStatus =
-            verifyList.isEmpty ? '' : (verifyList.first['status']?.toString() ?? '').toLowerCase();
+        final verifyStatus = verifyList.isEmpty
+            ? ''
+            : (verifyList.first['status']?.toString() ?? '').toLowerCase();
 
         if (verifyStatus != normalizedNewStatus) {
-          throw Exception('Status update was rejected by server rules for this order.');
+          throw Exception(
+            'Status update was rejected by server rules for this order.',
+          );
         }
       } else if (latestAfterOptimistic == normalizedNewStatus) {
         // Already applied elsewhere.
       } else {
-        throw Exception('Order status changed to "$latestAfterOptimistic". Refresh to continue.');
+        throw Exception(
+          'Order status changed to "$latestAfterOptimistic". Refresh to continue.',
+        );
       }
     }
 
@@ -494,41 +533,86 @@ class DriverDeliveriesRepository {
       // Keep status transition successful even if event logging policy blocks insert.
     }
 
+    await _markRouteStopCompleted(
+      orderId: orderId,
+      driverId: driverId,
+      normalizedNewStatus: normalizedNewStatus,
+    );
+
     if (normalizedNewStatus == 'picked_up') {
       try {
-        await _client.from('assignments').update({
-          'accepted_at': DateTime.now().toUtc().toIso8601String(),
-        }).eq('order_id', orderId).eq('driver_id', driverId);
+        await _client
+            .from('assignments')
+            .update({'accepted_at': DateTime.now().toUtc().toIso8601String()})
+            .eq('order_id', orderId)
+            .eq('driver_id', driverId);
       } catch (_) {}
     }
 
     if (isCompletedStatus(normalizedNewStatus)) {
       try {
-        await _client.from('assignments').update({
-          'completed_at': DateTime.now().toUtc().toIso8601String(),
-        }).eq('order_id', orderId);
+        await _client
+            .from('assignments')
+            .update({'completed_at': DateTime.now().toUtc().toIso8601String()})
+            .eq('order_id', orderId);
       } catch (_) {}
     }
 
     // "Rescheduled" sends the order back to company/assignment queue.
     if (requestedStatus == 'rescheduled') {
       try {
-        await _client.from('assignments').update({
-          'driver_id': null,
-          'accepted_at': null,
-          'completed_at': null,
-        }).eq('order_id', orderId).eq('driver_id', driverId);
+        await _client
+            .from('assignments')
+            .update({
+              'driver_id': null,
+              'accepted_at': null,
+              'completed_at': null,
+            })
+            .eq('order_id', orderId)
+            .eq('driver_id', driverId);
       } catch (_) {}
     }
 
     // Release driver only when return process is fully completed.
     if (normalizedNewStatus == 'returned_to_store') {
       try {
-        await _client.from('assignments').update({
-          'driver_id': null,
-          'accepted_at': null,
-        }).eq('order_id', orderId).eq('driver_id', driverId);
+        await _client
+            .from('assignments')
+            .update({'driver_id': null, 'accepted_at': null})
+            .eq('order_id', orderId)
+            .eq('driver_id', driverId);
       } catch (_) {}
+    }
+  }
+
+  Future<void> _markRouteStopCompleted({
+    required String orderId,
+    required String driverId,
+    required String normalizedNewStatus,
+  }) async {
+    try {
+      final completedAt = DateTime.now().toUtc().toIso8601String();
+      if (normalizedNewStatus == 'picked_up') {
+        await _client
+            .from('driver_route_stops')
+            .update({'completed_at': completedAt, 'updated_at': completedAt})
+            .eq('order_id', orderId)
+            .eq('driver_id', driverId)
+            .eq('stop_type', 'pickup')
+            .isFilter('completed_at', null);
+      }
+
+      if (isCompletedStatus(normalizedNewStatus)) {
+        await _client
+            .from('driver_route_stops')
+            .update({'completed_at': completedAt, 'updated_at': completedAt})
+            .eq('order_id', orderId)
+            .eq('driver_id', driverId)
+            .eq('stop_type', 'dropoff')
+            .isFilter('completed_at', null);
+      }
+    } catch (_) {
+      // Route tables are optional until the automated-assignment migration is applied.
     }
   }
 
@@ -634,27 +718,38 @@ class DriverDeliveriesRepository {
 
     final pickupPoints = pickupIds.isEmpty
         ? <Map<String, dynamic>>[]
-        : List<Map<String, dynamic>>.from(await _client
-            .from('pickup_points')
-            .select('id, name, address_text, lat, lng')
-            .inFilter('id', pickupIds));
+        : List<Map<String, dynamic>>.from(
+            await _client
+                .from('pickup_points')
+                .select('id, name, address_text, lat, lng')
+                .inFilter('id', pickupIds),
+          );
 
     final merchants = merchantIds.isEmpty
         ? <Map<String, dynamic>>[]
         : List<Map<String, dynamic>>.from(
-            await _client.from('merchant_businesses').select('id, name').inFilter('id', merchantIds),
+            await _client
+                .from('merchant_businesses')
+                .select('id, name')
+                .inFilter('id', merchantIds),
           );
 
     final customers = customerIds.isEmpty
         ? <Map<String, dynamic>>[]
         : List<Map<String, dynamic>>.from(
-            await _client.from('profiles').select('id, full_name, phone').inFilter('id', customerIds),
+            await _client
+                .from('profiles')
+                .select('id, full_name, phone')
+                .inFilter('id', customerIds),
           );
 
     final branches = branchIds.isEmpty
         ? <Map<String, dynamic>>[]
         : List<Map<String, dynamic>>.from(
-            await _client.from('merchant_branches').select('*').inFilter('id', branchIds),
+            await _client
+                .from('merchant_branches')
+                .select('*')
+                .inFilter('id', branchIds),
           );
 
     final pickupById = _keyById(pickupPoints);
@@ -678,6 +773,7 @@ class DriverDeliveriesRepository {
 
       final pickup = pickupById[order['pickup_point_id']?.toString()];
       final branch = branchById[order['branch_id']?.toString()];
+      final isPickupPointDropoff = _isPickupPointDropoff(order);
       final merchantKey = _firstNonEmpty([
         order['merchant_id'],
         branch?['merchant_id'],
@@ -686,6 +782,7 @@ class DriverDeliveriesRepository {
       final customerProfileId = order['customer_profile_id']?.toString().trim();
       final customer = customerById[customerProfileId];
       final fallbackName = _firstNonEmpty([
+        order['customer_name'],
         orderAddress?['customer_name'],
         orderAddress?['recipient_name'],
         orderAddress?['receiver_name'],
@@ -693,6 +790,7 @@ class DriverDeliveriesRepository {
         orderAddress?['consignee_name'],
       ]);
       final fallbackPhone = _firstNonEmpty([
+        order['customer_phone'],
         orderAddress?['customer_phone'],
         orderAddress?['recipient_phone'],
         orderAddress?['receiver_phone'],
@@ -700,6 +798,70 @@ class DriverDeliveriesRepository {
         orderAddress?['consignee_phone'],
         orderAddress?['phone'],
       ]);
+      final pickupName =
+          _firstNonEmpty([
+            pickup?['name'],
+            branch?['name'],
+            order['pickup_name'],
+            order['merchant_name'],
+            merchant?['name'],
+          ]) ??
+          'Pickup location';
+      final pickupAddress =
+          _firstNonEmpty([
+            pickup?['address_text'],
+            branch?['address_text'],
+            orderAddress?['pickup_address_text'],
+            order['pickup_address_text'],
+          ]) ??
+          'Not provided';
+      final pickupLat = _toDouble(
+        pickup?['lat'] ??
+            branch?['lat'] ??
+            orderAddress?['pickup_lat'] ??
+            order['pickup_lat'],
+      );
+      final pickupLng = _toDouble(
+        pickup?['lng'] ??
+            branch?['lng'] ??
+            orderAddress?['pickup_lng'] ??
+            order['pickup_lng'],
+      );
+      final pickupPointDropoffName = isPickupPointDropoff
+          ? (pickup?['name'])
+          : null;
+      final pickupPointDropoffAddress = isPickupPointDropoff
+          ? (pickup?['address_text'])
+          : null;
+      final dropoffName =
+          _firstNonEmpty([
+            pickupPointDropoffName,
+            order['dropoff_name'],
+            order['customer_name'],
+            customer?['full_name'],
+          ]) ??
+          (isPickupPointDropoff ? 'Pickup point dropoff' : 'Dropoff location');
+      final dropoffAddress = _firstNonEmpty([
+        pickupPointDropoffAddress,
+        orderAddress?['dropoff_address_text'],
+        orderAddress?['dropoff_address'],
+        order['customer_address_text'],
+        order['dropoff_address_text'],
+      ]);
+      final dropoffLat = _toDouble(
+        isPickupPointDropoff
+            ? (pickup?['lat'] ??
+                  orderAddress?['dropoff_lat'] ??
+                  order['dropoff_lat'])
+            : (orderAddress?['dropoff_lat'] ?? order['dropoff_lat']),
+      );
+      final dropoffLng = _toDouble(
+        isPickupPointDropoff
+            ? (pickup?['lng'] ??
+                  orderAddress?['dropoff_lng'] ??
+                  order['dropoff_lng'])
+            : (orderAddress?['dropoff_lng'] ?? order['dropoff_lng']),
+      );
 
       result.add(
         DriverDelivery(
@@ -712,7 +874,8 @@ class DriverDeliveriesRepository {
           trackingCode: order['tracking_code']?.toString() ?? orderId,
           status: _normalizeDriverVisibleStatus(order['status']?.toString()),
           notes: order['notes']?.toString(),
-          merchantName: _firstNonEmpty([
+          merchantName:
+              _firstNonEmpty([
                 merchant?['name'],
                 order['merchant_name'],
                 order['business_name'],
@@ -721,15 +884,31 @@ class DriverDeliveriesRepository {
                 branch?['name'],
               ]) ??
               'Unknown merchant',
-          pickupPointName: pickup?['name']?.toString() ?? 'Pickup point',
-          pickupAddress: pickup?['address_text']?.toString() ??
-              branch?['address_text']?.toString() ??
-              'No pickup address',
-          pickupLat: _toDouble(pickup?['lat']) ?? _toDouble(branch?['lat']),
-          pickupLng: _toDouble(pickup?['lng']) ?? _toDouble(branch?['lng']),
-          dropoffAddress: orderAddress?['dropoff_address_text']?.toString(),
-          customerName: customer?['full_name']?.toString() ?? fallbackName ?? 'Unknown customer',
-          customerPhone: customer?['phone']?.toString() ?? fallbackPhone ?? 'No phone',
+          pickupPointName: pickupName,
+          pickupAddress: pickupAddress,
+          pickupLat: pickupLat,
+          pickupLng: pickupLng,
+          dropoffName: dropoffName,
+          dropoffAddress: dropoffAddress,
+          dropoffLat: dropoffLat,
+          dropoffLng: dropoffLng,
+          customerName:
+              customer?['full_name']?.toString() ??
+              order['customer_name']?.toString() ??
+              fallbackName ??
+              'Not provided',
+          customerPhone:
+              customer?['phone']?.toString() ??
+              order['customer_phone']?.toString() ??
+              fallbackPhone ??
+              'Not provided',
+          itemCount: _toInt(order['item_count'] ?? order['items_count']),
+          estimatedWeightKg: _toDouble(
+            order['estimated_weight'] ?? order['estimated_weight_kg'],
+          ),
+          estimatedVolumeCm3: _toDouble(
+            order['estimated_volume'] ?? order['estimated_volume_cm3'],
+          ),
           branchName: branch?['name']?.toString(),
           branchAddress: branch?['address_text']?.toString(),
           branchLat: _toDouble(branch?['lat']),
@@ -755,6 +934,11 @@ class DriverDeliveriesRepository {
       default:
         return normalized;
     }
+  }
+
+  bool _isPickupPointDropoff(Map<String, dynamic> order) {
+    final dropoffType = order['dropoff_type']?.toString().toLowerCase();
+    return dropoffType == 'pickup_point' || dropoffType == 'pickup point';
   }
 
   Map<String, Map<String, dynamic>> _keyById(List<Map<String, dynamic>> rows) {
@@ -785,5 +969,12 @@ class DriverDeliveriesRepository {
     if (value == null) return null;
     if (value is num) return value.toDouble();
     return double.tryParse(value.toString());
+  }
+
+  int? _toInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
   }
 }

@@ -1,8 +1,9 @@
+// File: lib/features/auth/presentation/pages/otp_verification_screen.dart
+
 import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-
 import 'package:wasle/core/ui/ui.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
 import 'package:wasle/features/auth/presentation/utils/auth_error_mapper.dart';
@@ -14,6 +15,7 @@ class OtpVerificationScreen extends StatefulWidget {
   final String? fullName;
   final String? phone;
   final String? city;
+  final VehicleType? vehicleType;
   final String? companyName;
   final String? location;
   final String? businessName;
@@ -26,10 +28,14 @@ class OtpVerificationScreen extends StatefulWidget {
     this.fullName,
     this.phone,
     this.city,
+    this.vehicleType,
     this.companyName,
     this.location,
     this.businessName,
-  });
+  }) : assert(
+         mode != AuthFlowMode.driverSignup || vehicleType != null,
+         'Driver signup requires a selected vehicle type.',
+       );
 
   @override
   State<OtpVerificationScreen> createState() => _OtpVerificationScreenState();
@@ -61,53 +67,48 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
   void _startTimer() {
     _timer?.cancel();
-    _secondsRemaining = 60;
-
-    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      if (_secondsRemaining == 0) {
-        timer.cancel();
+    setState(() => _secondsRemaining = 60);
+    _timer = Timer.periodic(const Duration(seconds: 1), (t) {
+      if (!mounted) {
+        t.cancel();
+        return;
+      }
+      if (_secondsRemaining <= 0) {
+        t.cancel();
       } else {
-        setState(() {
-          _secondsRemaining--;
-        });
+        setState(() => _secondsRemaining--);
       }
     });
   }
 
-  String _required(String? value, String fieldName) {
-    final text = value?.trim();
-    if (text == null || text.isEmpty) {
-      throw Exception('$fieldName is required');
+  Future<void> _resendOtp() async {
+    try {
+      setState(() {
+        _isLoading = true;
+        _errorText = null;
+      });
+      await _authService.sendOtp(
+        email: widget.email,
+        shouldCreateUser: widget.mode != AuthFlowMode.login,
+      );
+      _startTimer();
+    } catch (e, st) {
+      AuthErrorMapper.log('otp_resend', e, st);
+      setState(
+        () => _errorText = AuthErrorMapper.map(
+          e,
+          context: AuthErrorContext.otpRequest,
+        ),
+      );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
-    return text;
-  }
-
-  String? _validateOtpInput(String otp) {
-    if (otp.isEmpty) {
-      return 'Please enter the verification code.';
-    }
-
-    if (!RegExp(r'^\d+$').hasMatch(otp)) {
-      return 'OTP code must contain numbers only.';
-    }
-
-    if (otp.length != _otpLength) {
-      return 'Please enter the full 8-digit verification code.';
-    }
-
-    return null;
-  }
-
-  void _goTo(String routeName) {
-    if (!mounted) return;
-    Navigator.pushNamedAndRemoveUntil(context, routeName, (route) => false);
   }
 
   Future<void> _verifyOtp() async {
-    final otp = _otpController.text.trim();
-    final validationError = _validateOtpInput(otp);
-    if (validationError != null) {
-      setState(() => _errorText = validationError);
+    final token = _otpController.text.trim();
+    if (token.isEmpty || token.length != _otpLength) {
+      setState(() => _errorText = 'Please enter the $_otpLength-digit code');
       return;
     }
 
@@ -119,216 +120,178 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
       final response = await _authService.verifyOtp(
         email: widget.email,
-        token: otp,
+        token: token,
       );
 
-      final userId = response.user?.id ?? _authService.currentUser?.id;
+      final userId = response.user?.id;
       if (userId == null) {
-        throw Exception('User session not found after OTP verification');
+        setState(() => _errorText = 'Verification failed. Please try again.');
+        return;
       }
 
       switch (widget.mode) {
         case AuthFlowMode.driverSignup:
           await _authService.createDriverProfile(
             userId: userId,
-            fullName: _required(widget.fullName, 'Full name'),
-            phone: _required(widget.phone, 'Phone'),
-            city: _required(widget.city, 'City'),
+            fullName: widget.fullName ?? '',
+            phone: widget.phone ?? '',
+            city: widget.city ?? '',
+            vehicleType: widget.vehicleType!,
           );
-          _goTo('/select-company');
-          return;
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/waiting-approval',
+            (_) => false,
+          );
+          break;
 
         case AuthFlowMode.companySignup:
           await _authService.createCompanyProfile(
             userId: userId,
-            adminName: _required(widget.fullName, 'Admin name'),
-            companyName: _required(widget.companyName, 'Company name'),
-            location: _required(widget.location, 'Location'),
+            adminName: widget.fullName ?? '',
+            companyName: widget.companyName ?? '',
+            location: widget.location ?? '',
           );
-          _goTo('/waiting-approval');
-          return;
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/company-dashboard',
+            (_) => false,
+          );
+          break;
 
         case AuthFlowMode.customerSignup:
           await _authService.createCustomerProfile(
             userId: userId,
-            fullName: _required(widget.fullName, 'Full name'),
-            phone: _required(widget.phone, 'Phone'),
+            fullName: widget.fullName ?? '',
+            phone: widget.phone ?? '',
           );
-          _goTo('/customer-dashboard');
-          return;
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/customer-dashboard',
+            (_) => false,
+          );
+          break;
 
         case AuthFlowMode.merchantSignup:
           await _authService.createMerchantProfile(
             userId: userId,
-            fullName: _required(widget.fullName, 'Full name'),
-            phone: _required(widget.phone, 'Phone'),
-            businessName: _required(widget.businessName, 'Business name'),
+            fullName: widget.fullName ?? '',
+            phone: widget.phone ?? '',
+            businessName: widget.businessName ?? '',
           );
-          _goTo('/merchant-dashboard');
-          return;
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/merchant-dashboard',
+            (_) => false,
+          );
+          break;
 
         case AuthFlowMode.login:
+          if (!mounted) return;
           final route = await _authService.resolveInitialRoute();
-          _goTo(route);
-          return;
+          if (!mounted) return;
+          Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
+          break;
       }
     } catch (error, stackTrace) {
       AuthErrorMapper.log('otp_verify', error, stackTrace);
-      setState(() {
-        _errorText = AuthErrorMapper.map(
+      if (!mounted) return;
+      setState(
+        () => _errorText = AuthErrorMapper.map(
           error,
           context: AuthErrorContext.otpVerification,
-        );
-      });
+        ),
+      );
     } finally {
-      if (mounted) {
-        setState(() {
-          _isLoading = false;
-        });
-      }
-    }
-  }
-
-  Future<void> _resendOtp() async {
-    try {
-      setState(() => _errorText = null);
-
-      await _authService.sendOtp(
-        email: widget.email,
-        shouldCreateUser: widget.mode != AuthFlowMode.login,
-      );
-
-      _startTimer();
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Code sent successfully.')),
-      );
-    } catch (error, stackTrace) {
-      AuthErrorMapper.log('otp_resend', error, stackTrace);
-      setState(() {
-        _errorText = AuthErrorMapper.map(
-          error,
-          context: AuthErrorContext.otpRequest,
-        );
-      });
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final timeText = '00:${_secondsRemaining.toString().padLeft(2, '0')}';
+    final canResend = _secondsRemaining <= 0 && !_isLoading;
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
-      body: SingleChildScrollView(
+      appBar: AppBar(title: Text(widget.title)),
+      body: ListView(
         padding: const EdgeInsets.all(AppSpacing.xl),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(AppSpacing.lg),
-              decoration: BoxDecoration(
-                color: AppColors.surface,
-                borderRadius: BorderRadius.circular(22),
-                border: Border.all(color: AppColors.border),
-              ),
-              child: Row(
-                children: [
-                  Container(
-                    width: 44,
-                    height: 44,
-                    decoration: BoxDecoration(
-                      color: AppColors.primarySoft,
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.mark_email_unread_outlined,
-                      color: AppColors.primary,
-                    ),
-                  ),
-                  const SizedBox(width: AppSpacing.md),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('Email Verification', style: AppTextStyles.title),
-                        const SizedBox(height: AppSpacing.xxs),
-                        Text(
-                          'Enter the code sent to ${widget.email}',
-                          style: AppTextStyles.bodyMuted,
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+        children: [
+          const SizedBox(height: AppSpacing.lg),
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            decoration: BoxDecoration(
+              color: AppColors.primarySoft,
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(
+                color: AppColors.primary.withValues(alpha: 0.2),
               ),
             ),
-            const SizedBox(height: AppSpacing.lg),
-            InfoCard(
-              child: Column(
-                children: [
-                  TextField(
-                    controller: _otpController,
-                    keyboardType: TextInputType.number,
-                    inputFormatters: [
-                      FilteringTextInputFormatter.digitsOnly,
-                      LengthLimitingTextInputFormatter(_otpLength),
-                    ],
-                    textInputAction: TextInputAction.done,
-                    decoration: const InputDecoration(
-                      labelText: 'OTP Code',
-                      hintText: 'Enter verification code',
-                      prefixIcon: Icon(Icons.password_rounded),
-                      counterText: '',
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Row(
-                    children: [
-                      Text(
-                        'Expires in ',
-                        style: AppTextStyles.bodyMuted,
-                      ),
-                      Text(
-                        timeText,
-                        style: AppTextStyles.title.copyWith(color: AppColors.primary),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.mark_email_read_outlined,
+                  color: AppColors.primary,
+                  size: 32,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                Text('Check your email', style: AppTextStyles.heading3),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  'We sent a $_otpLength-digit code to ${widget.email}',
+                  style: AppTextStyles.bodyMuted,
+                ),
+              ],
             ),
-            const SizedBox(height: AppSpacing.sm),
-            if (_errorText != null)
-              Text(
-                _errorText!,
-                style: AppTextStyles.body.copyWith(color: AppColors.danger),
-              ),
-            const SizedBox(height: AppSpacing.lg),
-            PrimaryButton(
-              label: 'Verify OTP',
-              icon: Icons.verified_outlined,
-              isLoading: _isLoading,
-              onPressed: _verifyOtp,
+          ),
+          const SizedBox(height: AppSpacing.xl),
+          TextField(
+            controller: _otpController,
+            keyboardType: TextInputType.number,
+            maxLength: _otpLength,
+            inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+            textAlign: TextAlign.center,
+            style: AppTextStyles.heading2,
+            decoration: const InputDecoration(
+              labelText: 'Verification Code',
+              hintText: '........',
+              counterText: '',
+              prefixIcon: Icon(Icons.lock_outline_rounded),
             ),
-            const SizedBox(height: AppSpacing.sm),
-            if (_secondsRemaining == 0)
-              SecondaryButton(
-                label: 'Resend Code',
-                icon: Icons.refresh_rounded,
-                onPressed: _isLoading ? null : _resendOtp,
-              )
-            else
-              Text(
-                'You can request a new code once the timer reaches zero.',
-                textAlign: TextAlign.center,
-                style: AppTextStyles.bodyMuted,
-              ),
+            onSubmitted: (_) => _verifyOtp(),
+          ),
+          const SizedBox(height: AppSpacing.lg),
+          if (_errorText != null) ...[
+            Text(
+              _errorText!,
+              style: AppTextStyles.body.copyWith(color: AppColors.danger),
+            ),
+            const SizedBox(height: AppSpacing.md),
           ],
-        ),
+          PrimaryButton(
+            label: 'Verify Code',
+            icon: Icons.check_circle_outline,
+            isLoading: _isLoading,
+            onPressed: _isLoading ? null : _verifyOtp,
+          ),
+          const SizedBox(height: AppSpacing.md),
+          Center(
+            child: canResend
+                ? TextButton.icon(
+                    onPressed: _resendOtp,
+                    icon: const Icon(Icons.refresh_rounded),
+                    label: const Text('Resend Code'),
+                  )
+                : Text(
+                    'Resend available in ${_secondsRemaining}s',
+                    style: AppTextStyles.bodyMuted,
+                  ),
+          ),
+        ],
       ),
     );
   }

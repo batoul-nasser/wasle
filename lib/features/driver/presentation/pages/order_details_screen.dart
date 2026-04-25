@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import 'package:wasle/core/ui/ui.dart';
 import '../../data/driver_deliveries_repository.dart';
@@ -9,10 +9,7 @@ import '../../data/models/driver_order_details.dart';
 class OrderDetailsScreen extends StatefulWidget {
   final String orderId;
 
-  const OrderDetailsScreen({
-    super.key,
-    required this.orderId,
-  });
+  const OrderDetailsScreen({super.key, required this.orderId});
 
   @override
   State<OrderDetailsScreen> createState() => _OrderDetailsScreenState();
@@ -28,7 +25,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   String? errorText;
   DriverOrderDetails? details;
 
-  bool get _isBusy => isUpdating || isConfirmingPickup || isConfirmingDropoffAtPickup;
+  bool get _isBusy =>
+      isUpdating || isConfirmingPickup || isConfirmingDropoffAtPickup;
 
   @override
   void initState() {
@@ -72,16 +70,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
       final normalized = _repository.workflowStatusFromOrderStatus(newStatus);
       final label = successLabel ?? _statusLabel(normalized);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Status updated to $label')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Status updated to $label')));
 
       await _loadDetails();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to update status: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to update status: $e')));
     } finally {
       if (mounted) {
         setState(() {
@@ -96,32 +94,28 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     required double? lng,
     required String label,
   }) async {
-    if (lat == null || lng == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('$label coordinates are unavailable')),
-      );
-      return;
-    }
+    if (lat == null || lng == null) return;
 
-    final mapsUrl = 'https://maps.google.com/?q=$lat,$lng';
-    await Clipboard.setData(ClipboardData(text: mapsUrl));
-
-    if (!mounted) return;
-    showDialog<void>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Location Link'),
-        content: Text(
-          '$label map link copied to clipboard:\n$mapsUrl',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
-          ),
-        ],
-      ),
+    final mapsUri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=$lat,$lng',
     );
+
+    try {
+      final launched = await launchUrl(
+        mapsUri,
+        mode: LaunchMode.externalApplication,
+      );
+      if (!launched && mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('Unable to open $label map.')));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Unable to open $label map: $e')));
+    }
   }
 
   Future<void> _onTapWorkflowAction(String action) async {
@@ -156,9 +150,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final mappedStatus = _repository.mapWorkflowActionToOrderStatus(action);
     if (mappedStatus == null) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Invalid workflow action.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Invalid workflow action.')));
       return;
     }
 
@@ -175,7 +169,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         context: context,
         builder: (_) => AlertDialog(
           title: Text('Confirm ${_statusLabel(action)}'),
-          content: const Text('This action moves the order forward and cannot be undone.'),
+          content: const Text(
+            'This action moves the order forward and cannot be undone.',
+          ),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(context, false),
@@ -219,11 +215,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     String primaryAction = allowedActions.first;
 
     // In transit prioritizes successful completion.
-    if (workflowStatus == 'in_transit' && allowedActions.contains('delivered')) {
+    if (workflowStatus == 'in_transit' &&
+        allowedActions.contains('delivered')) {
       primaryAction = 'delivered';
     }
 
-    final secondary = allowedActions.where((action) => action != primaryAction).toList();
+    final secondary = allowedActions
+        .where((action) => action != primaryAction)
+        .toList();
     return _WorkflowActionLayout(
       primaryAction: primaryAction,
       secondaryActions: secondary,
@@ -261,7 +260,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 left: AppSpacing.xl,
                 right: AppSpacing.xl,
                 top: AppSpacing.xl,
-                bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.xl,
+                bottom:
+                    MediaQuery.of(context).viewInsets.bottom + AppSpacing.xl,
               ),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -269,10 +269,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 children: [
                   Text(title, style: AppTextStyles.heading2),
                   const SizedBox(height: AppSpacing.xs),
-                  Text(
-                    subtitle,
-                    style: AppTextStyles.bodyMuted,
-                  ),
+                  Text(subtitle, style: AppTextStyles.bodyMuted),
                   const SizedBox(height: AppSpacing.md),
                   DropdownButtonFormField<String>(
                     initialValue: selectedId,
@@ -322,7 +319,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   Future<void> _confirmPickupFlow() async {
-    if (details == null || isConfirmingPickup || isUpdating || isConfirmingDropoffAtPickup) return;
+    if (details == null ||
+        isConfirmingPickup ||
+        isUpdating ||
+        isConfirmingDropoffAtPickup) {
+      return;
+    }
 
     try {
       setState(() => isConfirmingPickup = true);
@@ -372,9 +374,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       await _loadDetails();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Failed to confirm pickup: $e')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to confirm pickup: $e')));
     } finally {
       if (mounted) {
         setState(() => isConfirmingPickup = false);
@@ -383,7 +385,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   }
 
   Future<void> _confirmDropoffAtPickupPointFlow() async {
-    if (details == null || isConfirmingDropoffAtPickup || isUpdating || isConfirmingPickup) return;
+    if (details == null ||
+        isConfirmingDropoffAtPickup ||
+        isUpdating ||
+        isConfirmingPickup) {
+      return;
+    }
 
     try {
       setState(() => isConfirmingDropoffAtPickup = true);
@@ -396,7 +403,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
       if (selectedPoint == null) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pickup point is required for this action.')),
+          const SnackBar(
+            content: Text('Pickup point is required for this action.'),
+          ),
         );
         return;
       }
@@ -427,9 +436,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
-      return const Scaffold(
-        body: Center(child: CircularProgressIndicator()),
-      );
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
     if (errorText != null || details == null) {
@@ -449,17 +456,23 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
 
     final delivery = details!.delivery;
-    final workflowStatus = _repository.workflowStatusFromOrderStatus(delivery.status);
-    final allowedWorkflowActions = _repository.getAllowedWorkflowActions(delivery.status);
+    final workflowStatus = _repository.workflowStatusFromOrderStatus(
+      delivery.status,
+    );
+    final allowedWorkflowActions = _repository.getAllowedWorkflowActions(
+      delivery.status,
+    );
     final actionLayout = _resolveActionLayout(
       workflowStatus: workflowStatus,
       allowedActions: allowedWorkflowActions,
     );
+    final hasPackageInfo =
+        delivery.itemCount != null ||
+        delivery.estimatedWeightKg != null ||
+        delivery.estimatedVolumeCm3 != null;
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Order Details'),
-      ),
+      appBar: AppBar(title: const Text('Order Details')),
       body: RefreshIndicator(
         onRefresh: _loadDetails,
         child: ListView(
@@ -486,6 +499,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(delivery.pickupAddress, style: AppTextStyles.body),
+                  const SizedBox(height: AppSpacing.xxs),
+                  Text(
+                    _coordinateLabel(delivery.pickupLat, delivery.pickupLng),
+                    style: AppTextStyles.bodyMuted,
+                  ),
                   if (details!.pickupOpeningHours != null) ...[
                     const SizedBox(height: AppSpacing.xs),
                     Text(
@@ -494,14 +512,40 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     ),
                   ],
                   const SizedBox(height: AppSpacing.md),
-                  SecondaryButton(
-                    label: 'Open Pickup Map',
-                    icon: Icons.map_outlined,
-                    onPressed: () => _openLocationAction(
-                      lat: delivery.pickupLat,
-                      lng: delivery.pickupLng,
-                      label: 'Pickup',
-                    ),
+                  _mapButton(
+                    actionLabel: 'Open Pickup Map',
+                    missingLabel: 'Pickup location unavailable',
+                    lat: delivery.pickupLat,
+                    lng: delivery.pickupLng,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+            InfoCard(
+              title: 'Dropoff Information',
+              subtitle: delivery.dropoffName ?? 'Dropoff location',
+              leading: _iconBox(Icons.flag_outlined),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    details!.dropoffAddress ??
+                        delivery.dropoffAddress ??
+                        'Not provided',
+                    style: AppTextStyles.body,
+                  ),
+                  const SizedBox(height: AppSpacing.xxs),
+                  Text(
+                    _coordinateLabel(details!.dropoffLat, details!.dropoffLng),
+                    style: AppTextStyles.bodyMuted,
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  _mapButton(
+                    actionLabel: 'Open Dropoff Map',
+                    missingLabel: 'Dropoff location unavailable',
+                    lat: details!.dropoffLat,
+                    lng: details!.dropoffLng,
                   ),
                 ],
               ),
@@ -522,27 +566,42 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     'Phone: ${delivery.customerPhone}',
                     style: AppTextStyles.body,
                   ),
-                  if (details!.dropoffAddress != null) ...[
-                    const SizedBox(height: AppSpacing.xs),
-                    Text(
-                      'Dropoff: ${details!.dropoffAddress}',
-                      style: AppTextStyles.bodyMuted,
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    SecondaryButton(
-                      label: 'Open Dropoff Map',
-                      icon: Icons.map_outlined,
-                      onPressed: () => _openLocationAction(
-                        lat: details!.dropoffLat,
-                        lng: details!.dropoffLng,
-                        label: 'Dropoff',
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),
-            if (details!.orderNotes != null && details!.orderNotes!.isNotEmpty) ...[
+            if (hasPackageInfo) ...[
+              const SizedBox(height: AppSpacing.md),
+              InfoCard(
+                title: 'Package Information',
+                leading: _iconBox(Icons.inventory_2_outlined),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    if (delivery.itemCount != null)
+                      Text(
+                        'Item count: ${delivery.itemCount}',
+                        style: AppTextStyles.body,
+                      ),
+                    if (delivery.estimatedWeightKg != null) ...[
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        'Estimated weight: ${delivery.estimatedWeightKg!.toStringAsFixed(2)} kg',
+                        style: AppTextStyles.body,
+                      ),
+                    ],
+                    if (delivery.estimatedVolumeCm3 != null) ...[
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        'Estimated volume: ${delivery.estimatedVolumeCm3!.toStringAsFixed(0)} cm3',
+                        style: AppTextStyles.body,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+            if (details!.orderNotes != null &&
+                details!.orderNotes!.isNotEmpty) ...[
               const SizedBox(height: AppSpacing.md),
               InfoCard(
                 title: 'Order Notes',
@@ -556,10 +615,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               subtitle: 'Events from order_events',
               leading: _iconBox(Icons.timeline_outlined),
               child: details!.events.isEmpty
-                  ? Text(
-                      'No events found',
-                      style: AppTextStyles.bodyMuted,
-                    )
+                  ? Text('No events found', style: AppTextStyles.bodyMuted)
                   : Column(
                       children: details!.events.map((event) {
                         return Padding(
@@ -591,7 +647,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       isLoading: _isBusy,
                       onPressed: _isBusy
                           ? null
-                          : () => _onTapWorkflowAction(actionLayout.primaryAction!),
+                          : () => _onTapWorkflowAction(
+                              actionLayout.primaryAction!,
+                            ),
                     ),
                   if (actionLayout.secondaryActions.isNotEmpty) ...[
                     const SizedBox(height: AppSpacing.sm),
@@ -613,7 +671,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     Text(
                       'This order is already in a terminal state.',
                       style: AppTextStyles.bodyMuted,
-                    )
+                    ),
                   ],
                 ],
               ),
@@ -634,6 +692,29 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         borderRadius: BorderRadius.circular(10),
       ),
       child: Icon(icon, size: 18, color: AppColors.primary),
+    );
+  }
+
+  String _coordinateLabel(double? lat, double? lng) {
+    if (lat == null || lng == null) {
+      return 'Location unavailable';
+    }
+    return 'Lat/Lng: ${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}';
+  }
+
+  Widget _mapButton({
+    required String actionLabel,
+    required String missingLabel,
+    required double? lat,
+    required double? lng,
+  }) {
+    final hasCoordinates = lat != null && lng != null;
+    return SecondaryButton(
+      label: hasCoordinates ? actionLabel : missingLabel,
+      icon: Icons.map_outlined,
+      onPressed: hasCoordinates
+          ? () => _openLocationAction(lat: lat, lng: lng, label: actionLabel)
+          : null,
     );
   }
 
@@ -665,7 +746,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     return status
         .replaceAll('_', ' ')
         .split(' ')
-        .map((part) => part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+        .map(
+          (part) => part.isEmpty
+              ? part
+              : '${part[0].toUpperCase()}${part.substring(1)}',
+        )
         .join(' ');
   }
 
@@ -716,7 +801,11 @@ class _EventRow extends StatelessWidget {
     final eventLabel = event.eventType
         .replaceAll('_', ' ')
         .split(' ')
-        .map((part) => part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
+        .map(
+          (part) => part.isEmpty
+              ? part
+              : '${part[0].toUpperCase()}${part.substring(1)}',
+        )
         .join(' ');
 
     final dateText = event.createdAt.toLocal().toString();
@@ -787,7 +876,9 @@ class _StatusActionButton extends StatelessWidget {
             backgroundColor: AppColors.surface,
             foregroundColor: palette.foreground,
             disabledForegroundColor: AppColors.textSecondary,
-            side: BorderSide(color: enabled ? palette.border : AppColors.border),
+            side: BorderSide(
+              color: enabled ? palette.border : AppColors.border,
+            ),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(12),
             ),
@@ -795,10 +886,7 @@ class _StatusActionButton extends StatelessWidget {
             textStyle: AppTextStyles.button.copyWith(fontSize: 13),
           ),
           onPressed: enabled ? onPressed : null,
-          child: Text(
-            label,
-            textAlign: TextAlign.center,
-          ),
+          child: Text(label, textAlign: TextAlign.center),
         ),
       ),
     );
