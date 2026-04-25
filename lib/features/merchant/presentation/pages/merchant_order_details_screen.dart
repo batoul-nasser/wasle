@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:wasle/core/utils/app_date_time.dart';
 import 'package:wasle/features/orders/data/order_service.dart';
 
@@ -165,6 +166,12 @@ class _MerchantOrderDetailsScreenState
     return DateTime.tryParse(raw);
   }
 
+  double? _safeDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString().trim());
+  }
+
   String _labelFromKey(String value) {
     return value
         .split('_')
@@ -278,6 +285,33 @@ class _MerchantOrderDetailsScreenState
     if (value == null) return '-';
     final text = value.toString().trim();
     return text.isEmpty ? '-' : '$text m³';
+  }
+
+  double? get _customerLat => _safeDouble(_order['customer_lat']);
+  double? get _customerLng => _safeDouble(_order['customer_lng']);
+
+  bool get _hasPinnedLocation => _customerLat != null && _customerLng != null;
+
+  String get _mapCoordinatesDisplay {
+    if (!_hasPinnedLocation) return '-';
+    return '${_customerLat!.toStringAsFixed(6)}, ${_customerLng!.toStringAsFixed(6)}';
+  }
+
+  Future<void> _openInMaps() async {
+    if (!_hasPinnedLocation) return;
+
+    final uri = Uri.parse(
+      'https://www.google.com/maps/search/?api=1&query=${_customerLat!},${_customerLng!}',
+    );
+
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!launched && mounted) {
+      _showSafeSnack('Unable to open maps.');
+    }
   }
 
   List<Map<String, dynamic>> get _timelineEvents {
@@ -717,11 +751,28 @@ class _MerchantOrderDetailsScreenState
                           label: 'Dropoff Address',
                           value: _dropoffAddressDisplay,
                         ),
+                        if (_hasPinnedLocation)
+                          _InfoRow(
+                            label: 'Coordinates',
+                            value: _mapCoordinatesDisplay,
+                            valueColor: _W.blue,
+                          ),
                         if (branchId.isNotEmpty && branchId != '-')
                           _InfoRow(
                             label: 'Branch',
                             value: branchId,
                           ),
+                        if (_hasPinnedLocation) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: OutlinedButton.icon(
+                              onPressed: _openInMaps,
+                              icon: const Icon(Icons.map_outlined),
+                              label: const Text('Open in Maps'),
+                            ),
+                          ),
+                        ],
                       ],
                     ),
                   ),
