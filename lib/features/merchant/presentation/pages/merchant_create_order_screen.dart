@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/services/payment_service.dart';
 import 'package:wasle/features/payment/data/payment_model.dart';
@@ -44,6 +45,9 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   double _paymentAmount = 0;
   int _paymentFieldRevision = 0;
 
+  double? _selectedCustomerLat;
+  double? _selectedCustomerLng;
+
   static const _pickupFromStore = 'From Store';
   static const _pickupPoint = 'Pickup Point';
 
@@ -77,7 +81,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       final merchantId = await _resolveMerchantId();
       final results = await Future.wait([
         _loadPickupPoints(merchantId),
-        _loadDeliveryCompanies(merchantId),
+        _loadDeliveryCompanies(),
       ]);
 
       if (!mounted) return;
@@ -89,12 +93,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         _merchantId = merchantId;
         _pickupPoints = pickupPoints;
         _deliveryCompanies = deliveryCompanies;
-        _selectedPickupPointId = pickupPoints.length == 1
-            ? pickupPoints.first.id
-            : null;
-        _selectedDeliveryCompanyId = deliveryCompanies.length == 1
-            ? deliveryCompanies.first.id
-            : null;
+        _selectedPickupPointId =
+            pickupPoints.length == 1 ? pickupPoints.first.id : null;
+        _selectedDeliveryCompanyId =
+            deliveryCompanies.length == 1 ? deliveryCompanies.first.id : null;
         _loadingFormData = false;
       });
     } catch (e) {
@@ -132,73 +134,94 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     try {
       final rows = await _client
           .from('pickup_points')
-          .select('id, name, address_text')
+          .select('id, name, address_text, city, area')
           .eq('merchant_id', merchantId)
           .eq('is_active', true)
           .order('name');
 
-      return _optionsFromRows(rows, subtitleKey: 'address_text');
+      final raw = List<Map<String, dynamic>>.from(rows);
+
+      final options = raw
+          .map((row) {
+            final name = (row['name']?.toString() ?? '').trim();
+            final address = (row['address_text']?.toString() ?? '').trim();
+            final city = (row['city']?.toString() ?? '').trim();
+            final area = (row['area']?.toString() ?? '').trim();
+
+            final subtitleParts = <String>[];
+            if (address.isNotEmpty) subtitleParts.add(address);
+            if (city.isNotEmpty) subtitleParts.add(city);
+            if (area.isNotEmpty) subtitleParts.add(area);
+
+            return _SelectOption(
+              id: row['id']?.toString() ?? '',
+              name: name,
+              subtitle: subtitleParts.isEmpty ? null : subtitleParts.join(' • '),
+            );
+          })
+          .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
+          .toList();
+
+      options.sort(
+        (a, b) =>
+            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
+      );
+
+      return options;
     } catch (_) {
       return const [];
     }
   }
 
-  Future<List<_SelectOption>> _loadDeliveryCompanies(String merchantId) async {
+  Future<List<_SelectOption>> _loadDeliveryCompanies() async {
     try {
-      final mappingRows = await _client
-          .from('merchant_delivery_companies')
-          .select('company_id')
-          .eq('merchant_id', merchantId)
-          .eq('is_active', true);
-
-      final companyIds = List<Map<String, dynamic>>.from(mappingRows)
-          .map((row) => row['company_id']?.toString())
-          .whereType<String>()
-          .where((id) => id.isNotEmpty)
-          .toSet()
-          .toList();
-
-      if (companyIds.isEmpty) return const [];
-
       final companyRows = await _client
           .from('delivery_companies')
-          .select('id, name')
-          .inFilter('id', companyIds);
+          .select('id, name, verification_status')
+          .eq('verification_status', 'approved')
+          .order('name');
 
-      return _optionsFromRows(companyRows);
+      final options = List<Map<String, dynamic>>.from(companyRows)
+          .map(
+            (row) => _SelectOption(
+              id: row['id']?.toString() ?? '',
+              name: row['name']?.toString() ?? '',
+            ),
+          )
+          .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
+          .toList();
+
+      options.sort(
+        (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+      );
+
+      return options;
     } catch (_) {
       try {
         final companyRows = await _client
             .from('delivery_companies')
             .select('id, name')
             .order('name');
-        return _optionsFromRows(companyRows);
+
+        final options = List<Map<String, dynamic>>.from(companyRows)
+            .map(
+              (row) => _SelectOption(
+                id: row['id']?.toString() ?? '',
+                name: row['name']?.toString() ?? '',
+              ),
+            )
+            .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
+            .toList();
+
+        options.sort(
+          (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
+        );
+
+        return options;
       } catch (_) {
         return const [];
       }
     }
-  }
-
-  List<_SelectOption> _optionsFromRows(
-    Object? rows, {
-    String subtitleKey = '',
-  }) {
-    final options = List<Map<String, dynamic>>.from(rows as List)
-        .map(
-          (row) => _SelectOption(
-            id: row['id']?.toString() ?? '',
-            name: row['name']?.toString() ?? '',
-            subtitle: subtitleKey.isEmpty ? null : row[subtitleKey]?.toString(),
-          ),
-        )
-        .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
-        .toList();
-
-    options.sort(
-      (a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()),
-    );
-
-    return options;
   }
 
   void _refresh() {
@@ -245,6 +268,28 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         pickupOk &&
         companyOk &&
         itemCountOk;
+  }
+
+  Future<void> _openMapPicker() async {
+    final result = await Navigator.of(context).push<_PickedMapLocation>(
+      MaterialPageRoute(
+        builder: (_) => _MapPickerScreen(
+          initialLat: _selectedCustomerLat,
+          initialLng: _selectedCustomerLng,
+          initialAddress: _addressCtrl.text.trim(),
+        ),
+      ),
+    );
+
+    if (!mounted || result == null) return;
+
+    setState(() {
+      _selectedCustomerLat = result.lat;
+      _selectedCustomerLng = result.lng;
+      if (result.address.trim().isNotEmpty) {
+        _addressCtrl.text = result.address.trim();
+      }
+    });
   }
 
   Future<void> _submitOrder() async {
@@ -296,9 +341,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         address: _addressCtrl.text.trim(),
         amount: _paymentAmount,
         paymentMethod: _paymentMethod,
-        pickupPointId: _pickupMethod == _pickupPoint
-            ? _selectedPickupPointId
-            : null,
+        pickupPointId:
+            _pickupMethod == _pickupPoint ? _selectedPickupPointId : null,
         deliveryCompanyId: _selectedDeliveryCompanyId,
         notes: _mergedNotes(),
       );
@@ -326,6 +370,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           itemCount: _summaryItemCount,
           weight: _summaryWeight,
           volume: _summaryVolume,
+          mapLocation: _summaryMapLocation,
         ),
       );
 
@@ -350,6 +395,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       'item_count': _parseItemCount(),
       'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
       'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
+      'customer_lat': _selectedCustomerLat,
+      'customer_lng': _selectedCustomerLng,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     }).eq('id', orderId);
   }
@@ -362,6 +409,11 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     parts.add('Pickup method: $_pickupMethod');
     if (timeWindow.isNotEmpty) {
       parts.add('Preferred time window: $timeWindow');
+    }
+    if (_selectedCustomerLat != null && _selectedCustomerLng != null) {
+      parts.add(
+        'Map location: ${_selectedCustomerLat!.toStringAsFixed(6)}, ${_selectedCustomerLng!.toStringAsFixed(6)}',
+      );
     }
     if (notes.isNotEmpty) parts.add(notes);
 
@@ -409,15 +461,15 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
     setState(() {
       _pickupMethod = _pickupFromStore;
-      _selectedPickupPointId = _pickupPoints.length == 1
-          ? _pickupPoints.first.id
-          : null;
-      _selectedDeliveryCompanyId = _deliveryCompanies.length == 1
-          ? _deliveryCompanies.first.id
-          : null;
+      _selectedPickupPointId =
+          _pickupPoints.length == 1 ? _pickupPoints.first.id : null;
+      _selectedDeliveryCompanyId =
+          _deliveryCompanies.length == 1 ? _deliveryCompanies.first.id : null;
       _paymentMethod = PaymentMethod.cashAtPickup;
       _paymentAmount = 0;
       _paymentFieldRevision++;
+      _selectedCustomerLat = null;
+      _selectedCustomerLng = null;
     });
   }
 
@@ -445,9 +497,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     return null;
   }
 
-  String get _summaryCustomer => _customerNameCtrl.text.trim().isEmpty
-      ? '-'
-      : _customerNameCtrl.text.trim();
+  String get _summaryCustomer =>
+      _customerNameCtrl.text.trim().isEmpty ? '-' : _customerNameCtrl.text.trim();
 
   String get _summaryEmail =>
       _emailCtrl.text.trim().isEmpty ? '-' : _emailCtrl.text.trim();
@@ -461,7 +512,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   }
 
   String get _summaryCompany {
-    if (_deliveryCompanies.isEmpty) return 'No linked companies';
+    if (_deliveryCompanies.isEmpty) return 'No approved companies';
     return _selectedCompany()?.name ?? 'Not selected';
   }
 
@@ -472,8 +523,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
   String get _summaryPackageType =>
       _parcelDescriptionCtrl.text.trim().isEmpty
-      ? '-'
-      : _parcelDescriptionCtrl.text.trim();
+          ? '-'
+          : _parcelDescriptionCtrl.text.trim();
 
   String get _summaryItemCount {
     final value = _itemCountCtrl.text.trim();
@@ -488,6 +539,13 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   String get _summaryVolume {
     final value = _estimatedVolumeCtrl.text.trim();
     return value.isEmpty ? '-' : '$value m³';
+  }
+
+  String get _summaryMapLocation {
+    if (_selectedCustomerLat == null || _selectedCustomerLng == null) {
+      return 'Not selected';
+    }
+    return '${_selectedCustomerLat!.toStringAsFixed(6)}, ${_selectedCustomerLng!.toStringAsFixed(6)}';
   }
 
   String get _submitHint {
@@ -596,8 +654,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       icon: Icons.person_outline,
                       validator: (value) =>
                           (value == null || value.trim().isEmpty)
-                          ? 'Customer name is required'
-                          : null,
+                              ? 'Customer name is required'
+                              : null,
                     ),
                     const SizedBox(height: 12),
                     _FormField(
@@ -608,8 +666,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       keyboardType: TextInputType.phone,
                       validator: (value) =>
                           (value == null || value.trim().isEmpty)
-                          ? 'Phone number is required'
-                          : null,
+                              ? 'Phone number is required'
+                              : null,
                     ),
                     const SizedBox(height: 12),
                     _FormField(
@@ -642,7 +700,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                 iconColor: _W.amber,
                 iconBg: _W.amberLt,
                 title: 'Delivery Information',
-                subtitle: 'Address and pickup configuration',
+                subtitle: 'Address, map, and pickup configuration',
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
@@ -653,9 +711,30 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       icon: Icons.location_on_outlined,
                       validator: (value) =>
                           (value == null || value.trim().isEmpty)
-                          ? 'Address is required'
-                          : null,
+                              ? 'Address is required'
+                              : null,
                     ),
+                    const SizedBox(height: 12),
+                    OutlinedButton.icon(
+                      onPressed: _openMapPicker,
+                      icon: const Icon(Icons.map_outlined),
+                      label: Text(
+                        _selectedCustomerLat == null || _selectedCustomerLng == null
+                            ? 'Pick on Map'
+                            : 'Change Map Location',
+                      ),
+                    ),
+                    if (_selectedCustomerLat != null &&
+                        _selectedCustomerLng != null) ...[
+                      const SizedBox(height: 10),
+                      _InfoBox(
+                        icon: Icons.place_outlined,
+                        text:
+                            'Selected map location: ${_selectedCustomerLat!.toStringAsFixed(6)}, ${_selectedCustomerLng!.toStringAsFixed(6)}',
+                        color: _W.green,
+                        background: _W.greenLt,
+                      ),
+                    ],
                     const SizedBox(height: 12),
                     _FormField(
                       controller: _timeWindowCtrl,
@@ -733,6 +812,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                                   child: Text(
                                     point.displayName,
                                     overflow: TextOverflow.ellipsis,
+                                    maxLines: 2,
                                     style: _t(14, FontWeight.w500),
                                   ),
                                 ),
@@ -740,13 +820,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                               .toList(),
                           validator: (value) =>
                               _pickupMethod == _pickupPoint && value == null
-                              ? 'Please select a pickup point'
-                              : null,
+                                  ? 'Please select a pickup point'
+                                  : null,
                           onChanged: _loadingFormData
                               ? null
-                              : (value) => setState(
-                                  () => _selectedPickupPointId = value,
-                                ),
+                              : (value) =>
+                                  setState(() => _selectedPickupPointId = value),
                         ),
                     ],
                   ],
@@ -839,12 +918,11 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                 iconColor: _W.blue,
                 iconBg: _W.blueLt,
                 title: 'Delivery Company',
-                subtitle: 'Select the company that will handle this order',
+                subtitle: 'Select any approved delivery company',
                 child: _deliveryCompanies.isEmpty
                     ? const _InfoBox(
                         icon: Icons.info_outline,
-                        text:
-                            'No linked delivery companies found. The order can still be created.',
+                        text: 'No approved delivery companies found.',
                         color: _W.amber,
                         background: _W.amberLt,
                       )
@@ -873,13 +951,13 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                             .toList(),
                         validator: (value) =>
                             _deliveryCompanies.isNotEmpty && value == null
-                            ? 'Please select a delivery company'
-                            : null,
+                                ? 'Please select a delivery company'
+                                : null,
                         onChanged: _loadingFormData
                             ? null
                             : (value) => setState(
-                                () => _selectedDeliveryCompanyId = value,
-                              ),
+                                  () => _selectedDeliveryCompanyId = value,
+                                ),
                       ),
               ),
               const SizedBox(height: 12),
@@ -912,6 +990,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                     _SummaryRow(label: 'Email', value: _summaryEmail),
                     _SummaryRow(label: 'Pickup', value: _summaryPickup),
                     _SummaryRow(label: 'Company', value: _summaryCompany),
+                    _SummaryRow(label: 'Map', value: _summaryMapLocation),
                     _SummaryRow(label: 'Package', value: _summaryPackageType),
                     _SummaryRow(label: 'Items', value: _summaryItemCount),
                     _SummaryRow(label: 'Weight', value: _summaryWeight),
@@ -963,6 +1042,218 @@ class _SelectOption {
     final detail = subtitle?.trim();
     if (detail == null || detail.isEmpty) return name;
     return '$name - $detail';
+  }
+}
+
+class _PickedMapLocation {
+  final double lat;
+  final double lng;
+  final String address;
+
+  const _PickedMapLocation({
+    required this.lat,
+    required this.lng,
+    required this.address,
+  });
+}
+
+class _MapPickerScreen extends StatefulWidget {
+  final double? initialLat;
+  final double? initialLng;
+  final String initialAddress;
+
+  const _MapPickerScreen({
+    required this.initialLat,
+    required this.initialLng,
+    required this.initialAddress,
+  });
+
+  @override
+  State<_MapPickerScreen> createState() => _MapPickerScreenState();
+}
+
+class _MapPickerScreenState extends State<_MapPickerScreen> {
+  late final TextEditingController _addressController;
+  late LatLng _selectedLatLng;
+  GoogleMapController? _mapController;
+
+  @override
+  void initState() {
+    super.initState();
+    _addressController = TextEditingController(text: widget.initialAddress);
+    _selectedLatLng = LatLng(
+      widget.initialLat ?? 33.8938,
+      widget.initialLng ?? 35.5018,
+    );
+  }
+
+  @override
+  void dispose() {
+    _addressController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _zoomIn() async {
+    final controller = _mapController;
+    if (controller == null) return;
+    await controller.animateCamera(CameraUpdate.zoomIn());
+  }
+
+  Future<void> _zoomOut() async {
+    final controller = _mapController;
+    if (controller == null) return;
+    await controller.animateCamera(CameraUpdate.zoomOut());
+  }
+
+  void _confirm() {
+    Navigator.of(context).pop(
+      _PickedMapLocation(
+        lat: _selectedLatLng.latitude,
+        lng: _selectedLatLng.longitude,
+        address: _addressController.text.trim(),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _W.bg,
+      resizeToAvoidBottomInset: true,
+      appBar: AppBar(
+        backgroundColor: _W.bg,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        title: Text('Pick Location on Map', style: _t(18, FontWeight.w900)),
+      ),
+      body: SafeArea(
+        child: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+              child: TextField(
+                controller: _addressController,
+                decoration: _inputDecor(
+                  label: 'Address',
+                  hint: 'Optional address text',
+                  icon: Icons.location_on_outlined,
+                ),
+              ),
+            ),
+            Expanded(
+              child: Stack(
+                children: [
+                  GoogleMap(
+                    initialCameraPosition: CameraPosition(
+                      target: _selectedLatLng,
+                      zoom: 16,
+                    ),
+                    onMapCreated: (controller) {
+                      _mapController = controller;
+                    },
+                    markers: {
+                      Marker(
+                        markerId: const MarkerId('selected_location'),
+                        position: _selectedLatLng,
+                      ),
+                    },
+                    onTap: (latLng) {
+                      setState(() {
+                        _selectedLatLng = latLng;
+                      });
+                    },
+                    myLocationButtonEnabled: false,
+                    zoomControlsEnabled: false,
+                    zoomGesturesEnabled: true,
+                    scrollGesturesEnabled: true,
+                    rotateGesturesEnabled: true,
+                    tiltGesturesEnabled: true,
+                    mapToolbarEnabled: true,
+                  ),
+                  Positioned(
+                    top: 12,
+                    right: 12,
+                    child: Column(
+                      children: [
+                        _MapZoomButton(
+                          icon: Icons.add,
+                          onTap: _zoomIn,
+                        ),
+                        const SizedBox(height: 8),
+                        _MapZoomButton(
+                          icon: Icons.remove,
+                          onTap: _zoomOut,
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              padding: EdgeInsets.fromLTRB(
+                14,
+                12,
+                14,
+                16 + MediaQuery.of(context).padding.bottom,
+              ),
+              decoration: const BoxDecoration(
+                color: _W.white,
+                border: Border(top: BorderSide(color: _W.border, width: 1.2)),
+              ),
+              child: Column(
+                children: [
+                  _InfoBox(
+                    icon: Icons.place_outlined,
+                    text:
+                        'Selected: ${_selectedLatLng.latitude.toStringAsFixed(6)}, ${_selectedLatLng.longitude.toStringAsFixed(6)}',
+                    color: _W.blue,
+                    background: _W.blueLt,
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: FilledButton.icon(
+                      onPressed: _confirm,
+                      icon: const Icon(Icons.check_circle_outline),
+                      label: const Text('Use This Location'),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MapZoomButton extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+
+  const _MapZoomButton({
+    required this.icon,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      elevation: 3,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(12),
+        onTap: onTap,
+        child: SizedBox(
+          width: 44,
+          height: 44,
+          child: Icon(icon, color: _W.navy),
+        ),
+      ),
+    );
   }
 }
 
@@ -1549,6 +1840,7 @@ class _SuccessDialog extends StatelessWidget {
   final String itemCount;
   final String weight;
   final String volume;
+  final String mapLocation;
 
   const _SuccessDialog({
     required this.orderId,
@@ -1560,6 +1852,7 @@ class _SuccessDialog extends StatelessWidget {
     required this.itemCount,
     required this.weight,
     required this.volume,
+    required this.mapLocation,
   });
 
   @override
@@ -1612,6 +1905,8 @@ class _SuccessDialog extends StatelessWidget {
                     _DialogRow(label: 'Order ID', value: orderId),
                     const SizedBox(height: 8),
                     _DialogRow(label: 'Pickup', value: pickupMethod),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Map', value: mapLocation),
                     const SizedBox(height: 8),
                     _DialogRow(label: 'Package', value: packageType),
                     const SizedBox(height: 8),
