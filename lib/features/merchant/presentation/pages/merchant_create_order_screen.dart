@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -36,15 +38,28 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   final _estimatedVolumeCtrl = TextEditingController();
 
   String? _merchantId;
+  String? _merchantBranchId;
+  double? _merchantBranchLat;
+  double? _merchantBranchLng;
+  String? _merchantBranchName;
+  String? _merchantBranchAddress;
+
   String? _loadError;
   bool _loadingFormData = false;
   bool _submitting = false;
 
-  String _pickupMethod = _pickupFromStore;
-  String? _selectedPickupPointId;
+  String _pickupSourceType = _pickupFromStore;
+  String _dropoffType = _dropoffHome;
+
+  String? _selectedSourcePickupPointId;
+  String? _selectedDestinationPickupPointId;
   String? _selectedDeliveryCompanyId;
-  List<_SelectOption> _pickupPoints = const [];
-  List<_SelectOption> _deliveryCompanies = const [];
+  String? _recommendedDeliveryCompanyId;
+  String? _automationHint;
+
+  List<_PickupPointOption> _pickupPoints = const [];
+  List<_DeliveryCompanyOption> _allDeliveryCompanies = const [];
+  List<_DeliveryCompanyOption> _filteredDeliveryCompanies = const [];
 
   PaymentMethod _paymentMethod = PaymentMethod.cashAtPickup;
   double _paymentAmount = 0;
@@ -54,10 +69,16 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   double? _selectedCustomerLng;
 
   static const _pickupFromStore = 'From Store';
-  static const _pickupPoint = 'Pickup Point';
+  static const _pickupFromPickupPoint = 'From Pickup Point';
+
+  static const _dropoffHome = 'Home Delivery';
+  static const _dropoffPickupSpecific = 'Specific Pickup Point';
+  static const _dropoffPickupNearest = 'Nearest Pickup Point';
 
   static const DeliveryCompanyMode _deliveryCompanyMode =
       DeliveryCompanyMode.linkedOnly;
+
+  static const int _maxRecommendedCompanies = 3;
 
   @override
   void initState() {
@@ -83,30 +104,40 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     setState(() {
       _loadingFormData = true;
       _loadError = null;
+      _automationHint = null;
     });
 
     try {
       final merchantId = await _resolveMerchantId();
-      final pickupPoints = await _loadPickupPoints();
+      final branch = await _resolveMerchantBranch(merchantId);
 
       if (!mounted) return;
       setState(() {
         _merchantId = merchantId;
+        _merchantBranchId = branch?.id;
+        _merchantBranchLat = branch?.lat;
+        _merchantBranchLng = branch?.lng;
+        _merchantBranchName = branch?.name;
+        _merchantBranchAddress = branch?.addressText;
       });
 
-      final deliveryCompanies = await _loadDeliveryCompanies();
+      final pickupPoints = await _loadPickupPoints();
+      final deliveryCompanies = await _loadDeliveryCompanies(merchantId);
 
       if (!mounted) return;
 
       setState(() {
         _pickupPoints = pickupPoints;
-        _deliveryCompanies = deliveryCompanies;
-        _selectedPickupPointId =
+        _allDeliveryCompanies = deliveryCompanies;
+        _filteredDeliveryCompanies = const [];
+        _selectedSourcePickupPointId =
             pickupPoints.length == 1 ? pickupPoints.first.id : null;
-        _selectedDeliveryCompanyId =
-            deliveryCompanies.length == 1 ? deliveryCompanies.first.id : null;
+        _selectedDestinationPickupPointId = null;
+        _selectedDeliveryCompanyId = null;
         _loadingFormData = false;
       });
+
+      await _recomputeAutomation();
     } catch (e) {
       if (!mounted) return;
       final message = e.toString().replaceFirst('Exception: ', '');
@@ -138,7 +169,29 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     return merchantId;
   }
 
-  Future<List<_SelectOption>> _loadPickupPoints() async {
+  Future<_MerchantBranchOption?> _resolveMerchantBranch(String merchantId) async {
+    final rows = await _client
+        .from('merchant_branches')
+        .select('id, merchant_id, name, address_text, lat, lng, is_active')
+        .eq('merchant_id', merchantId)
+        .eq('is_active', true)
+        .order('created_at', ascending: false)
+        .limit(1);
+
+    final raw = List<Map<String, dynamic>>.from(rows);
+    if (raw.isEmpty) return null;
+
+    final row = raw.first;
+    return _MerchantBranchOption(
+      id: row['id']?.toString() ?? '',
+      name: (row['name']?.toString() ?? '').trim(),
+      addressText: (row['address_text']?.toString() ?? '').trim(),
+      lat: _asDouble(row['lat']),
+      lng: _asDouble(row['lng']),
+    );
+  }
+
+  Future<List<_PickupPointOption>> _loadPickupPoints() async {
     try {
       final rows = await _client
           .from('pickup_points')
@@ -146,6 +199,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
             id,
             name,
             address_text,
+            lat,
+            lng,
+            city,
+            area,
+            is_active,
+            status,
             merchant_id,
             branch_id,
             merchant_branches:branch_id (
@@ -154,6 +213,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
             )
           ''')
           .eq('is_active', true)
+          .inFilter('status', ['approved', 'active'])
           .order('name');
 
       final raw = List<Map<String, dynamic>>.from(rows);
@@ -162,6 +222,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           .map((row) {
             final pickupName = (row['name']?.toString() ?? '').trim();
             final pickupAddress = (row['address_text']?.toString() ?? '').trim();
+            final city = (row['city']?.toString() ?? '').trim();
+            final area = (row['area']?.toString() ?? '').trim();
+            final lat = _asDouble(row['lat']);
+            final lng = _asDouble(row['lng']);
 
             final branch = row['merchant_branches'];
             String branchName = '';
@@ -179,10 +243,15 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                 ? '$pickupName — $branchName'
                 : pickupName;
 
-            return _SelectOption(
+            return _PickupPointOption(
               id: row['id']?.toString() ?? '',
               name: title,
               subtitle: pickupAddress.isEmpty ? null : pickupAddress,
+              addressText: pickupAddress,
+              lat: lat,
+              lng: lng,
+              city: city,
+              area: area,
             );
           })
           .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
@@ -199,21 +268,88 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
   }
 
-  Future<List<_SelectOption>> _loadDeliveryCompanies() async {
-    final merchantId = _merchantId;
-    if (merchantId == null || merchantId.isEmpty) {
-      return const [];
+  Future<List<_DeliveryCompanyOption>> _loadDeliveryCompanies(
+    String merchantId,
+  ) async {
+    final basicOptions = switch (_deliveryCompanyMode) {
+      DeliveryCompanyMode.allApproved => await _loadApprovedDeliveryCompanies(),
+      DeliveryCompanyMode.linkedOnly => await _loadLinkedDeliveryCompanies(merchantId),
+    };
+
+    if (basicOptions.isEmpty) return const [];
+
+    final companyIds = basicOptions.map((e) => e.id).toList();
+
+    List<Map<String, dynamic>> hubRows = const [];
+    List<Map<String, dynamic>> capacityRows = const [];
+
+    try {
+      final hubs = await _client
+          .from('delivery_company_hubs')
+          .select(
+            'id, company_id, name, address_text, city, area, lat, lng, is_active',
+          )
+          .inFilter('company_id', companyIds)
+          .eq('is_active', true);
+
+      hubRows = List<Map<String, dynamic>>.from(hubs);
+    } catch (_) {}
+
+    try {
+      final capacities = await _client
+          .from('delivery_company_capacity')
+          .select(
+            'company_id, max_active_orders, max_daily_orders, current_active_orders, current_daily_orders, is_active',
+          )
+          .inFilter('company_id', companyIds);
+
+      capacityRows = List<Map<String, dynamic>>.from(capacities);
+    } catch (_) {}
+
+    final hubsByCompany = <String, List<_CompanyHub>>{};
+    for (final row in hubRows) {
+      final companyId = row['company_id']?.toString();
+      if (companyId == null || companyId.isEmpty) continue;
+
+      final hub = _CompanyHub(
+        id: row['id']?.toString() ?? '',
+        name: (row['name']?.toString() ?? '').trim(),
+        addressText: (row['address_text']?.toString() ?? '').trim(),
+        city: (row['city']?.toString() ?? '').trim(),
+        area: (row['area']?.toString() ?? '').trim(),
+        lat: _asDouble(row['lat']),
+        lng: _asDouble(row['lng']),
+        isActive: row['is_active'] == true,
+      );
+
+      hubsByCompany.putIfAbsent(companyId, () => <_CompanyHub>[]).add(hub);
     }
 
-    switch (_deliveryCompanyMode) {
-      case DeliveryCompanyMode.allApproved:
-        return _loadApprovedDeliveryCompanies();
-      case DeliveryCompanyMode.linkedOnly:
-        return _loadLinkedDeliveryCompanies(merchantId);
+    final capacityByCompany = <String, _CompanyCapacity>{};
+    for (final row in capacityRows) {
+      final companyId = row['company_id']?.toString();
+      if (companyId == null || companyId.isEmpty) continue;
+
+      capacityByCompany[companyId] = _CompanyCapacity(
+        maxActiveOrders: _asInt(row['max_active_orders']),
+        maxDailyOrders: _asInt(row['max_daily_orders']),
+        currentActiveOrders: _asInt(row['current_active_orders']) ?? 0,
+        currentDailyOrders: _asInt(row['current_daily_orders']) ?? 0,
+        isActive: row['is_active'] == true,
+      );
     }
+
+    return basicOptions.map((basic) {
+      return _DeliveryCompanyOption(
+        id: basic.id,
+        name: basic.name,
+        hubs: hubsByCompany[basic.id] ?? const [],
+        capacity: capacityByCompany[basic.id],
+      );
+    }).toList();
   }
 
-  Future<List<_SelectOption>> _loadApprovedDeliveryCompanies() async {
+  Future<List<_DeliveryCompanyBasicOption>> _loadApprovedDeliveryCompanies() async {
     try {
       final companyRows = await _client
           .from('delivery_companies')
@@ -223,7 +359,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
       final options = List<Map<String, dynamic>>.from(companyRows)
           .map(
-            (row) => _SelectOption(
+            (row) => _DeliveryCompanyBasicOption(
               id: row['id']?.toString() ?? '',
               name: (row['name']?.toString() ?? '').trim(),
             ),
@@ -241,7 +377,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
   }
 
-  Future<List<_SelectOption>> _loadLinkedDeliveryCompanies(
+  Future<List<_DeliveryCompanyBasicOption>> _loadLinkedDeliveryCompanies(
     String merchantId,
   ) async {
     try {
@@ -275,7 +411,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
             }
 
             if (companyMap == null) {
-              return const _SelectOption(id: '', name: '');
+              return const _DeliveryCompanyBasicOption(id: '', name: '');
             }
 
             final status =
@@ -284,10 +420,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
             final name = (companyMap['name']?.toString() ?? '').trim();
 
             if (status != 'approved') {
-              return const _SelectOption(id: '', name: '');
+              return const _DeliveryCompanyBasicOption(id: '', name: '');
             }
 
-            return _SelectOption(id: id, name: name);
+            return _DeliveryCompanyBasicOption(id: id, name: name);
           })
           .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
           .toList();
@@ -324,15 +460,33 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     return double.tryParse(value);
   }
 
+  bool get _requiresCustomerMap {
+    return _dropoffType == _dropoffHome || _dropoffType == _dropoffPickupNearest;
+  }
+
   bool get _canSubmit {
     final hasCustomer = _customerNameCtrl.text.trim().isNotEmpty;
     final hasPhone = _phoneCtrl.text.trim().isNotEmpty;
-    final hasAddress = _addressCtrl.text.trim().isNotEmpty;
+
+    final sourceOk = _pickupSourceType != _pickupFromPickupPoint ||
+        _selectedSourcePickupPointId != null;
+
+    final destinationOk = switch (_dropoffType) {
+      _dropoffHome => _addressCtrl.text.trim().isNotEmpty,
+      _dropoffPickupSpecific => _selectedDestinationPickupPointId != null,
+      _dropoffPickupNearest =>
+        _selectedDestinationPickupPointId != null &&
+        _addressCtrl.text.trim().isNotEmpty,
+      _ => false,
+    };
+
+    final mapOk = !_requiresCustomerMap ||
+        (_selectedCustomerLat != null && _selectedCustomerLng != null);
+
     final hasPaymentAmount = _paymentAmount > 0;
-    final pickupOk =
-        _pickupMethod != _pickupPoint || _selectedPickupPointId != null;
     final companyOk =
-        _deliveryCompanies.isEmpty || _selectedDeliveryCompanyId != null;
+        _filteredDeliveryCompanies.isEmpty || _selectedDeliveryCompanyId != null;
+
     final itemCount = _parseItemCount();
     final itemCountOk = itemCount == null || itemCount > 0;
 
@@ -341,9 +495,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         _merchantId != null &&
         hasCustomer &&
         hasPhone &&
-        hasAddress &&
+        sourceOk &&
+        destinationOk &&
+        mapOk &&
         hasPaymentAmount &&
-        pickupOk &&
         companyOk &&
         itemCountOk;
   }
@@ -368,6 +523,289 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         _addressCtrl.text = result.address.trim();
       }
     });
+
+    await _recomputeAutomation();
+  }
+
+  Future<void> _onPickupSourceChanged(String value) async {
+    setState(() {
+      _pickupSourceType = value;
+      if (_pickupSourceType != _pickupFromPickupPoint) {
+        _selectedSourcePickupPointId = null;
+      } else if (_pickupPoints.length == 1) {
+        _selectedSourcePickupPointId = _pickupPoints.first.id;
+      }
+    });
+
+    await _recomputeAutomation();
+  }
+
+  Future<void> _onDropoffTypeChanged(String value) async {
+    setState(() {
+      _dropoffType = value;
+
+      if (_dropoffType == _dropoffHome) {
+        _selectedDestinationPickupPointId = null;
+      } else if (_dropoffType == _dropoffPickupSpecific) {
+        if (_pickupPoints.length == 1) {
+          _selectedDestinationPickupPointId = _pickupPoints.first.id;
+        }
+      } else if (_dropoffType == _dropoffPickupNearest) {
+        _selectedDestinationPickupPointId = null;
+      }
+    });
+
+    await _recomputeAutomation();
+  }
+
+  Future<void> _onSourcePickupChanged(String? value) async {
+    setState(() => _selectedSourcePickupPointId = value);
+    await _recomputeAutomation();
+  }
+
+  Future<void> _onDestinationPickupChanged(String? value) async {
+    setState(() => _selectedDestinationPickupPointId = value);
+    await _recomputeAutomation();
+  }
+
+  Future<void> _recomputeAutomation() async {
+    if (!mounted) return;
+
+    String? info;
+    String? nearestDestinationPickupId = _selectedDestinationPickupPointId;
+
+    if (_dropoffType == _dropoffPickupNearest) {
+      final nearest = _findNearestEligiblePickupPoint(
+        lat: _selectedCustomerLat,
+        lng: _selectedCustomerLng,
+      );
+
+      if (nearest != null) {
+        nearestDestinationPickupId = nearest.id;
+      } else {
+        nearestDestinationPickupId = null;
+        info =
+            'Nearest pickup automation needs a customer map location and pickup points with valid coordinates.';
+      }
+    }
+
+    final sourceLocation = _resolveSourceLocation();
+    final destinationLocation = _resolveDestinationLocation(
+      overrideNearestPickupId: nearestDestinationPickupId,
+    );
+
+    if (sourceLocation == null || destinationLocation == null) {
+      info ??=
+          'Delivery company automation will activate once both source and destination locations are available.';
+
+      if (!mounted) return;
+      setState(() {
+        _selectedDestinationPickupPointId = nearestDestinationPickupId;
+        _recommendedDeliveryCompanyId = null;
+        _filteredDeliveryCompanies = const [];
+        _selectedDeliveryCompanyId = null;
+        _automationHint = info;
+      });
+      return;
+    }
+
+    final ranked = _rankDeliveryCompanies(
+      source: sourceLocation,
+      destination: destinationLocation,
+    );
+
+    final topCompanies = ranked
+        .take(_maxRecommendedCompanies)
+        .map((rankedCompany) {
+          for (final company in _allDeliveryCompanies) {
+            if (company.id == rankedCompany.id) return company;
+          }
+          return null;
+        })
+        .whereType<_DeliveryCompanyOption>()
+        .toList();
+
+    String? nextSelectedCompanyId;
+    String? nextRecommendedCompanyId;
+
+    if (topCompanies.isNotEmpty) {
+      nextRecommendedCompanyId = topCompanies.first.id;
+
+      final currentStillValid = topCompanies.any(
+        (company) => company.id == _selectedDeliveryCompanyId,
+      );
+
+      nextSelectedCompanyId =
+          currentStillValid ? _selectedDeliveryCompanyId : topCompanies.first.id;
+
+      final best = ranked.first;
+      final nearestHubName = best.bestHub?.name;
+      final sourceLabel = _sourceLabel();
+      final destinationLabel = _destinationLabel(
+        overrideNearestPickupId: nearestDestinationPickupId,
+      );
+
+      info =
+          'Top ${topCompanies.length} companies filtered by location and capacity. '
+          'Best match: ${best.name}'
+          '${nearestHubName == null || nearestHubName.isEmpty ? '' : ' via $nearestHubName'} '
+          'for $sourceLabel → $destinationLabel.';
+    } else {
+      info ??=
+          'No delivery company matched this route after location and capacity filtering.';
+      nextSelectedCompanyId = null;
+      nextRecommendedCompanyId = null;
+    }
+
+    if (!mounted) return;
+
+    setState(() {
+      _selectedDestinationPickupPointId = nearestDestinationPickupId;
+      _filteredDeliveryCompanies = topCompanies;
+      _selectedDeliveryCompanyId = nextSelectedCompanyId;
+      _recommendedDeliveryCompanyId = nextRecommendedCompanyId;
+      _automationHint = info;
+    });
+  }
+
+  _LatLngOption? _resolveSourceLocation() {
+    if (_pickupSourceType == _pickupFromStore) {
+      if (_merchantBranchLat == null || _merchantBranchLng == null) return null;
+      return _LatLngOption(
+        lat: _merchantBranchLat!,
+        lng: _merchantBranchLng!,
+      );
+    }
+
+    final sourcePickup = _selectedSourcePickupPoint();
+    if (sourcePickup == null ||
+        sourcePickup.lat == null ||
+        sourcePickup.lng == null) {
+      return null;
+    }
+
+    return _LatLngOption(lat: sourcePickup.lat!, lng: sourcePickup.lng!);
+  }
+
+  _LatLngOption? _resolveDestinationLocation({
+    String? overrideNearestPickupId,
+  }) {
+    switch (_dropoffType) {
+      case _dropoffHome:
+        if (_selectedCustomerLat == null || _selectedCustomerLng == null) {
+          return null;
+        }
+        return _LatLngOption(
+          lat: _selectedCustomerLat!,
+          lng: _selectedCustomerLng!,
+        );
+
+      case _dropoffPickupSpecific:
+        final point = _destinationPickupPoint();
+        if (point == null || point.lat == null || point.lng == null) {
+          return null;
+        }
+        return _LatLngOption(lat: point.lat!, lng: point.lng!);
+
+      case _dropoffPickupNearest:
+        final point = _pickupPointById(overrideNearestPickupId);
+        if (point == null || point.lat == null || point.lng == null) {
+          return null;
+        }
+        return _LatLngOption(lat: point.lat!, lng: point.lng!);
+
+      default:
+        return null;
+    }
+  }
+
+  _PickupPointOption? _findNearestEligiblePickupPoint({
+    required double? lat,
+    required double? lng,
+  }) {
+    if (lat == null || lng == null) return null;
+
+    final eligible = _pickupPoints
+        .where((point) => point.lat != null && point.lng != null)
+        .toList();
+
+    if (eligible.isEmpty) return null;
+
+    eligible.sort((a, b) {
+      final da = _distanceKm(lat, lng, a.lat!, a.lng!);
+      final db = _distanceKm(lat, lng, b.lat!, b.lng!);
+      return da.compareTo(db);
+    });
+
+    return eligible.first;
+  }
+
+  List<_RankedCompany> _rankDeliveryCompanies({
+    required _LatLngOption source,
+    required _LatLngOption destination,
+  }) {
+    final ranked = <_RankedCompany>[];
+
+    for (final company in _allDeliveryCompanies) {
+      if (!_companyHasAvailableCapacity(company)) continue;
+
+      _CompanyHub? bestHub;
+      double? bestScore;
+
+      for (final hub in company.hubs) {
+        if (!hub.isUsable) continue;
+
+        final sourceDistance = _distanceKm(
+          source.lat,
+          source.lng,
+          hub.lat!,
+          hub.lng!,
+        );
+        final destinationDistance = _distanceKm(
+          destination.lat,
+          destination.lng,
+          hub.lat!,
+          hub.lng!,
+        );
+
+        final pickupPenalty =
+            _dropoffType == _dropoffHome ? 1.0 : -0.35;
+
+        final score = sourceDistance + destinationDistance + pickupPenalty;
+
+        if (bestScore == null || score < bestScore) {
+          bestScore = score;
+          bestHub = hub;
+        }
+      }
+
+      if (bestHub != null && bestScore != null) {
+        ranked.add(
+          _RankedCompany(
+            id: company.id,
+            name: company.name,
+            bestHub: bestHub,
+            score: bestScore,
+          ),
+        );
+      }
+    }
+
+    ranked.sort((a, b) => a.score.compareTo(b.score));
+    return ranked;
+  }
+
+  bool _companyHasAvailableCapacity(_DeliveryCompanyOption company) {
+    final cap = company.capacity;
+    if (cap == null) return true;
+    if (!cap.isActive) return false;
+
+    final activeOk = cap.maxActiveOrders == null ||
+        cap.currentActiveOrders < cap.maxActiveOrders!;
+    final dailyOk = cap.maxDailyOrders == null ||
+        cap.currentDailyOrders < cap.maxDailyOrders!;
+
+    return activeOk && dailyOk;
   }
 
   Future<void> _submitOrder() async {
@@ -384,12 +822,29 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       return;
     }
 
-    if (_pickupMethod == _pickupPoint && _selectedPickupPointId == null) {
-      _showSnackBar('Please select a pickup point.', isError: true);
+    if (_pickupSourceType == _pickupFromPickupPoint &&
+        _selectedSourcePickupPointId == null) {
+      _showSnackBar('Please select a source pickup point.', isError: true);
       return;
     }
 
-    if (_deliveryCompanies.isNotEmpty && _selectedDeliveryCompanyId == null) {
+    if (_dropoffType == _dropoffPickupSpecific &&
+        _selectedDestinationPickupPointId == null) {
+      _showSnackBar('Please select a destination pickup point.', isError: true);
+      return;
+    }
+
+    if (_dropoffType == _dropoffPickupNearest &&
+        _selectedDestinationPickupPointId == null) {
+      _showSnackBar(
+        'Could not determine the nearest pickup point. Please pick a valid map location.',
+        isError: true,
+      );
+      return;
+    }
+
+    if (_filteredDeliveryCompanies.isNotEmpty &&
+        _selectedDeliveryCompanyId == null) {
       _showSnackBar('Please select a delivery company.', isError: true);
       return;
     }
@@ -405,22 +860,34 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       return;
     }
 
+    if (_requiresCustomerMap &&
+        (_selectedCustomerLat == null || _selectedCustomerLng == null)) {
+      _showSnackBar(
+        'Please select the customer location on the map.',
+        isError: true,
+      );
+      return;
+    }
+
     setState(() => _submitting = true);
 
     try {
+      final effectiveAddress = _effectiveOrderAddressForCreation();
+
       final result = await _paymentService.createOrderWithPayment(
         merchantId: merchantId,
-        branchId: null,
+        branchId: _merchantBranchId,
         customerName: _customerNameCtrl.text.trim(),
         customerPhone: _phoneCtrl.text.trim(),
-        customerEmail: _emailCtrl.text.trim().isEmpty
-            ? null
-            : _emailCtrl.text.trim(),
-        address: _addressCtrl.text.trim(),
+        customerEmail:
+            _emailCtrl.text.trim().isEmpty ? null : _emailCtrl.text.trim(),
+        address: effectiveAddress,
         amount: _paymentAmount,
         paymentMethod: _paymentMethod,
         pickupPointId:
-            _pickupMethod == _pickupPoint ? _selectedPickupPointId : null,
+            _pickupSourceType == _pickupFromPickupPoint
+                ? _selectedSourcePickupPointId
+                : null,
         deliveryCompanyId: _selectedDeliveryCompanyId,
         notes: _mergedNotes(),
       );
@@ -441,7 +908,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         builder: (_) => _SuccessDialog(
           orderId: orderId,
           trackingCode: trackingCode,
-          pickupMethod: _summaryPickup,
+          pickupMethod: _summaryPickupSource,
+          dropoffMethod: _summaryDropoff,
           paymentMethod: _paymentMethod.displayName,
           amount: _summaryPaymentAmount,
           packageType: _summaryPackageType,
@@ -449,6 +917,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           weight: _summaryWeight,
           volume: _summaryVolume,
           mapLocation: _summaryMapLocation,
+          company: _summaryCompany,
         ),
       );
 
@@ -464,38 +933,293 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   }
 
   Future<void> _saveOrderExtras(String orderId) async {
-    if (orderId.trim().isEmpty || orderId == '-') return;
+  if (orderId.trim().isEmpty || orderId == '-') return;
 
-    await _client.from('orders').update({
-      'parcel_description': _parcelDescriptionCtrl.text.trim().isEmpty
-          ? null
-          : _parcelDescriptionCtrl.text.trim(),
-      'item_count': _parseItemCount(),
-      'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
-      'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
-      'customer_lat': _selectedCustomerLat,
-      'customer_lng': _selectedCustomerLng,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', orderId);
+  final destinationPickupId = switch (_dropoffType) {
+    _dropoffPickupSpecific => _selectedDestinationPickupPointId,
+    _dropoffPickupNearest => _selectedDestinationPickupPointId,
+    _ => null,
+  };
+
+  await _client.from('orders').update({
+    'branch_id': _merchantBranchId,
+    'pickup_source_type':
+        _pickupSourceType == _pickupFromPickupPoint ? 'pickup_point' : 'store',
+    'pickup_point_id':
+        _pickupSourceType == _pickupFromPickupPoint
+            ? _selectedSourcePickupPointId
+            : null,
+    'destination_pickup_point_id': destinationPickupId,
+    'dropoff_type': _normalizedDropoffType(),
+    'parcel_description': _parcelDescriptionCtrl.text.trim().isEmpty
+        ? null
+        : _parcelDescriptionCtrl.text.trim(),
+    'item_count': _parseItemCount(),
+    'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
+    'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
+    'customer_address_text': _customerAddressForStorage(),
+    'customer_lat': _selectedCustomerLat,
+    'customer_lng': _selectedCustomerLng,
+    'delivery_company_id': _selectedDeliveryCompanyId,
+    'notes': _mergedNotes(),
+    'updated_at': DateTime.now().toUtc().toIso8601String(),
+  }).eq('id', orderId);
+}
+
+  String _normalizedDropoffType() {
+    switch (_dropoffType) {
+      case _dropoffHome:
+        return 'home';
+      case _dropoffPickupSpecific:
+        return 'pickup_point_specific';
+      case _dropoffPickupNearest:
+        return 'pickup_point_nearest';
+      default:
+        return 'home';
+    }
+  }
+
+  String _effectiveOrderAddressForCreation() {
+    switch (_dropoffType) {
+      case _dropoffHome:
+        return _addressCtrl.text.trim();
+
+      case _dropoffPickupSpecific:
+        return _destinationPickupPoint()?.addressText.trim().isNotEmpty == true
+            ? _destinationPickupPoint()!.addressText
+            : _addressCtrl.text.trim();
+
+      case _dropoffPickupNearest:
+        return _destinationPickupPoint()?.addressText.trim().isNotEmpty == true
+            ? _destinationPickupPoint()!.addressText
+            : _addressCtrl.text.trim();
+
+      default:
+        return _addressCtrl.text.trim();
+    }
+  }
+
+  String? _customerAddressForStorage() {
+    switch (_dropoffType) {
+      case _dropoffHome:
+        return _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim();
+      case _dropoffPickupNearest:
+        return _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim();
+      case _dropoffPickupSpecific:
+        return _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim();
+      default:
+        return _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim();
+    }
   }
 
   String? _mergedNotes() {
-    final parts = <String>[];
-    final notes = _notesCtrl.text.trim();
-    final timeWindow = _timeWindowCtrl.text.trim();
+  final parts = <String>[];
 
-    parts.add('Pickup method: $_pickupMethod');
-    if (timeWindow.isNotEmpty) {
-      parts.add('Preferred time window: $timeWindow');
-    }
-    if (_selectedCustomerLat != null && _selectedCustomerLng != null) {
-      parts.add(
-        'Map location: ${_selectedCustomerLat!.toStringAsFixed(6)}, ${_selectedCustomerLng!.toStringAsFixed(6)}',
-      );
-    }
-    if (notes.isNotEmpty) parts.add(notes);
+  final merchantNotes = _notesCtrl.text.trim();
+  final timeWindow = _timeWindowCtrl.text.trim();
+  final selectedCompany = _selectedCompany();
+  final customerName = _customerNameCtrl.text.trim();
+  final customerPhone = _phoneCtrl.text.trim();
+  final customerEmail = _emailCtrl.text.trim();
 
-    return parts.isEmpty ? null : parts.join('\n');
+  parts.add('=== ROUTING DETAILS ===');
+  parts.add(
+    'Pickup source type: ${_pickupSourceType == _pickupFromPickupPoint ? 'pickup_point' : 'store'}',
+  );
+  parts.add('Pickup source: ${_sourceLabel()}');
+
+  final sourceAddress = _sourceAddressLabel();
+  if (sourceAddress != null) {
+    parts.add('Pickup source address: $sourceAddress');
+  }
+
+  final sourceCoords = _sourceCoordinatesLabel();
+  if (sourceCoords != null) {
+    parts.add('Pickup source coordinates: $sourceCoords');
+  }
+
+  parts.add('Dropoff type: ${_normalizedDropoffType()}');
+  parts.add('Dropoff destination: ${_destinationLabel()}');
+
+  final destinationAddress = _destinationAddressLabel();
+  if (destinationAddress != null) {
+    parts.add('Dropoff address: $destinationAddress');
+  }
+
+  final destinationCoords = _destinationCoordinatesLabel();
+  if (destinationCoords != null) {
+    parts.add('Dropoff coordinates: $destinationCoords');
+  }
+
+  if (_selectedSourcePickupPointId != null) {
+    parts.add('Source pickup point id: $_selectedSourcePickupPointId');
+  }
+
+  if (_selectedDestinationPickupPointId != null) {
+    parts.add('Destination pickup point id: $_selectedDestinationPickupPointId');
+  }
+
+  parts.add('');
+  parts.add('=== CUSTOMER DETAILS ===');
+
+  if (customerName.isNotEmpty) {
+    parts.add('Customer name: $customerName');
+  }
+
+  if (customerPhone.isNotEmpty) {
+    parts.add('Customer phone: $customerPhone');
+  }
+
+  if (customerEmail.isNotEmpty) {
+    parts.add('Customer email: $customerEmail');
+  }
+
+  final requestedAddress = _addressCtrl.text.trim();
+  if (requestedAddress.isNotEmpty) {
+    parts.add('Customer requested address: $requestedAddress');
+  }
+
+  final requestedCoords = _customerRequestedCoordinatesLabel();
+  if (requestedCoords != null) {
+    parts.add('Customer requested coordinates: $requestedCoords');
+  }
+
+  parts.add('');
+  parts.add('=== DELIVERY COMPANY ===');
+
+  if (selectedCompany != null) {
+    parts.add('Assigned delivery company: ${selectedCompany.name}');
+    parts.add(
+      'Assignment mode: ${_recommendedDeliveryCompanyId == selectedCompany.id ? 'auto_recommended' : 'manual_selection'}',
+    );
+  }
+
+  if (timeWindow.isNotEmpty) {
+    parts.add('Preferred time window: $timeWindow');
+  }
+
+  if (merchantNotes.isNotEmpty) {
+    parts.add('');
+    parts.add('=== MERCHANT NOTES ===');
+    parts.add(merchantNotes);
+  }
+
+  return parts.isEmpty ? null : parts.join('\n');
+}
+  String? _sourceAddressLabel() {
+  if (_pickupSourceType == _pickupFromStore) {
+    final address = _merchantBranchAddress?.trim();
+    if (address != null && address.isNotEmpty) return address;
+    return null;
+  }
+
+  final sourcePickup = _selectedSourcePickupPoint();
+  final address = sourcePickup?.addressText.trim();
+  if (address != null && address.isNotEmpty) return address;
+
+  return null;
+}
+
+String? _sourceCoordinatesLabel() {
+  if (_pickupSourceType == _pickupFromStore) {
+    if (_merchantBranchLat != null && _merchantBranchLng != null) {
+      return _formatCoordinates(_merchantBranchLat!, _merchantBranchLng!);
+    }
+    return null;
+  }
+
+  final sourcePickup = _selectedSourcePickupPoint();
+  if (sourcePickup?.lat != null && sourcePickup?.lng != null) {
+    return _formatCoordinates(sourcePickup!.lat!, sourcePickup.lng!);
+  }
+
+  return null;
+}
+
+String? _destinationAddressLabel() {
+  switch (_dropoffType) {
+    case _dropoffHome:
+      final address = _addressCtrl.text.trim();
+      return address.isEmpty ? null : address;
+
+    case _dropoffPickupSpecific:
+    case _dropoffPickupNearest:
+      final destinationPickup = _destinationPickupPoint();
+      final pickupAddress = destinationPickup?.addressText.trim();
+      if (pickupAddress != null && pickupAddress.isNotEmpty) {
+        return pickupAddress;
+      }
+
+      final fallback = _addressCtrl.text.trim();
+      return fallback.isEmpty ? null : fallback;
+
+    default:
+      final address = _addressCtrl.text.trim();
+      return address.isEmpty ? null : address;
+  }
+}
+
+String? _destinationCoordinatesLabel() {
+  switch (_dropoffType) {
+    case _dropoffHome:
+      if (_selectedCustomerLat != null && _selectedCustomerLng != null) {
+        return _formatCoordinates(_selectedCustomerLat!, _selectedCustomerLng!);
+      }
+      return null;
+
+    case _dropoffPickupSpecific:
+    case _dropoffPickupNearest:
+      final destinationPickup = _destinationPickupPoint();
+      if (destinationPickup?.lat != null && destinationPickup?.lng != null) {
+        return _formatCoordinates(
+          destinationPickup!.lat!,
+          destinationPickup.lng!,
+        );
+      }
+      return null;
+
+    default:
+      return null;
+  }
+}
+
+String? _customerRequestedCoordinatesLabel() {
+  if (_selectedCustomerLat != null && _selectedCustomerLng != null) {
+    return _formatCoordinates(_selectedCustomerLat!, _selectedCustomerLng!);
+  }
+  return null;
+}
+
+String _formatCoordinates(double lat, double lng) {
+  return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}';
+}
+
+  String _sourceLabel() {
+    if (_pickupSourceType == _pickupFromStore) {
+      return _merchantBranchName?.isNotEmpty == true
+          ? _merchantBranchName!
+          : _pickupFromStore;
+    }
+
+    return _selectedSourcePickupPoint()?.displayName ?? 'Pickup Point';
+  }
+
+  String _destinationLabel({String? overrideNearestPickupId}) {
+    switch (_dropoffType) {
+      case _dropoffHome:
+        return _dropoffHome;
+      case _dropoffPickupSpecific:
+        return _destinationPickupPoint()?.displayName ?? 'Specific Pickup Point';
+      case _dropoffPickupNearest:
+        final point = _pickupPointById(
+          overrideNearestPickupId ?? _selectedDestinationPickupPointId,
+        );
+        return point == null
+            ? 'Nearest Pickup Point'
+            : 'Nearest Pickup Point (${point.displayName})';
+      default:
+        return _dropoffHome;
+    }
   }
 
   String _resultValue(Map<String, dynamic> result, List<String> keys) {
@@ -538,17 +1262,23 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     _estimatedVolumeCtrl.clear();
 
     setState(() {
-      _pickupMethod = _pickupFromStore;
-      _selectedPickupPointId =
+      _pickupSourceType = _pickupFromStore;
+      _dropoffType = _dropoffHome;
+      _selectedSourcePickupPointId =
           _pickupPoints.length == 1 ? _pickupPoints.first.id : null;
-      _selectedDeliveryCompanyId =
-          _deliveryCompanies.length == 1 ? _deliveryCompanies.first.id : null;
+      _selectedDestinationPickupPointId = null;
+      _selectedDeliveryCompanyId = null;
+      _recommendedDeliveryCompanyId = null;
+      _filteredDeliveryCompanies = const [];
       _paymentMethod = PaymentMethod.cashAtPickup;
       _paymentAmount = 0;
       _paymentFieldRevision++;
       _selectedCustomerLat = null;
       _selectedCustomerLng = null;
+      _automationHint = null;
     });
+
+    _recomputeAutomation();
   }
 
   void _showSnackBar(String message, {bool isError = false}) {
@@ -561,17 +1291,31 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     );
   }
 
-  _SelectOption? _selectedPickupPoint() {
+  _PickupPointOption? _pickupPointById(String? id) {
+    if (id == null || id.isEmpty) return null;
     for (final point in _pickupPoints) {
-      if (point.id == _selectedPickupPointId) return point;
+      if (point.id == id) return point;
     }
     return null;
   }
 
-  _SelectOption? _selectedCompany() {
-    for (final company in _deliveryCompanies) {
+  _PickupPointOption? _selectedSourcePickupPoint() {
+    return _pickupPointById(_selectedSourcePickupPointId);
+  }
+
+  _PickupPointOption? _destinationPickupPoint() {
+    return _pickupPointById(_selectedDestinationPickupPointId);
+  }
+
+  _DeliveryCompanyOption? _selectedCompany() {
+    for (final company in _filteredDeliveryCompanies) {
       if (company.id == _selectedDeliveryCompanyId) return company;
     }
+
+    for (final company in _allDeliveryCompanies) {
+      if (company.id == _selectedDeliveryCompanyId) return company;
+    }
+
     return null;
   }
 
@@ -581,16 +1325,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   String get _summaryEmail =>
       _emailCtrl.text.trim().isEmpty ? '-' : _emailCtrl.text.trim();
 
-  String get _summaryPickup {
-    if (_pickupMethod != _pickupPoint) return _pickupFromStore;
+  String get _summaryPickupSource => _sourceLabel();
 
-    final selected = _selectedPickupPoint();
-    if (selected == null) return 'Not selected';
-    return selected.displayName;
-  }
+  String get _summaryDropoff => _destinationLabel();
 
   String get _summaryCompany {
-    if (_deliveryCompanies.isEmpty) return 'No companies found';
+    if (_filteredDeliveryCompanies.isEmpty) return 'No recommended companies';
     return _selectedCompany()?.name ?? 'Not selected';
   }
 
@@ -627,19 +1367,17 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   }
 
   String get _deliveryCompanySubtitle {
-    switch (_deliveryCompanyMode) {
-      case DeliveryCompanyMode.allApproved:
-        return 'Select any approved delivery company';
-      case DeliveryCompanyMode.linkedOnly:
-        return 'Select a delivery company linked to this merchant';
-    }
+    return 'Best 3 companies by location and capacity';
   }
 
   String get _submitHint {
-    if (_loadingFormData) return 'Loading merchant delivery data...';
+    if (_loadingFormData) return 'Loading merchant routing data...';
     if (_submitting) return 'Creating order and payment...';
     if (_loadError != null) {
       return _loadError ?? 'Unable to load merchant data.';
+    }
+    if (_automationHint != null && _automationHint!.trim().isNotEmpty) {
+      return _automationHint!;
     }
     if (_canSubmit) return 'Ready to create the delivery order.';
 
@@ -649,13 +1387,23 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     if (_phoneCtrl.text.trim().isEmpty) {
       return 'Add phone number to continue.';
     }
-    if (_addressCtrl.text.trim().isEmpty) {
+    if (_pickupSourceType == _pickupFromPickupPoint &&
+        _selectedSourcePickupPointId == null) {
+      return 'Select a source pickup point to continue.';
+    }
+    if (_dropoffType == _dropoffHome && _addressCtrl.text.trim().isEmpty) {
       return 'Add dropoff address to continue.';
     }
-    if (_pickupMethod == _pickupPoint && _selectedPickupPointId == null) {
-      return 'Select a pickup point to continue.';
+    if (_dropoffType == _dropoffPickupSpecific &&
+        _selectedDestinationPickupPointId == null) {
+      return 'Select a destination pickup point to continue.';
     }
-    if (_deliveryCompanies.isNotEmpty && _selectedDeliveryCompanyId == null) {
+    if (_dropoffType == _dropoffPickupNearest &&
+        (_selectedCustomerLat == null || _selectedCustomerLng == null)) {
+      return 'Pick the customer location on the map to find the nearest pickup point.';
+    }
+    if (_filteredDeliveryCompanies.isNotEmpty &&
+        _selectedDeliveryCompanyId == null) {
       return 'Select a delivery company to continue.';
     }
     if (_paymentAmount <= 0) {
@@ -698,6 +1446,18 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final showSourcePickupSelector = _pickupSourceType == _pickupFromPickupPoint;
+    final showDestinationPickupSelector =
+        _dropoffType == _dropoffPickupSpecific ||
+        _dropoffType == _dropoffPickupNearest;
+
+    final showAddressField =
+        _dropoffType == _dropoffHome || _dropoffType == _dropoffPickupNearest;
+
+    final nearestPickup = _dropoffType == _dropoffPickupNearest
+        ? _destinationPickupPoint()
+        : null;
+
     return Scaffold(
       backgroundColor: _W.bg,
       resizeToAvoidBottomInset: true,
@@ -786,51 +1546,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                 icon: Icons.location_on_outlined,
                 iconColor: _W.amber,
                 iconBg: _W.amberLt,
-                title: 'Delivery Information',
-                subtitle: 'Address, map, and pickup configuration',
+                title: 'Delivery Routing',
+                subtitle: 'Pickup source and dropoff destination',
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _FormField(
-                      controller: _addressCtrl,
-                      label: 'Dropoff Address',
-                      hint: 'Beirut, Hamra St.',
-                      icon: Icons.location_on_outlined,
-                      validator: (value) =>
-                          (value == null || value.trim().isEmpty)
-                              ? 'Address is required'
-                              : null,
-                    ),
-                    const SizedBox(height: 12),
-                    OutlinedButton.icon(
-                      onPressed: _openMapPicker,
-                      icon: const Icon(Icons.map_outlined),
-                      label: Text(
-                        _selectedCustomerLat == null || _selectedCustomerLng == null
-                            ? 'Pick on Map'
-                            : 'Change Map Location',
-                      ),
-                    ),
-                    if (_selectedCustomerLat != null &&
-                        _selectedCustomerLng != null) ...[
-                      const SizedBox(height: 10),
-                      _InfoBox(
-                        icon: Icons.place_outlined,
-                        text:
-                            'Selected map location: ${_selectedCustomerLat!.toStringAsFixed(6)}, ${_selectedCustomerLng!.toStringAsFixed(6)}',
-                        color: _W.green,
-                        background: _W.greenLt,
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-                    _FormField(
-                      controller: _timeWindowCtrl,
-                      label: 'Preferred Time Window (Optional)',
-                      hint: '4 PM - 6 PM',
-                      icon: Icons.access_time_outlined,
-                    ),
-                    const SizedBox(height: 14),
-                    const _FieldLabel('PICKUP METHOD'),
+                    const _FieldLabel('PICKUP SOURCE'),
                     const SizedBox(height: 8),
                     LayoutBuilder(
                       builder: (context, constraints) {
@@ -844,11 +1565,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                               child: _SegmentButton(
                                 icon: Icons.storefront_outlined,
                                 label: _pickupFromStore,
-                                selected: _pickupMethod == _pickupFromStore,
-                                onTap: () => setState(() {
-                                  _pickupMethod = _pickupFromStore;
-                                  _selectedPickupPointId = null;
-                                }),
+                                selected: _pickupSourceType == _pickupFromStore,
+                                onTap: () => _onPickupSourceChanged(_pickupFromStore),
                               ),
                             ),
                             const SizedBox(width: 8),
@@ -856,40 +1574,46 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                               width: buttonWidth,
                               child: _SegmentButton(
                                 icon: Icons.store_mall_directory_outlined,
-                                label: _pickupPoint,
-                                selected: _pickupMethod == _pickupPoint,
-                                onTap: () => setState(() {
-                                  _pickupMethod = _pickupPoint;
-                                  if (_pickupPoints.length == 1) {
-                                    _selectedPickupPointId =
-                                        _pickupPoints.first.id;
-                                  }
-                                }),
+                                label: _pickupFromPickupPoint,
+                                selected:
+                                    _pickupSourceType == _pickupFromPickupPoint,
+                                onTap: () => _onPickupSourceChanged(
+                                  _pickupFromPickupPoint,
+                                ),
                               ),
                             ),
                           ],
                         );
                       },
                     ),
-                    if (_pickupMethod == _pickupPoint) ...[
-                      const SizedBox(height: 12),
+                    const SizedBox(height: 10),
+                    if (_pickupSourceType == _pickupFromStore)
+                      _InfoBox(
+                        icon: Icons.storefront_outlined,
+                        text:
+                            'Source: ${_merchantBranchName ?? 'Main Branch'}'
+                            '${(_merchantBranchAddress ?? '').trim().isEmpty ? '' : ' — ${_merchantBranchAddress!}'}',
+                        color: _W.blue,
+                        background: _W.blueLt,
+                      ),
+                    if (showSourcePickupSelector) ...[
                       if (_pickupPoints.isEmpty)
                         const _InfoBox(
                           icon: Icons.info_outline,
-                          text: 'No pickup points found in the system.',
+                          text: 'No approved pickup points found in the system.',
                           color: _W.amber,
                           background: _W.amberLt,
                         )
                       else
                         DropdownButtonFormField<String>(
                           key: ValueKey(
-                            'pickup-${_selectedPickupPointId ?? 'none'}',
+                            'source-pickup-${_selectedSourcePickupPointId ?? 'none'}',
                           ),
-                          initialValue: _selectedPickupPointId,
+                          initialValue: _selectedSourcePickupPointId,
                           isExpanded: true,
                           decoration: _inputDecor(
-                            label: 'Select Pickup Point',
-                            hint: 'Choose pickup point',
+                            label: 'Source Pickup Point',
+                            hint: 'Choose source pickup point',
                             icon: Icons.store_mall_directory_outlined,
                           ),
                           items: _pickupPoints
@@ -906,15 +1630,152 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                               )
                               .toList(),
                           validator: (value) =>
-                              _pickupMethod == _pickupPoint && value == null
-                                  ? 'Please select a pickup point'
+                              _pickupSourceType == _pickupFromPickupPoint &&
+                                      value == null
+                                  ? 'Please select a source pickup point'
                                   : null,
-                          onChanged: _loadingFormData
-                              ? null
-                              : (value) =>
-                                  setState(() => _selectedPickupPointId = value),
+                          onChanged: _loadingFormData ? null : _onSourcePickupChanged,
                         ),
                     ],
+                    const SizedBox(height: 18),
+                    const _FieldLabel('DROPOFF DESTINATION'),
+                    const SizedBox(height: 8),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 8,
+                      children: [
+                        _ChoiceChipButton(
+                          label: _dropoffHome,
+                          selected: _dropoffType == _dropoffHome,
+                          onTap: () => _onDropoffTypeChanged(_dropoffHome),
+                        ),
+                        _ChoiceChipButton(
+                          label: _dropoffPickupSpecific,
+                          selected: _dropoffType == _dropoffPickupSpecific,
+                          onTap: () =>
+                              _onDropoffTypeChanged(_dropoffPickupSpecific),
+                        ),
+                        _ChoiceChipButton(
+                          label: _dropoffPickupNearest,
+                          selected: _dropoffType == _dropoffPickupNearest,
+                          onTap: () =>
+                              _onDropoffTypeChanged(_dropoffPickupNearest),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    if (showAddressField) ...[
+                      _FormField(
+                        controller: _addressCtrl,
+                        label: _dropoffType == _dropoffHome
+                            ? 'Customer Address'
+                            : 'Customer Address (used to find nearest pickup)',
+                        hint: 'Beirut, Hamra St.',
+                        icon: Icons.location_on_outlined,
+                        validator: (value) {
+                          if (!showAddressField) return null;
+                          if (_dropoffType == _dropoffHome ||
+                              _dropoffType == _dropoffPickupNearest) {
+                            return (value == null || value.trim().isEmpty)
+                                ? 'Address is required'
+                                : null;
+                          }
+                          return null;
+                        },
+                      ),
+                      const SizedBox(height: 12),
+                      OutlinedButton.icon(
+                        onPressed: _openMapPicker,
+                        icon: const Icon(Icons.map_outlined),
+                        label: Text(
+                          _selectedCustomerLat == null || _selectedCustomerLng == null
+                              ? 'Pick on Map'
+                              : 'Change Map Location',
+                        ),
+                      ),
+                      if (_selectedCustomerLat != null &&
+                          _selectedCustomerLng != null) ...[
+                        const SizedBox(height: 10),
+                        _InfoBox(
+                          icon: Icons.place_outlined,
+                          text:
+                              'Selected map location: ${_selectedCustomerLat!.toStringAsFixed(6)}, ${_selectedCustomerLng!.toStringAsFixed(6)}',
+                          color: _W.green,
+                          background: _W.greenLt,
+                        ),
+                      ],
+                      const SizedBox(height: 12),
+                    ],
+                    if (showDestinationPickupSelector) ...[
+                      if (_dropoffType == _dropoffPickupSpecific) ...[
+                        if (_pickupPoints.isEmpty)
+                          const _InfoBox(
+                            icon: Icons.info_outline,
+                            text: 'No approved pickup points found in the system.',
+                            color: _W.amber,
+                            background: _W.amberLt,
+                          )
+                        else
+                          DropdownButtonFormField<String>(
+                            key: ValueKey(
+                              'destination-pickup-${_selectedDestinationPickupPointId ?? 'none'}',
+                            ),
+                            initialValue: _selectedDestinationPickupPointId,
+                            isExpanded: true,
+                            decoration: _inputDecor(
+                              label: 'Destination Pickup Point',
+                              hint: 'Choose destination pickup point',
+                              icon: Icons.pin_drop_outlined,
+                            ),
+                            items: _pickupPoints
+                                .map(
+                                  (point) => DropdownMenuItem<String>(
+                                    value: point.id,
+                                    child: Text(
+                                      point.displayName,
+                                      overflow: TextOverflow.ellipsis,
+                                      maxLines: 2,
+                                      style: _t(14, FontWeight.w500),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            validator: (value) =>
+                                _dropoffType == _dropoffPickupSpecific &&
+                                        value == null
+                                    ? 'Please select a destination pickup point'
+                                    : null,
+                            onChanged: _loadingFormData
+                                ? null
+                                : _onDestinationPickupChanged,
+                          ),
+                      ],
+                      if (_dropoffType == _dropoffPickupNearest) ...[
+                        if (nearestPickup == null)
+                          const _InfoBox(
+                            icon: Icons.info_outline,
+                            text:
+                                'Nearest pickup point will appear after selecting a valid customer map location.',
+                            color: _W.amber,
+                            background: _W.amberLt,
+                          )
+                        else
+                          _InfoBox(
+                            icon: Icons.pin_drop_outlined,
+                            text:
+                                'Nearest pickup point: ${nearestPickup.displayName}',
+                            color: _W.blue,
+                            background: _W.blueLt,
+                          ),
+                      ],
+                    ],
+                    const SizedBox(height: 12),
+                    _FormField(
+                      controller: _timeWindowCtrl,
+                      label: 'Preferred Time Window (Optional)',
+                      hint: '4 PM - 6 PM',
+                      icon: Icons.access_time_outlined,
+                    ),
                   ],
                 ),
               ),
@@ -1005,47 +1866,82 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                 iconColor: _W.blue,
                 iconBg: _W.blueLt,
                 title: 'Delivery Company',
-                subtitle: _deliveryCompanySubtitle,
-                child: _deliveryCompanies.isEmpty
+                subtitle: 'Best 3 companies by location and capacity',
+                child: _allDeliveryCompanies.isEmpty
                     ? const _InfoBox(
                         icon: Icons.info_outline,
-                        text: 'No delivery companies found.',
+                        text: 'No linked delivery companies found for this merchant.',
                         color: _W.amber,
                         background: _W.amberLt,
                       )
-                    : DropdownButtonFormField<String>(
-                        key: ValueKey(
-                          'company-${_selectedDeliveryCompanyId ?? 'none'}',
-                        ),
-                        initialValue: _selectedDeliveryCompanyId,
-                        isExpanded: true,
-                        decoration: _inputDecor(
-                          label: 'Select Delivery Company',
-                          hint: 'Choose delivery company',
-                          icon: Icons.local_shipping_outlined,
-                        ),
-                        items: _deliveryCompanies
-                            .map(
-                              (company) => DropdownMenuItem<String>(
-                                value: company.id,
-                                child: Text(
-                                  company.name,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: _t(14, FontWeight.w500),
+                    : _filteredDeliveryCompanies.isEmpty
+                        ? Column(
+                            children: [
+                              if (_automationHint != null)
+                                _InfoBox(
+                                  icon: Icons.info_outline,
+                                  text: _automationHint!,
+                                  color: _W.amber,
+                                  background: _W.amberLt,
                                 ),
+                            ],
+                          )
+                        : Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              if (_automationHint != null) ...[
+                                _InfoBox(
+                                  icon: Icons.auto_awesome_outlined,
+                                  text: _automationHint!,
+                                  color: _W.green,
+                                  background: _W.greenLt,
+                                ),
+                                const SizedBox(height: 12),
+                              ],
+                              _InfoBox(
+                                icon: Icons.filter_alt_outlined,
+                                text:
+                                    'Showing only the best ${_filteredDeliveryCompanies.length} companies for this route.',
+                                color: _W.blue,
+                                background: _W.blueLt,
                               ),
-                            )
-                            .toList(),
-                        validator: (value) =>
-                            _deliveryCompanies.isNotEmpty && value == null
-                                ? 'Please select a delivery company'
-                                : null,
-                        onChanged: _loadingFormData
-                            ? null
-                            : (value) => setState(
-                                  () => _selectedDeliveryCompanyId = value,
+                              const SizedBox(height: 12),
+                              DropdownButtonFormField<String>(
+                                key: ValueKey(
+                                  'company-${_selectedDeliveryCompanyId ?? 'none'}',
                                 ),
-                      ),
+                                initialValue: _selectedDeliveryCompanyId,
+                                isExpanded: true,
+                                decoration: _inputDecor(
+                                  label: 'Select Delivery Company',
+                                  hint: 'Choose from best matched companies',
+                                  icon: Icons.local_shipping_outlined,
+                                ),
+                                items: _filteredDeliveryCompanies
+                                    .map(
+                                      (company) => DropdownMenuItem<String>(
+                                        value: company.id,
+                                        child: Text(
+                                          company.name,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: _t(14, FontWeight.w500),
+                                        ),
+                                      ),
+                                    )
+                                    .toList(),
+                                validator: (value) =>
+                                    _filteredDeliveryCompanies.isNotEmpty &&
+                                            value == null
+                                        ? 'Please select a delivery company'
+                                        : null,
+                                onChanged: _loadingFormData
+                                    ? null
+                                    : (value) => setState(
+                                          () => _selectedDeliveryCompanyId = value,
+                                        ),
+                              ),
+                            ],
+                          ),
               ),
               const SizedBox(height: 12),
               _SectionCard(
@@ -1075,7 +1971,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                   children: [
                     _SummaryRow(label: 'Customer', value: _summaryCustomer),
                     _SummaryRow(label: 'Email', value: _summaryEmail),
-                    _SummaryRow(label: 'Pickup', value: _summaryPickup),
+                    _SummaryRow(label: 'Source', value: _summaryPickupSource),
+                    _SummaryRow(label: 'Destination', value: _summaryDropoff),
                     _SummaryRow(label: 'Company', value: _summaryCompany),
                     _SummaryRow(label: 'Map', value: _summaryMapLocation),
                     _SummaryRow(label: 'Package', value: _summaryPackageType),
@@ -1116,20 +2013,174 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       ),
     );
   }
+
+  static double? _asDouble(dynamic value) {
+    if (value == null) return null;
+    if (value is num) return value.toDouble();
+    return double.tryParse(value.toString().trim());
+  }
+
+  static int? _asInt(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString().trim());
+  }
+
+  static double _distanceKm(
+    double lat1,
+    double lng1,
+    double lat2,
+    double lng2,
+  ) {
+    const earthRadiusKm = 6371.0;
+
+    final dLat = _degToRad(lat2 - lat1);
+    final dLng = _degToRad(lng2 - lng1);
+
+    final a = math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_degToRad(lat1)) *
+            math.cos(_degToRad(lat2)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusKm * c;
+  }
+
+  static double _degToRad(double degree) => degree * math.pi / 180.0;
 }
 
-class _SelectOption {
+class _DeliveryCompanyBasicOption {
+  final String id;
+  final String name;
+
+  const _DeliveryCompanyBasicOption({
+    required this.id,
+    required this.name,
+  });
+}
+
+class _DeliveryCompanyOption {
+  final String id;
+  final String name;
+  final List<_CompanyHub> hubs;
+  final _CompanyCapacity? capacity;
+
+  const _DeliveryCompanyOption({
+    required this.id,
+    required this.name,
+    required this.hubs,
+    required this.capacity,
+  });
+}
+
+class _CompanyHub {
+  final String id;
+  final String name;
+  final String addressText;
+  final String city;
+  final String area;
+  final double? lat;
+  final double? lng;
+  final bool isActive;
+
+  const _CompanyHub({
+    required this.id,
+    required this.name,
+    required this.addressText,
+    required this.city,
+    required this.area,
+    required this.lat,
+    required this.lng,
+    required this.isActive,
+  });
+
+  bool get isUsable => isActive && lat != null && lng != null;
+}
+
+class _CompanyCapacity {
+  final int? maxActiveOrders;
+  final int? maxDailyOrders;
+  final int currentActiveOrders;
+  final int currentDailyOrders;
+  final bool isActive;
+
+  const _CompanyCapacity({
+    required this.maxActiveOrders,
+    required this.maxDailyOrders,
+    required this.currentActiveOrders,
+    required this.currentDailyOrders,
+    required this.isActive,
+  });
+}
+
+class _RankedCompany {
+  final String id;
+  final String name;
+  final _CompanyHub? bestHub;
+  final double score;
+
+  const _RankedCompany({
+    required this.id,
+    required this.name,
+    required this.bestHub,
+    required this.score,
+  });
+}
+
+class _MerchantBranchOption {
+  final String id;
+  final String name;
+  final String addressText;
+  final double? lat;
+  final double? lng;
+
+  const _MerchantBranchOption({
+    required this.id,
+    required this.name,
+    required this.addressText,
+    required this.lat,
+    required this.lng,
+  });
+}
+
+class _PickupPointOption {
   final String id;
   final String name;
   final String? subtitle;
+  final String addressText;
+  final double? lat;
+  final double? lng;
+  final String city;
+  final String area;
 
-  const _SelectOption({required this.id, required this.name, this.subtitle});
+  const _PickupPointOption({
+    required this.id,
+    required this.name,
+    required this.subtitle,
+    required this.addressText,
+    required this.lat,
+    required this.lng,
+    required this.city,
+    required this.area,
+  });
 
   String get displayName {
     final detail = subtitle?.trim();
     if (detail == null || detail.isEmpty) return name;
     return '$name - $detail';
   }
+}
+
+class _LatLngOption {
+  final double lat;
+  final double lng;
+
+  const _LatLngOption({
+    required this.lat,
+    required this.lng,
+  });
 }
 
 class _PickedMapLocation {
@@ -1344,6 +2395,38 @@ class _MapZoomButton extends StatelessWidget {
   }
 }
 
+class _ChoiceChipButton extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+
+  const _ChoiceChipButton({
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return ChoiceChip(
+      label: Text(
+        label,
+        style: _t(
+          12.5,
+          FontWeight.w700,
+          color: selected ? Colors.white : _W.navy,
+        ),
+      ),
+      selected: selected,
+      onSelected: (_) => onTap(),
+      selectedColor: _W.blue,
+      backgroundColor: _W.bg,
+      side: BorderSide(color: selected ? _W.blue : _W.border, width: 1.2),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+    );
+  }
+}
+
 class _W {
   _W._();
 
@@ -1490,7 +2573,7 @@ class _HeroBanner extends StatelessWidget {
           ),
           const SizedBox(height: 5),
           Text(
-            'Customer, delivery, payment, and package details in one flow.',
+            'Customer, routing, payment, and package details in one flow.',
             style: _t(
               13,
               FontWeight.w500,
@@ -1504,7 +2587,7 @@ class _HeroBanner extends StatelessWidget {
             runSpacing: 6,
             children: [
               _StepChip(number: '1', label: 'Customer'),
-              _StepChip(number: '2', label: 'Delivery'),
+              _StepChip(number: '2', label: 'Routing'),
               _StepChip(number: '3', label: 'Package'),
               _StepChip(number: '4', label: 'Payment'),
             ],
@@ -1761,7 +2844,7 @@ class _InfoBox extends StatelessWidget {
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withValues(alpha: 0.22), width: 1.3),
+        border: Border.all(color: color.withOpacity(0.22), width: 1.3),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -1804,7 +2887,7 @@ class _SummaryRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: Table(
-        columnWidths: const {0: FixedColumnWidth(86), 1: FlexColumnWidth()},
+        columnWidths: const {0: FixedColumnWidth(92), 1: FlexColumnWidth()},
         children: [
           TableRow(
             children: [
@@ -1853,14 +2936,14 @@ class _SubmitButton extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
                 color: isEnabled
-                    ? _W.blueDark.withValues(alpha: 0.18)
+                    ? _W.blueDark.withOpacity(0.18)
                     : const Color(0xFFC7D0E0),
                 width: 1.2,
               ),
               boxShadow: isEnabled
                   ? [
                       BoxShadow(
-                        color: _W.blue.withValues(alpha: 0.18),
+                        color: _W.blue.withOpacity(0.18),
                         blurRadius: 14,
                         offset: const Offset(0, 6),
                       ),
@@ -1921,6 +3004,7 @@ class _SuccessDialog extends StatelessWidget {
   final String orderId;
   final String trackingCode;
   final String pickupMethod;
+  final String dropoffMethod;
   final String paymentMethod;
   final String amount;
   final String packageType;
@@ -1928,11 +3012,13 @@ class _SuccessDialog extends StatelessWidget {
   final String weight;
   final String volume;
   final String mapLocation;
+  final String company;
 
   const _SuccessDialog({
     required this.orderId,
     required this.trackingCode,
     required this.pickupMethod,
+    required this.dropoffMethod,
     required this.paymentMethod,
     required this.amount,
     required this.packageType,
@@ -1940,6 +3026,7 @@ class _SuccessDialog extends StatelessWidget {
     required this.weight,
     required this.volume,
     required this.mapLocation,
+    required this.company,
   });
 
   @override
@@ -1991,7 +3078,11 @@ class _SuccessDialog extends StatelessWidget {
                     const SizedBox(height: 8),
                     _DialogRow(label: 'Order ID', value: orderId),
                     const SizedBox(height: 8),
-                    _DialogRow(label: 'Pickup', value: pickupMethod),
+                    _DialogRow(label: 'Source', value: pickupMethod),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Destination', value: dropoffMethod),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Company', value: company),
                     const SizedBox(height: 8),
                     _DialogRow(label: 'Map', value: mapLocation),
                     const SizedBox(height: 8),
@@ -2034,7 +3125,7 @@ class _DialogRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Table(
-      columnWidths: const {0: FixedColumnWidth(82), 1: FlexColumnWidth()},
+      columnWidths: const {0: FixedColumnWidth(92), 1: FlexColumnWidth()},
       children: [
         TableRow(
           children: [

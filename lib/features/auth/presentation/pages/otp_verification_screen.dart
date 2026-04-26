@@ -18,8 +18,11 @@ class OtpVerificationScreen extends StatefulWidget {
   final String? companyName;
   final String? location;
   final String? businessName;
-  final String? pickupPointName;
+  final String? branchName;
   final String? addressText;
+  final double? branchLat;
+  final double? branchLng;
+  final String? pickupPointName;
   final String? confirmAddressText;
   final String? area;
   final int? maxOrdersPerDay;
@@ -56,8 +59,11 @@ class OtpVerificationScreen extends StatefulWidget {
     this.companyName,
     this.location,
     this.businessName,
-    this.pickupPointName,
+    this.branchName,
     this.addressText,
+    this.branchLat,
+    this.branchLng,
+    this.pickupPointName,
     this.confirmAddressText,
     this.area,
     this.maxOrdersPerDay,
@@ -133,6 +139,13 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       throw Exception('$fieldName is required');
     }
     return text;
+  }
+
+  double _requiredDouble(double? value, String fieldName) {
+    if (value == null) {
+      throw Exception('$fieldName is required');
+    }
+    return value;
   }
 
   Uint8List _requiredBytes(Uint8List? value, String fieldName) {
@@ -237,6 +250,10 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             fullName: _required(widget.fullName, 'Full name'),
             phone: _required(widget.phone, 'Phone'),
             businessName: _required(widget.businessName, 'Business name'),
+            branchName: _required(widget.branchName, 'Branch name'),
+            addressText: _required(widget.addressText, 'Branch address'),
+            branchLat: _requiredDouble(widget.branchLat, 'Branch latitude'),
+            branchLng: _requiredDouble(widget.branchLng, 'Branch longitude'),
           );
           _goTo('/merchant-dashboard');
           return;

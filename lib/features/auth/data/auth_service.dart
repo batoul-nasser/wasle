@@ -50,6 +50,10 @@ class AuthService {
     required bool shouldCreateUser,
     String? emailRedirectTo,
   }) async {
+    if (shouldCreateUser && _client.auth.currentUser != null) {
+      await _client.auth.signOut();
+    }
+
     await _client.auth.signInWithOtp(
       email: email,
       shouldCreateUser: shouldCreateUser,
@@ -80,10 +84,13 @@ class AuthService {
     required String token,
     required AuthFlowMode mode,
   }) async {
+    final otpType =
+        mode == AuthFlowMode.login ? OtpType.email : OtpType.signup;
+
     return await _client.auth.verifyOTP(
       email: email,
       token: token,
-      type: OtpType.email,
+      type: otpType,
     );
   }
 
@@ -224,7 +231,7 @@ class AuthService {
 
       case 'agent':
         return '/agent-dashboard';
-      
+
       case 'pickup_point':
         return '/pickup-dashboard';
 
@@ -389,6 +396,10 @@ class AuthService {
     required String fullName,
     required String phone,
     required String businessName,
+    required String branchName,
+    required String addressText,
+    required double branchLat,
+    required double branchLng,
   }) async {
     await _client.from('profiles').upsert({
       'id': userId,
@@ -397,20 +408,60 @@ class AuthService {
       'role': 'merchant',
     }, onConflict: 'id');
 
-    final business = await _client
-        .from('merchant_businesses')
-        .insert({'name': businessName})
+    final existingMerchantUser = await _client
+        .from('merchant_users')
+        .select('merchant_id')
+        .eq('profile_id', userId)
+        .maybeSingle();
+
+    String merchantId;
+
+    if (existingMerchantUser != null &&
+        existingMerchantUser['merchant_id'] != null) {
+      merchantId = existingMerchantUser['merchant_id'].toString();
+    } else {
+      final business = await _client
+          .from('merchant_businesses')
+          .insert({'name': businessName})
+          .select('id')
+          .single();
+
+      merchantId = business['id'] as String;
+
+      await _client.from('merchant_users').insert({
+        'profile_id': userId,
+        'merchant_id': merchantId,
+        'role': 'owner',
+        'business_name': businessName,
+      });
+    }
+
+    final existingBranch = await _client
+        .from('merchant_branches')
         .select('id')
-        .single();
+        .eq('merchant_id', merchantId)
+        .limit(1)
+        .maybeSingle();
 
-    final merchantId = business['id'] as String;
-
-    await _client.from('merchant_users').insert({
-      'profile_id': userId,
-      'merchant_id': merchantId,
-      'role': 'owner',
-      'business_name': businessName,
-    });
+    if (existingBranch == null) {
+      await _client.from('merchant_branches').insert({
+        'merchant_id': merchantId,
+        'created_by': userId,
+        'name': branchName,
+        'address_text': addressText,
+        'lat': branchLat,
+        'lng': branchLng,
+        'is_active': true,
+      });
+    } else {
+      await _client.from('merchant_branches').update({
+        'name': branchName,
+        'address_text': addressText,
+        'lat': branchLat,
+        'lng': branchLng,
+        'is_active': true,
+      }).eq('id', existingBranch['id'].toString());
+    }
   }
 
   Future<void> createPickupPointApplication({
@@ -560,13 +611,10 @@ class AuthService {
         .update({'request_status': 'approved'})
         .eq('id', requestId);
 
-    await _client
-        .from('drivers')
-        .update({
-          'verification_status': 'approved',
-          'company_id': user.id,
-        })
-        .eq('profile_id', driverProfileId);
+    await _client.from('drivers').update({
+      'verification_status': 'approved',
+      'company_id': user.id,
+    }).eq('profile_id', driverProfileId);
   }
 
   Future<void> rejectDriverRequest({
@@ -578,12 +626,9 @@ class AuthService {
         .update({'request_status': 'rejected'})
         .eq('id', requestId);
 
-    await _client
-        .from('drivers')
-        .update({
-          'verification_status': 'rejected',
-        })
-        .eq('profile_id', driverProfileId);
+    await _client.from('drivers').update({
+      'verification_status': 'rejected',
+    }).eq('profile_id', driverProfileId);
   }
 
   Future<List<Map<String, dynamic>>> getMerchantOrders() async {
@@ -980,7 +1025,9 @@ class AuthService {
     final driversRows = List<Map<String, dynamic>>.from(
       await _client
           .from('drivers')
-          .select('id, profile_id, company_id, vehicle_type, verification_status')
+          .select(
+            'id, profile_id, company_id, vehicle_type, verification_status',
+          )
           .eq('company_id', user.id)
           .eq('verification_status', 'approved'),
     );

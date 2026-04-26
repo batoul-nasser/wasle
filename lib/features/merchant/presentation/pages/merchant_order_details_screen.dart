@@ -25,6 +25,7 @@ class _MerchantOrderDetailsScreenState
   List<Map<String, dynamic>> _events = [];
   String? _companyName;
   Map<String, String>? _pickupPointDetails;
+  Map<String, String>? _destinationPickupPointDetails;
 
   bool _loading = true;
   bool _loadingTimeline = true;
@@ -61,6 +62,7 @@ class _MerchantOrderDetailsScreenState
         _loadTimeline(),
         _loadAssignmentDetails(),
         _loadPickupPointDetails(),
+        _loadDestinationPickupPointDetails(),
       ]);
     } catch (_) {
       // keep current snapshot
@@ -155,6 +157,35 @@ class _MerchantOrderDetailsScreenState
     }
   }
 
+  Future<void> _loadDestinationPickupPointDetails() async {
+    try {
+      final pickupPointId = _safe(
+        _order['destination_pickup_point_id'],
+        fallback: '',
+      );
+
+      if (pickupPointId.isEmpty || pickupPointId == '-') {
+        if (!mounted) return;
+        setState(() {
+          _destinationPickupPointDetails = null;
+        });
+        return;
+      }
+
+      final details = await _ordersService.getPickupPointById(pickupPointId);
+
+      if (!mounted) return;
+      setState(() {
+        _destinationPickupPointDetails = details;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _destinationPickupPointDetails = null;
+      });
+    }
+  }
+
   String _safe(dynamic value, {String fallback = '-'}) {
     final text = value?.toString().trim() ?? '';
     return text.isEmpty ? fallback : text;
@@ -170,6 +201,85 @@ class _MerchantOrderDetailsScreenState
     if (value == null) return null;
     if (value is num) return value.toDouble();
     return double.tryParse(value.toString().trim());
+  }
+
+  String get _notesText {
+    final raw = _order['notes']?.toString() ?? '';
+    return raw.trim();
+  }
+
+  String? _extractNoteField(String label) {
+    final text = _notesText;
+    if (text.isEmpty) return null;
+
+    final match = RegExp(
+      '^${RegExp.escape(label)}\\s*:\\s*(.+)\$',
+      multiLine: true,
+      caseSensitive: false,
+    ).firstMatch(text);
+
+    final value = match?.group(1)?.trim();
+    if (value == null || value.isEmpty) return null;
+    return value;
+  }
+
+  _MapCoords? _parseCoordsText(String? value) {
+    if (value == null || value.trim().isEmpty) return null;
+
+    final parts = value.split(',');
+    if (parts.length != 2) return null;
+
+    final lat = double.tryParse(parts[0].trim());
+    final lng = double.tryParse(parts[1].trim());
+
+    if (lat == null || lng == null) return null;
+    return _MapCoords(lat: lat, lng: lng);
+  }
+
+  Future<void> _openLocationInMaps({
+    String? coordinatesText,
+    String? address,
+  }) async {
+    Uri? uri;
+
+    final coords = _parseCoordsText(coordinatesText);
+    if (coords != null) {
+      uri = Uri.parse(
+        'https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}',
+      );
+    } else if (address != null && address.trim().isNotEmpty) {
+      uri = Uri.parse(
+        'https://www.google.com/maps/search/?api=1&query=${Uri.encodeComponent(address.trim())}',
+      );
+    }
+
+    if (uri == null) {
+      _showSafeSnack('No valid location found.');
+      return;
+    }
+
+    final launched = await launchUrl(
+      uri,
+      mode: LaunchMode.externalApplication,
+    );
+
+    if (!launched && mounted) {
+      _showSafeSnack('Unable to open maps.');
+    }
+  }
+
+  Future<void> _openSourceInMaps() async {
+    await _openLocationInMaps(
+      coordinatesText: _pickupSourceCoordinatesDisplay,
+      address: _pickupSourceAddressDisplay,
+    );
+  }
+
+  Future<void> _openDestinationInMaps() async {
+    await _openLocationInMaps(
+      coordinatesText: _dropoffCoordinatesDisplay,
+      address: _dropoffAddressDisplay,
+    );
   }
 
   String _labelFromKey(String value) {
@@ -255,7 +365,101 @@ class _MerchantOrderDetailsScreenState
     return '-';
   }
 
+  String get _pickupSourceTypeDisplay {
+    final raw = _safe(_order['pickup_source_type'], fallback: '').toLowerCase();
+
+    if (raw == 'pickup_point') return 'Pickup Point';
+    if (raw == 'store') return 'Store';
+
+    final fromNotes = _extractNoteField('Pickup source type');
+    if (fromNotes != null && fromNotes.trim().isNotEmpty) {
+      return _labelFromKey(fromNotes);
+    }
+
+    return _pickupMethodLabel;
+  }
+
+  String get _pickupSourceDisplay {
+    final fromNotes = _extractNoteField('Pickup source');
+    if (fromNotes != null) return fromNotes;
+
+    if (_hasPickupPoint && _pickupPointDisplay != '-') {
+      return _pickupPointDisplay;
+    }
+
+    return 'Store';
+  }
+
+  String get _pickupSourceAddressDisplay {
+    final fromNotes = _extractNoteField('Pickup source address');
+    if (fromNotes != null) return fromNotes;
+
+    final pickupAddress = _pickupPointDetails?['address']?.trim() ?? '';
+    if (pickupAddress.isNotEmpty) return pickupAddress;
+
+    return '-';
+  }
+
+  String get _pickupSourceCoordinatesDisplay {
+    final fromNotes = _extractNoteField('Pickup source coordinates');
+    if (fromNotes != null) return fromNotes;
+
+    final lat = _safeDouble(_pickupPointDetails?['lat']);
+    final lng = _safeDouble(_pickupPointDetails?['lng']);
+    if (lat != null && lng != null) {
+      return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}';
+    }
+
+    return '-';
+  }
+
+  String get _dropoffTypeDisplay {
+    final fromNotes = _extractNoteField('Dropoff type');
+    if (fromNotes != null) return _labelFromKey(fromNotes);
+
+    final raw = _safe(_order['dropoff_type'], fallback: 'home');
+    return _labelFromKey(raw);
+  }
+
+  String get _dropoffDestinationDisplay {
+    final fromNotes = _extractNoteField('Dropoff destination');
+    if (fromNotes != null) return fromNotes;
+
+    final destinationPickupId = _safe(
+      _order['destination_pickup_point_id'],
+      fallback: '',
+    );
+
+    if (destinationPickupId.isNotEmpty && destinationPickupId != '-') {
+      final name = _destinationPickupPointDetails?['name']?.trim() ?? '';
+      if (name.isNotEmpty) return name;
+      return 'Pickup Point';
+    }
+
+    return 'Customer Address';
+  }
+
   String get _dropoffAddressDisplay {
+    final fromNotes = _extractNoteField('Dropoff address');
+    if (fromNotes != null) return fromNotes;
+
+    final destinationPickupId = _safe(
+      _order['destination_pickup_point_id'],
+      fallback: '',
+    );
+
+    if (destinationPickupId.isNotEmpty && destinationPickupId != '-') {
+      final pickupName = _destinationPickupPointDetails?['name']?.trim() ?? '';
+      final pickupAddress =
+          _destinationPickupPointDetails?['address']?.trim() ?? '';
+
+      if (pickupName.isNotEmpty && pickupAddress.isNotEmpty) {
+        return '$pickupName — $pickupAddress';
+      }
+      if (pickupAddress.isNotEmpty) return pickupAddress;
+      if (pickupName.isNotEmpty) return pickupName;
+    }
+
     return _safe(
       _order['customer_address_text'],
       fallback: 'No address provided',
@@ -295,6 +499,38 @@ class _MerchantOrderDetailsScreenState
   String get _mapCoordinatesDisplay {
     if (!_hasPinnedLocation) return '-';
     return '${_customerLat!.toStringAsFixed(6)}, ${_customerLng!.toStringAsFixed(6)}';
+  }
+
+  String get _dropoffCoordinatesDisplay {
+    final fromNotes = _extractNoteField('Dropoff coordinates');
+    if (fromNotes != null) return fromNotes;
+
+    final destinationPickupId = _safe(
+      _order['destination_pickup_point_id'],
+      fallback: '',
+    );
+
+    if (destinationPickupId.isNotEmpty && destinationPickupId != '-') {
+      final lat = _safeDouble(_destinationPickupPointDetails?['lat']);
+      final lng = _safeDouble(_destinationPickupPointDetails?['lng']);
+
+      if (lat != null && lng != null) {
+        return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}';
+      }
+    }
+
+    if (_hasPinnedLocation) return _mapCoordinatesDisplay;
+    return '-';
+  }
+
+  bool get _hasSourceLocationLink {
+    return _pickupSourceCoordinatesDisplay != '-' ||
+        _pickupSourceAddressDisplay != '-';
+  }
+
+  bool get _hasDestinationLocationLink {
+    return _dropoffCoordinatesDisplay != '-' ||
+        _dropoffAddressDisplay != 'No address provided';
   }
 
   Future<void> _openInMaps() async {
@@ -739,40 +975,81 @@ class _MerchantOrderDetailsScreenState
                     child: Column(
                       children: [
                         _InfoRow(
-                          label: 'Pickup Method',
-                          value: _pickupMethodLabel,
+                          label: 'Pickup Source Type',
+                          value: _pickupSourceTypeDisplay,
                         ),
-                        if (_hasPickupPoint && _pickupPointDisplay != '-')
-                          _InfoRow(
-                            label: 'Pickup Point',
-                            value: _pickupPointDisplay,
+                        _InfoRow(
+                          label: 'Pickup Source',
+                          value: _pickupSourceDisplay,
+                        ),
+                        _InfoRow(
+                          label: 'Source Address',
+                          value: _pickupSourceAddressDisplay,
+                        ),
+                        _InfoRow(
+                          label: 'Source Coordinates',
+                          value: _pickupSourceCoordinatesDisplay,
+                          valueColor: _pickupSourceCoordinatesDisplay != '-'
+                              ? _W.blue
+                              : null,
+                        ),
+                        if (_hasSourceLocationLink) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: OutlinedButton.icon(
+                              onPressed: _openSourceInMaps,
+                              icon: const Icon(Icons.map_outlined),
+                              label: const Text('Open Pickup Source in Maps'),
+                            ),
                           ),
+                        ],
+                        const SizedBox(height: 10),
+                        const Divider(height: 1, color: _W.border),
+                        const SizedBox(height: 10),
+                        _InfoRow(
+                          label: 'Dropoff Type',
+                          value: _dropoffTypeDisplay,
+                        ),
+                        _InfoRow(
+                          label: 'Dropoff Destination',
+                          value: _dropoffDestinationDisplay,
+                        ),
                         _InfoRow(
                           label: 'Dropoff Address',
                           value: _dropoffAddressDisplay,
                         ),
-                        if (_hasPinnedLocation)
+                        _InfoRow(
+                          label: 'Dropoff Coordinates',
+                          value: _dropoffCoordinatesDisplay,
+                          valueColor: _dropoffCoordinatesDisplay != '-'
+                              ? _W.blue
+                              : null,
+                        ),
+                        if (_hasDestinationLocationLink) ...[
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: OutlinedButton.icon(
+                              onPressed: _openDestinationInMaps,
+                              icon: const Icon(Icons.map_outlined),
+                              label: const Text('Open Dropoff in Maps'),
+                            ),
+                          ),
+                        ],
+                        if (_hasPinnedLocation) ...[
+                          const SizedBox(height: 10),
                           _InfoRow(
-                            label: 'Coordinates',
+                            label: 'Customer Requested Map',
                             value: _mapCoordinatesDisplay,
                             valueColor: _W.blue,
                           ),
+                        ],
                         if (branchId.isNotEmpty && branchId != '-')
                           _InfoRow(
                             label: 'Branch',
                             value: branchId,
                           ),
-                        if (_hasPinnedLocation) ...[
-                          const SizedBox(height: 8),
-                          Align(
-                            alignment: Alignment.centerLeft,
-                            child: OutlinedButton.icon(
-                              onPressed: _openInMaps,
-                              icon: const Icon(Icons.map_outlined),
-                              label: const Text('Open in Maps'),
-                            ),
-                          ),
-                        ],
                       ],
                     ),
                   ),
@@ -911,7 +1188,7 @@ class _MerchantOrderDetailsScreenState
                                   : 'Cancellation is closed after pickup.',
                           color: _W.red,
                           bg: _W.redLt,
-                          borderColor: _W.red.withValues(alpha: 0.18),
+                          borderColor: _W.red.withOpacity(0.18),
                           onTap: (_actionLoading || status == 'cancelled')
                               ? null
                               : _requestCancellation,
@@ -1076,6 +1353,16 @@ class _CancellationReasonScreenState extends State<_CancellationReasonScreen> {
   }
 }
 
+class _MapCoords {
+  final double lat;
+  final double lng;
+
+  const _MapCoords({
+    required this.lat,
+    required this.lng,
+  });
+}
+
 class _W {
   _W._();
 
@@ -1149,7 +1436,7 @@ class _AssignmentBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: _bg,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: _fg.withValues(alpha: 0.18), width: 1.4),
+        border: Border.all(color: _fg.withOpacity(0.18), width: 1.4),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1303,7 +1590,7 @@ class _ExceptionBanner extends StatelessWidget {
       decoration: BoxDecoration(
         color: _W.redLt,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _W.red.withValues(alpha: 0.18), width: 1.5),
+        border: Border.all(color: _W.red.withOpacity(0.18), width: 1.5),
       ),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -1312,7 +1599,7 @@ class _ExceptionBanner extends StatelessWidget {
             width: 36,
             height: 36,
             decoration: BoxDecoration(
-              color: _W.red.withValues(alpha: 0.12),
+              color: _W.red.withOpacity(0.12),
               borderRadius: BorderRadius.circular(10),
             ),
             child: const Icon(
@@ -1487,7 +1774,7 @@ class _StatusBadge extends StatelessWidget {
         color: _statusBg(status),
         borderRadius: BorderRadius.circular(999),
         border: Border.all(
-          color: _statusColor(status).withValues(alpha: 0.25),
+          color: _statusColor(status).withOpacity(0.25),
         ),
       ),
       child: Text(
@@ -1587,7 +1874,7 @@ class _ActionBtn extends StatelessWidget {
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(14),
-          splashColor: color.withValues(alpha: 0.10),
+          splashColor: color.withOpacity(0.10),
           child: Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
             decoration: BoxDecoration(
