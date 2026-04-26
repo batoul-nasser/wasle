@@ -22,7 +22,6 @@ class _MerchantIssuesScreenState extends State<MerchantIssuesScreen> {
     'all',
     'failed',
     'cancelled',
-    'customer_not_available',
     'returning',
     'returned_to_store',
   ];
@@ -51,16 +50,19 @@ class _MerchantIssuesScreenState extends State<MerchantIssuesScreen> {
   bool _isIssueStatus(String status) {
     return status == 'failed' ||
         status == 'cancelled' ||
-        status == 'customer_not_available' ||
         status == 'returning' ||
-        status == 'returning_to_store' ||
         status == 'returned_to_store';
   }
 
   String _normalizedStatus(dynamic value) {
     final s = _safe(value, fallback: '').toLowerCase();
 
-    if (s == 'returning_to_store') return 'returning';
+    if (s == 'delivery_failed') return 'failed';
+    if (s == 'returning_to_store' || s == 'return_in_progress') {
+      return 'returning';
+    }
+    if (s == 'returned_to_merchant') return 'returned_to_store';
+
     return s;
   }
 
@@ -69,9 +71,8 @@ class _MerchantIssuesScreenState extends State<MerchantIssuesScreen> {
       final status = _normalizedStatus(order['status']);
       if (!_isIssueStatus(status)) return false;
 
-      final matchesFilter = _selectedFilter == 'all'
-          ? true
-          : status == _selectedFilter;
+      final matchesFilter =
+          _selectedFilter == 'all' ? true : status == _selectedFilter;
 
       final q = _search.trim().toLowerCase();
       final customer = _safe(order['customer_name']).toLowerCase();
@@ -112,8 +113,6 @@ class _MerchantIssuesScreenState extends State<MerchantIssuesScreen> {
         return 'Failed';
       case 'cancelled':
         return 'Cancelled';
-      case 'customer_not_available':
-        return 'Customer Not Available';
       case 'returning':
         return 'Returning';
       case 'returned_to_store':
@@ -125,14 +124,28 @@ class _MerchantIssuesScreenState extends State<MerchantIssuesScreen> {
     }
   }
 
+  String _emptyTitle(String s) {
+    switch (s) {
+      case 'failed':
+        return 'No failed orders';
+      case 'cancelled':
+        return 'No cancelled orders';
+      case 'returning':
+        return 'No returning orders';
+      case 'returned_to_store':
+        return 'No returned orders';
+      case 'all':
+      default:
+        return 'No issue orders';
+    }
+  }
+
   String _issueMessage(String status) {
     switch (status) {
       case 'failed':
         return 'Delivery attempt failed. Review details and next action.';
       case 'cancelled':
         return 'This order has been cancelled.';
-      case 'customer_not_available':
-        return 'Customer could not be reached during delivery.';
       case 'returning':
         return 'This order is currently returning to the store.';
       case 'returned_to_store':
@@ -146,7 +159,6 @@ class _MerchantIssuesScreenState extends State<MerchantIssuesScreen> {
     switch (s) {
       case 'failed':
       case 'cancelled':
-      case 'customer_not_available':
         return _W.red;
       case 'returning':
       case 'returned_to_store':
@@ -160,7 +172,6 @@ class _MerchantIssuesScreenState extends State<MerchantIssuesScreen> {
     switch (s) {
       case 'failed':
       case 'cancelled':
-      case 'customer_not_available':
         return _W.redLt;
       case 'returning':
       case 'returned_to_store':
@@ -314,7 +325,9 @@ class _MerchantIssuesScreenState extends State<MerchantIssuesScreen> {
                 ),
                 Expanded(
                   child: filtered.isEmpty
-                      ? _EmptyIssuesState(selectedFilter: _selectedFilter)
+                      ? _EmptyIssuesState(
+                          title: _emptyTitle(_selectedFilter),
+                        )
                       : RefreshIndicator(
                           onRefresh: _load,
                           child: ListView.builder(
@@ -374,7 +387,12 @@ TextStyle _t(
   Color color = _W.navy,
   double? height,
 }) {
-  return TextStyle(fontSize: size, fontWeight: w, color: color, height: height);
+  return TextStyle(
+    fontSize: size,
+    fontWeight: w,
+    color: color,
+    height: height,
+  );
 }
 
 class _IssueCard extends StatelessWidget {
@@ -498,16 +516,14 @@ class _IssueCard extends StatelessWidget {
 }
 
 class _EmptyIssuesState extends StatelessWidget {
-  final String selectedFilter;
+  final String title;
 
-  const _EmptyIssuesState({required this.selectedFilter});
+  const _EmptyIssuesState({
+    required this.title,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final title = selectedFilter == 'all'
-        ? 'No issue orders'
-        : 'No ${selectedFilter.replaceAll('_', ' ')} orders';
-
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(32),
@@ -535,7 +551,11 @@ class _EmptyIssuesState extends StatelessWidget {
                 ),
               ),
               const SizedBox(height: 16),
-              Text(title, style: _t(18, FontWeight.w900)),
+              Text(
+                title,
+                style: _t(18, FontWeight.w900),
+                textAlign: TextAlign.center,
+              ),
               const SizedBox(height: 6),
               Text(
                 'No matching issue orders right now.',

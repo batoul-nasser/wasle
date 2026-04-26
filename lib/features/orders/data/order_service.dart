@@ -241,6 +241,26 @@ class OrdersService {
       }
     }
   }
+  Future<Map<String, String>?> getPickupPointById(String pickupPointId) async {
+  if (pickupPointId.trim().isEmpty) return null;
+
+  final merchantId = await _requireCurrentMerchantId();
+
+  final row = await _db
+      .from('pickup_points')
+      .select('id, name, address_text')
+      .eq('id', pickupPointId)
+      .eq('merchant_id', merchantId)
+      .maybeSingle();
+
+  if (row == null) return null;
+
+  return {
+    'id': row['id']?.toString() ?? '',
+    'name': row['name']?.toString() ?? 'Pickup Point',
+    'address': row['address_text']?.toString() ?? '',
+  };
+}
 
   List<Map<String, String>> _companyOptionsFromRows(Object? rows) {
     return List<Map<String, dynamic>>.from(rows as List)

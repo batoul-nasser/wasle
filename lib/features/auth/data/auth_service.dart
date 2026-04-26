@@ -1,40 +1,6 @@
-import 'package:flutter/foundation.dart';
+import 'dart:typed_data';
+
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:wasle/core/domain/delivery_constraints.dart';
-
-class EmailAlreadyRegisteredException implements Exception {
-  static const String defaultMessage =
-      'This email is already registered. Please log in.';
-
-  final String message;
-
-  const EmailAlreadyRegisteredException([this.message = defaultMessage]);
-
-  @override
-  String toString() => message;
-}
-
-class PendingSignupException implements Exception {
-  static const String defaultMessage =
-      'This account is still pending verification. Please finish signup with the email code.';
-
-  final String message;
-
-  const PendingSignupException([this.message = defaultMessage]);
-
-  @override
-  String toString() => message;
-}
-
-class EmailOtpException implements Exception {
-  final String code;
-  final String message;
-
-  const EmailOtpException({required this.code, required this.message});
-
-  @override
-  String toString() => message;
-}
 
 enum AuthFlowMode {
   login,
@@ -43,66 +9,6 @@ enum AuthFlowMode {
   customerSignup,
   merchantSignup,
   pickupPointSignup,
-}
-
-enum SignupEmailState { available, pending, confirmed }
-
-/// Vehicle types supported by the platform.
-/// Capacity values are predefined per the routing algorithm spec (PDF §3).
-enum VehicleType { motorcycle, car, van }
-
-extension VehicleTypeX on VehicleType {
-  String get dbValue {
-    switch (this) {
-      case VehicleType.motorcycle:
-        return 'motorcycle';
-      case VehicleType.car:
-        return 'car';
-      case VehicleType.van:
-        return 'van';
-    }
-  }
-
-  VehicleCapacityProfile get capacityProfile {
-    return DeliveryConstraintDefaults.capacityForVehicleType(dbValue);
-  }
-
-  String get displayName {
-    switch (this) {
-      case VehicleType.motorcycle:
-        return 'Motorcycle';
-      case VehicleType.car:
-        return 'Car';
-      case VehicleType.van:
-        return 'Van';
-    }
-  }
-
-  /// Max weight in kg
-  double get maxWeightKg {
-    return capacityProfile.weightKg;
-  }
-
-  /// Max volume in cm³
-  double get maxVolumeCm3 {
-    return capacityProfile.volumeCm3;
-  }
-
-  /// Max item count
-  int get maxItemCount {
-    return capacityProfile.itemCount;
-  }
-
-  static VehicleType fromDb(String? value) {
-    switch (value?.toLowerCase()) {
-      case 'car':
-        return VehicleType.car;
-      case 'van':
-        return VehicleType.van;
-      default:
-        return VehicleType.motorcycle;
-    }
-  }
 }
 
 class AuthService {
@@ -133,12 +39,8 @@ class AuthService {
     required String email,
     required String password,
   }) async {
-    final normalizedEmail = email.trim().toLowerCase();
-    await _assertEmailReadyForLogin(normalizedEmail);
-
-    debugPrint('AUTH [password_login] attempting sign-in for $normalizedEmail');
     return await _client.auth.signInWithPassword(
-      email: normalizedEmail,
+      email: email,
       password: password,
     );
   }
@@ -148,319 +50,48 @@ class AuthService {
     required bool shouldCreateUser,
     String? emailRedirectTo,
   }) async {
-    if (shouldCreateUser) {
-      await requestSignupOtp(email: email, emailRedirectTo: emailRedirectTo);
-      return;
+    if (shouldCreateUser && _client.auth.currentUser != null) {
+      await _client.auth.signOut();
     }
 
-    await requestLoginOtp(email: email, emailRedirectTo: emailRedirectTo);
-  }
-
-  Future<void> requestSignupOtp({
-    required String email,
-    String? emailRedirectTo,
-  }) async {
-    final normalizedEmail = email.trim().toLowerCase();
-    await _assertEmailAvailableForSignup(normalizedEmail);
-
-    debugPrint('AUTH [signup_otp_request] requesting OTP for $normalizedEmail');
     await _client.auth.signInWithOtp(
-      email: normalizedEmail,
-      shouldCreateUser: true,
+      email: email,
+      shouldCreateUser: shouldCreateUser,
       emailRedirectTo: emailRedirectTo,
-    );
-  }
-
-  Future<void> requestDriverSignupOtpCode({required String email}) async {
-    final normalizedEmail = email.trim().toLowerCase();
-    final state = await getSignupEmailState(normalizedEmail);
-    if (state == SignupEmailState.confirmed) {
-      debugPrint(
-        'AUTH [driver_signup_request] email exists + confirmed, blocking signup for $normalizedEmail',
-      );
-      throw const EmailAlreadyRegisteredException();
-    }
-
-    if (state == SignupEmailState.pending) {
-      debugPrint(
-        'AUTH [driver_signup_request] email exists + unverified, continuing pending signup for $normalizedEmail',
-      );
-    } else {
-      debugPrint(
-        'AUTH [driver_signup_request] email available, starting signup for $normalizedEmail',
-      );
-    }
-
-    debugPrint(
-      'AUTH [driver_signup_supabase_email_otp_request] requesting OTP for $normalizedEmail',
-    );
-    try {
-      await _client.auth.signInWithOtp(
-        email: normalizedEmail,
-        shouldCreateUser: true,
-        emailRedirectTo: null,
-      );
-    } catch (error, stackTrace) {
-      if (state == SignupEmailState.pending && _isRateLimitError(error)) {
-        debugPrint(
-          'AUTH [driver_signup_request] pending signup OTP resend rate-limited for $normalizedEmail, continuing to OTP screen\n$error\n$stackTrace',
-        );
-        return;
-      }
-      rethrow;
-    }
-  }
-
-  Future<void> resendDriverSignupOtpCode({required String email}) async {
-    final normalizedEmail = email.trim().toLowerCase();
-    final state = await getSignupEmailState(normalizedEmail);
-    if (state == SignupEmailState.confirmed) {
-      debugPrint(
-        'AUTH [driver_signup_resend] email exists + confirmed, blocking resend for $normalizedEmail',
-      );
-      throw const EmailAlreadyRegisteredException();
-    }
-    debugPrint(
-      'AUTH [driver_signup_resend] email state=$state, resending OTP for $normalizedEmail',
-    );
-    debugPrint(
-      'AUTH [driver_signup_supabase_email_otp_resend] resending OTP for $normalizedEmail',
-    );
-    await _client.auth.signInWithOtp(
-      email: normalizedEmail,
-      shouldCreateUser: true,
-      emailRedirectTo: null,
     );
   }
 
   Future<void> resendSignupOtp({
     required String email,
-    String? emailRedirectTo,
   }) async {
-    final normalizedEmail = email.trim().toLowerCase();
-    debugPrint('AUTH [signup_otp_resend] resending OTP for $normalizedEmail');
-
     await _client.auth.resend(
-      email: normalizedEmail,
       type: OtpType.signup,
-      emailRedirectTo: emailRedirectTo,
+      email: email,
     );
   }
 
-  Future<void> requestLoginOtp({
+  Future<void> resendLoginOtp({
     required String email,
-    String? emailRedirectTo,
   }) async {
-    final normalizedEmail = email.trim().toLowerCase();
-    await _assertEmailReadyForLogin(normalizedEmail);
-    debugPrint('AUTH [login_otp_request] requesting OTP for $normalizedEmail');
-
-    await _client.auth.signInWithOtp(
-      email: normalizedEmail,
-      shouldCreateUser: false,
-      emailRedirectTo: emailRedirectTo,
-    );
-  }
-
-  Future<AuthResponse> verifyLoginOtp({
-    required String email,
-    required String token,
-  }) async {
-    debugPrint(
-      'AUTH [login_otp_verify] verifying OTP for ${email.trim().toLowerCase()}',
-    );
-    return await _client.auth.verifyOTP(
-      email: email.trim().toLowerCase(),
-      token: token,
+    await _client.auth.resend(
       type: OtpType.email,
+      email: email,
     );
   }
 
-  Future<AuthResponse> verifySignupOtp({
+  Future<AuthResponse> verifyOtp({
     required String email,
     required String token,
+    required AuthFlowMode mode,
   }) async {
-    debugPrint(
-      'AUTH [signup_otp_verify] verifying OTP for ${email.trim().toLowerCase()}',
-    );
+    final otpType =
+        mode == AuthFlowMode.login ? OtpType.email : OtpType.signup;
+
     return await _client.auth.verifyOTP(
-      email: email.trim().toLowerCase(),
+      email: email,
       token: token,
-      type: OtpType.signup,
+      type: otpType,
     );
-  }
-
-  Future<AuthResponse> verifyDriverSignupOtpCode({
-    required String email,
-    required String token,
-  }) async {
-    final normalizedEmail = email.trim().toLowerCase();
-    debugPrint(
-      'AUTH [driver_signup_supabase_email_otp_verify] verifying OTP for $normalizedEmail',
-    );
-    try {
-      final response = await _client.auth.verifyOTP(
-        email: normalizedEmail,
-        token: token,
-        type: OtpType.email,
-      );
-      debugPrint(
-        'AUTH [driver_signup_verify_success] verify success for $normalizedEmail user=${response.user?.id}',
-      );
-      return response;
-    } catch (error, stackTrace) {
-      debugPrint(
-        'AUTH [driver_signup_verify_email_failed] $error\n$stackTrace',
-      );
-      if (_isInvalidOtpError(error)) rethrow;
-
-      final fallbackResponse = await _client.auth.verifyOTP(
-        email: normalizedEmail,
-        token: token,
-        type: OtpType.signup,
-      );
-      debugPrint(
-        'AUTH [driver_signup_verify_success_fallback] signup verify success for $normalizedEmail user=${fallbackResponse.user?.id}',
-      );
-      return fallbackResponse;
-    }
-  }
-
-  Future<String> completeDriverSignup({
-    required String password,
-    required String fullName,
-    required String phone,
-    required String city,
-    required VehicleType vehicleType,
-    String? userId,
-  }) async {
-    final currentUser = _client.auth.currentUser;
-    final resolvedUserId = userId?.trim().isNotEmpty == true
-        ? userId!.trim()
-        : currentUser?.id;
-
-    if (resolvedUserId == null || resolvedUserId.isEmpty) {
-      throw StateError('Unable to complete signup. Please verify again.');
-    }
-
-    debugPrint(
-      'AUTH [driver_signup_complete] setting password for user=$resolvedUserId',
-    );
-    try {
-      await _client.auth.updateUser(UserAttributes(password: password));
-      debugPrint(
-        'AUTH [driver_signup_password_set_success] password set successfully for user=$resolvedUserId',
-      );
-    } catch (error, stackTrace) {
-      debugPrint(
-        'AUTH [driver_signup_password_set_failure] $error\n$stackTrace',
-      );
-      rethrow;
-    }
-
-    await createDriverProfile(
-      userId: resolvedUserId,
-      fullName: fullName,
-      phone: phone,
-      city: city,
-      vehicleType: vehicleType,
-    );
-    debugPrint(
-      'AUTH [driver_signup_complete_success] created profile/driver for user=$resolvedUserId vehicle=${vehicleType.dbValue}',
-    );
-
-    return resolvedUserId;
-  }
-
-  Future<bool> isEmailRegistered(String email) async {
-    return (await getSignupEmailState(email)) == SignupEmailState.confirmed;
-  }
-
-  Future<SignupEmailState> getSignupEmailState(String email) async {
-    final normalizedEmail = email.trim().toLowerCase();
-    if (normalizedEmail.isEmpty) return SignupEmailState.available;
-
-    final response = await _client.rpc(
-      'get_email_signup_state',
-      params: {'lookup_email': normalizedEmail},
-    );
-
-    if (response is String) {
-      switch (response.toLowerCase().trim()) {
-        case 'confirmed':
-          return SignupEmailState.confirmed;
-        case 'pending':
-          return SignupEmailState.pending;
-        default:
-          return SignupEmailState.available;
-      }
-    }
-    return SignupEmailState.available;
-  }
-
-  Future<void> _assertEmailAvailableForSignup(String email) async {
-    final state = await getSignupEmailState(email);
-    if (state != SignupEmailState.confirmed) {
-      if (state == SignupEmailState.pending) {
-        debugPrint(
-          'AUTH [signup_precheck] continuing pending OTP signup for existing unconfirmed email: $email',
-        );
-      }
-      return;
-    }
-
-    debugPrint(
-      'AUTH [signup_precheck] blocked OTP signup for confirmed email: $email',
-    );
-    throw const EmailAlreadyRegisteredException();
-  }
-
-  Future<void> _assertEmailReadyForLogin(String email) async {
-    final state = await getSignupEmailState(email);
-    switch (state) {
-      case SignupEmailState.pending:
-        debugPrint(
-          'AUTH [login_precheck] blocked login for pending signup email: $email',
-        );
-        throw const PendingSignupException();
-      case SignupEmailState.confirmed:
-        debugPrint(
-          'AUTH [login_precheck] confirmed email allowed to login: $email',
-        );
-        return;
-      case SignupEmailState.available:
-        debugPrint(
-          'AUTH [login_precheck] no confirmed account found for email: $email',
-        );
-        return;
-    }
-  }
-
-  bool _isRateLimitError(Object error) {
-    final raw = error.toString().toLowerCase();
-    if (error is AuthApiException) {
-      final code = (error.code ?? '').toLowerCase();
-      return code == 'over_request_rate_limit' ||
-          code == 'over_email_send_rate_limit';
-    }
-    return raw.contains('too many requests') ||
-        raw.contains('rate limit') ||
-        raw.contains('over_request_rate_limit') ||
-        raw.contains('over_email_send_rate_limit');
-  }
-
-  bool _isInvalidOtpError(Object error) {
-    final raw = error.toString().toLowerCase();
-    if (error is AuthApiException) {
-      final code = (error.code ?? '').toLowerCase();
-      return code == 'invalid_otp' ||
-          code == 'otp_expired' ||
-          code == 'invalid_grant';
-    }
-    return raw.contains('invalid otp') ||
-        raw.contains('otp_expired') ||
-        raw.contains('invalid token') ||
-        raw.contains('token has expired');
   }
 
   Future<void> signOut() async {
@@ -470,11 +101,13 @@ class AuthService {
   Future<Map<String, dynamic>?> getCurrentProfile() async {
     final user = _client.auth.currentUser;
     if (user == null) return null;
+
     final response = await _client
         .from('profiles')
         .select()
         .eq('id', user.id)
         .maybeSingle();
+
     return response;
   }
 
@@ -484,6 +117,7 @@ class AuthService {
         .select()
         .eq('id', userId)
         .maybeSingle();
+
     return response;
   }
 
@@ -493,6 +127,7 @@ class AuthService {
         .select()
         .eq('profile_id', profileId)
         .maybeSingle();
+
     return response;
   }
 
@@ -502,15 +137,19 @@ class AuthService {
         .select()
         .eq('id', companyId)
         .maybeSingle();
+
     return response;
   }
 
-  Future<Map<String, dynamic>?> getMerchantByProfileId(String profileId) async {
+  Future<Map<String, dynamic>?> getMerchantByProfileId(
+    String profileId,
+  ) async {
     final result = await _client
         .from('merchant_users')
         .select()
         .eq('profile_id', profileId)
         .maybeSingle();
+
     return result;
   }
 
@@ -559,12 +198,16 @@ class AuthService {
         if (status == 'approved') return '/driver-dashboard';
         if (status == 'rejected') return '/rejected';
         return '/waiting-approval';
+
       case 'company_admin':
         return '/company-dashboard';
+
       case 'customer':
         return '/customer-dashboard';
+
       case 'merchant':
         return '/merchant-dashboard';
+
       case 'pickup_point_applicant':
         final application = await getMyPickupPointApplication();
         final status = application?['verification_status']
@@ -579,14 +222,19 @@ class AuthService {
           return '/pickup-application-rejected';
         }
         return '/pickup-application-pending';
+
       case 'pickup_point_operator':
         return '/pickup-point-dashboard';
+
       case 'platform_admin':
         return '/admin-dashboard';
+
       case 'agent':
         return '/agent-dashboard';
+
       case 'pickup_point':
         return '/pickup-dashboard';
+
       default:
         return '/welcome';
     }
@@ -595,11 +243,13 @@ class AuthService {
   Future<String?> checkDriverStatus() async {
     final user = _client.auth.currentUser;
     if (user == null) return null;
+
     final response = await _client
         .from('drivers')
         .select('verification_status')
         .eq('profile_id', user.id)
         .maybeSingle();
+
     if (response == null) return null;
     final raw = response['verification_status']?.toString();
     if (raw == null) return null;
@@ -612,9 +262,7 @@ class AuthService {
   }) async {
     final path = 'storage/$fileName';
 
-    await _client.storage
-        .from('pickup-point-storage')
-        .uploadBinary(
+    await _client.storage.from('pickup-point-storage').uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -629,9 +277,7 @@ class AuthService {
   }) async {
     final path = 'shelves/$fileName';
 
-    await _client.storage
-        .from('pickup-point-shelves')
-        .uploadBinary(
+    await _client.storage.from('pickup-point-shelves').uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -646,9 +292,7 @@ class AuthService {
   }) async {
     final path = 'shops/$fileName';
 
-    await _client.storage
-        .from('pickup-point-shops')
-        .uploadBinary(
+    await _client.storage.from('pickup-point-shops').uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -663,9 +307,7 @@ class AuthService {
   }) async {
     final path = 'ids/$fileName';
 
-    await _client.storage
-        .from('pickup-point-ids')
-        .uploadBinary(
+    await _client.storage.from('pickup-point-ids').uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -674,30 +316,29 @@ class AuthService {
     return _client.storage.from('pickup-point-ids').getPublicUrl(path);
   }
 
-  /// Creates a driver profile with vehicle type + auto-assigned capacity values.
-  /// Per PDF §3: vehicle type determines weight, volume, and item-count limits.
   Future<void> createDriverProfile({
     required String userId,
     required String fullName,
     required String phone,
     required String city,
-    required VehicleType vehicleType,
   }) async {
-    await _client.from('profiles').upsert({
-      'id': userId,
-      'full_name': fullName,
-      'phone': phone,
-      'role': 'driver',
-    }, onConflict: 'id');
+    await _client.from('profiles').upsert(
+      {
+        'id': userId,
+        'full_name': fullName,
+        'phone': phone,
+        'role': 'driver',
+      },
+      onConflict: 'id',
+    );
 
-    await _client.from('drivers').upsert({
-      'profile_id': userId,
-      'verification_status': 'pending',
-      'vehicle_type': vehicleType.dbValue,
-      'capacity_weight': vehicleType.maxWeightKg,
-      'capacity_volume': vehicleType.maxVolumeCm3,
-      'capacity_item_count': vehicleType.maxItemCount,
-    }, onConflict: 'profile_id');
+    await _client.from('drivers').upsert(
+      {
+        'profile_id': userId,
+        'verification_status': 'pending',
+      },
+      onConflict: 'profile_id',
+    );
 
     final driverRow = await _client
         .from('drivers')
@@ -707,11 +348,14 @@ class AuthService {
 
     if (driverRow != null) {
       final driverId = driverRow['id'] as String;
-      await _client.from('driver_locations').upsert({
-        'driver_id': driverId,
-        'city': city.isEmpty ? null : city,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }, onConflict: 'driver_id');
+      await _client.from('driver_locations').upsert(
+        {
+          'driver_id': driverId,
+          'city': city.isEmpty ? null : city,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        },
+        onConflict: 'driver_id',
+      );
     }
   }
 
@@ -719,23 +363,19 @@ class AuthService {
     required String userId,
     required String adminName,
     required String companyName,
-    required String addressText,
-    required double lat,
-    required double lng,
+    required String location,
   }) async {
     await _client.from('profiles').upsert({
       'id': userId,
       'full_name': adminName,
       'role': 'company_admin',
-    }, onConflict: 'id');
-    await _client.from('delivery_companies').upsert({
+    });
+
+    await _client.from('delivery_companies').insert({
       'id': userId,
       'name': companyName,
-      'location': addressText,
-      'address_text': addressText,
-      'lat': lat,
-      'lng': lng,
-    }, onConflict: 'id');
+      'location': location,
+    });
   }
 
   Future<void> createCustomerProfile({
@@ -756,6 +396,10 @@ class AuthService {
     required String fullName,
     required String phone,
     required String businessName,
+    required String branchName,
+    required String addressText,
+    required double branchLat,
+    required double branchLng,
   }) async {
     await _client.from('profiles').upsert({
       'id': userId,
@@ -764,20 +408,60 @@ class AuthService {
       'role': 'merchant',
     }, onConflict: 'id');
 
-    final business = await _client
-        .from('merchant_businesses')
-        .insert({'name': businessName})
+    final existingMerchantUser = await _client
+        .from('merchant_users')
+        .select('merchant_id')
+        .eq('profile_id', userId)
+        .maybeSingle();
+
+    String merchantId;
+
+    if (existingMerchantUser != null &&
+        existingMerchantUser['merchant_id'] != null) {
+      merchantId = existingMerchantUser['merchant_id'].toString();
+    } else {
+      final business = await _client
+          .from('merchant_businesses')
+          .insert({'name': businessName})
+          .select('id')
+          .single();
+
+      merchantId = business['id'] as String;
+
+      await _client.from('merchant_users').insert({
+        'profile_id': userId,
+        'merchant_id': merchantId,
+        'role': 'owner',
+        'business_name': businessName,
+      });
+    }
+
+    final existingBranch = await _client
+        .from('merchant_branches')
         .select('id')
-        .single();
+        .eq('merchant_id', merchantId)
+        .limit(1)
+        .maybeSingle();
 
-    final merchantId = business['id'] as String;
-
-    await _client.from('merchant_users').insert({
-      'profile_id': userId,
-      'merchant_id': merchantId,
-      'role': 'owner',
-      'business_name': businessName,
-    });
+    if (existingBranch == null) {
+      await _client.from('merchant_branches').insert({
+        'merchant_id': merchantId,
+        'created_by': userId,
+        'name': branchName,
+        'address_text': addressText,
+        'lat': branchLat,
+        'lng': branchLng,
+        'is_active': true,
+      });
+    } else {
+      await _client.from('merchant_branches').update({
+        'name': branchName,
+        'address_text': addressText,
+        'lat': branchLat,
+        'lng': branchLng,
+        'is_active': true,
+      }).eq('id', existingBranch['id'].toString());
+    }
   }
 
   Future<void> createPickupPointApplication({
@@ -853,6 +537,7 @@ class AuthService {
         .from('delivery_companies')
         .select('id, name')
         .order('name');
+
     return List<Map<String, dynamic>>.from(response);
   }
 
@@ -860,45 +545,18 @@ class AuthService {
     required String driverProfileId,
     required String companyId,
   }) async {
-    final driver = await _client
-        .from('drivers')
-        .select(
-          'vehicle_type, capacity_weight, capacity_volume, capacity_item_count',
-        )
-        .eq('profile_id', driverProfileId)
-        .maybeSingle();
-
-    if (driver == null) {
-      throw StateError(
-        'Driver profile is incomplete. Please finish onboarding before requesting a delivery company.',
-      );
-    }
-
-    final missingFields = <String>[
-      if (driver['vehicle_type'] == null ||
-          driver['vehicle_type'].toString().trim().isEmpty)
-        'vehicle_type',
-      if (driver['capacity_weight'] == null) 'capacity_weight',
-      if (driver['capacity_volume'] == null) 'capacity_volume',
-      if (driver['capacity_item_count'] == null) 'capacity_item_count',
-    ];
-
-    if (missingFields.isNotEmpty) {
-      throw StateError(
-        'Driver vehicle capacity is incomplete. Missing: ${missingFields.join(', ')}.',
-      );
-    }
-
     await _client.from('driver_company_requests').insert({
       'driver_profile_id': driverProfileId,
       'company_id': companyId,
     });
   }
 
-  Future<List<Map<String, dynamic>>>
-  getDriverRequestsForCurrentCompany() async {
+  Future<List<Map<String, dynamic>>> getDriverRequestsForCurrentCompany() async {
     final user = _client.auth.currentUser;
-    if (user == null) throw Exception('User not logged in');
+
+    if (user == null) {
+      throw Exception('User not logged in');
+    }
 
     final requests = await _client
         .from('driver_company_requests')
@@ -919,7 +577,7 @@ class AuthService {
 
       final driver = await _client
           .from('drivers')
-          .select('profile_id, verification_status, vehicle_type')
+          .select('profile_id, verification_status')
           .eq('profile_id', driverProfileId)
           .maybeSingle();
 
@@ -932,7 +590,6 @@ class AuthService {
         'phone': profile?['phone'],
         'role': profile?['role'],
         'verification_status': driver?['verification_status'],
-        'vehicle_type': driver?['vehicle_type'],
       });
     }
 
@@ -944,17 +601,20 @@ class AuthService {
     required String driverProfileId,
   }) async {
     final user = _client.auth.currentUser;
-    if (user == null) throw Exception('User not logged in');
+
+    if (user == null) {
+      throw Exception('User not logged in');
+    }
 
     await _client
         .from('driver_company_requests')
         .update({'request_status': 'approved'})
         .eq('id', requestId);
 
-    await _client
-        .from('drivers')
-        .update({'verification_status': 'approved', 'company_id': user.id})
-        .eq('profile_id', driverProfileId);
+    await _client.from('drivers').update({
+      'verification_status': 'approved',
+      'company_id': user.id,
+    }).eq('profile_id', driverProfileId);
   }
 
   Future<void> rejectDriverRequest({
@@ -966,10 +626,9 @@ class AuthService {
         .update({'request_status': 'rejected'})
         .eq('id', requestId);
 
-    await _client
-        .from('drivers')
-        .update({'verification_status': 'rejected'})
-        .eq('profile_id', driverProfileId);
+    await _client.from('drivers').update({
+      'verification_status': 'rejected',
+    }).eq('profile_id', driverProfileId);
   }
 
   Future<List<Map<String, dynamic>>> getMerchantOrders() async {
@@ -983,6 +642,7 @@ class AuthService {
         .maybeSingle();
 
     if (merchantRow == null) return [];
+
     final merchantId = merchantRow['merchant_id'] as String;
 
     final orders = await _client
@@ -1020,13 +680,11 @@ class AuthService {
     if (companyId == null || companyId.isEmpty) {
       throw Exception('No active delivery company mapping found for merchant');
     }
-    await _client
-        .from('orders')
-        .update({
-          'delivery_company_id': companyId,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .eq('id', orderId);
+
+    await _client.from('orders').update({
+      'delivery_company_id': companyId,
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', orderId);
   }
 
   Future<List<Map<String, dynamic>>> getCompanyAssignmentsOrders() async {
@@ -1039,9 +697,8 @@ class AuthService {
     final orderRows = await _client
         .from('orders')
         .select(
-          'id, merchant_id, branch_id, customer_profile_id, pickup_point_id, '
-          'delivery_company_id, status, tracking_code, customer_name, '
-          'customer_phone, customer_address_text, created_at, updated_at',
+          'id, merchant_id, branch_id, customer_profile_id, pickup_point_id, delivery_company_id, status, '
+          'tracking_code, customer_name, customer_phone, customer_address_text, created_at, updated_at',
         )
         .eq('delivery_company_id', companyId)
         .order('created_at', ascending: false);
@@ -1050,7 +707,7 @@ class AuthService {
     if (orders.isEmpty) return [];
 
     final orderIds = orders
-        .map((o) => o['id']?.toString())
+        .map((order) => order['id']?.toString())
         .whereType<String>()
         .where((id) => id.isNotEmpty)
         .toList();
@@ -1066,60 +723,57 @@ class AuthService {
 
     final assignments = List<Map<String, dynamic>>.from(assignmentRows);
     final assignmentByOrderId = <String, Map<String, dynamic>>{};
-    for (final a in assignments) {
-      final oid = a['order_id']?.toString();
-      if (oid == null || oid.isEmpty) continue;
-      assignmentByOrderId.putIfAbsent(oid, () => a);
+    for (final assignment in assignments) {
+      final orderId = assignment['order_id']?.toString();
+      if (orderId == null || orderId.isEmpty) continue;
+      assignmentByOrderId.putIfAbsent(orderId, () => assignment);
     }
 
     Map<String, Map<String, dynamic>> orderAddressByOrderId = {};
     try {
-      final addrRows = await _client
+      final orderAddressRows = await _client
           .from('order_addresses')
           .select('*')
           .inFilter('order_id', orderIds);
-      orderAddressByOrderId = {
-        for (final r in List<Map<String, dynamic>>.from(addrRows))
-          if (r['order_id'] != null) r['order_id'].toString(): r,
-      };
-    } catch (_) {}
 
-    Map<String, Map<String, dynamic>> autoAssignmentEventByOrderId = {};
-    try {
-      final eventRows = await _client
-          .from('order_events')
-          .select('order_id, event_type, note, metadata, created_at')
-          .inFilter('order_id', orderIds)
-          .order('created_at', ascending: false);
-      for (final row in List<Map<String, dynamic>>.from(eventRows)) {
-        final orderId = row['order_id']?.toString();
-        if (orderId == null || orderId.isEmpty) continue;
-        if (autoAssignmentEventByOrderId.containsKey(orderId)) continue;
-        if (!_isAutoAssignmentFailureEvent(row)) continue;
-        autoAssignmentEventByOrderId[orderId] = row;
-      }
-    } catch (_) {}
+      orderAddressByOrderId = {
+        for (final row in List<Map<String, dynamic>>.from(orderAddressRows))
+          if (row['order_id'] != null) row['order_id'].toString(): row,
+      };
+    } catch (_) {
+      orderAddressByOrderId = {};
+    }
+
+    final merchantIds = orders
+        .map((order) => order['merchant_id']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
 
     final branchIds = orders
-        .map((o) => o['branch_id']?.toString())
+        .map((order) => order['branch_id']?.toString())
         .whereType<String>()
         .where((id) => id.isNotEmpty)
         .toSet()
         .toList();
+
     final pickupIds = orders
-        .map((o) => o['pickup_point_id']?.toString())
+        .map((order) => order['pickup_point_id']?.toString())
         .whereType<String>()
         .where((id) => id.isNotEmpty)
         .toSet()
         .toList();
+
     final customerProfileIds = orders
-        .map((o) => o['customer_profile_id']?.toString())
+        .map((order) => order['customer_profile_id']?.toString())
         .whereType<String>()
         .where((id) => id.isNotEmpty)
         .toSet()
         .toList();
+
     final driverIds = assignments
-        .map((a) => a['driver_id']?.toString())
+        .map((assignment) => assignment['driver_id']?.toString())
         .whereType<String>()
         .where((id) => id.isNotEmpty)
         .toSet()
@@ -1133,15 +787,16 @@ class AuthService {
                 .select('id, merchant_id, name, address_text')
                 .inFilter('id', branchIds),
           );
-    final branchById = {for (final b in branches) b['id'].toString(): b};
+
+    final branchById = {
+      for (final branch in branches)
+        if (branch['id'] != null) branch['id'].toString(): branch,
+    };
 
     final allMerchantIds = <String>{
-      ...orders
-          .map((o) => o['merchant_id']?.toString())
-          .whereType<String>()
-          .where((id) => id.isNotEmpty),
+      ...merchantIds,
       ...branches
-          .map((b) => b['merchant_id']?.toString())
+          .map((branch) => branch['merchant_id']?.toString())
           .whereType<String>()
           .where((id) => id.isNotEmpty),
     }.toList();
@@ -1154,7 +809,11 @@ class AuthService {
                 .select('id, name')
                 .inFilter('id', allMerchantIds),
           );
-    final merchantById = {for (final m in merchants) m['id'].toString(): m};
+
+    final merchantById = {
+      for (final merchant in merchants)
+        if (merchant['id'] != null) merchant['id'].toString(): merchant,
+    };
 
     final pickups = pickupIds.isEmpty
         ? <Map<String, dynamic>>[]
@@ -1164,7 +823,11 @@ class AuthService {
                 .select('id, name, address_text')
                 .inFilter('id', pickupIds),
           );
-    final pickupById = {for (final p in pickups) p['id'].toString(): p};
+
+    final pickupById = {
+      for (final pickup in pickups)
+        if (pickup['id'] != null) pickup['id'].toString(): pickup,
+    };
 
     final drivers = driverIds.isEmpty
         ? <Map<String, dynamic>>[]
@@ -1175,15 +838,20 @@ class AuthService {
                 .inFilter('id', driverIds)
                 .eq('company_id', companyId),
           );
-    final driverById = {for (final d in drivers) d['id'].toString(): d};
+
+    final driverById = {
+      for (final driver in drivers)
+        if (driver['id'] != null) driver['id'].toString(): driver,
+    };
 
     final profileIds = <String>{
       ...customerProfileIds,
       ...drivers
-          .map((d) => d['profile_id']?.toString())
+          .map((driver) => driver['profile_id']?.toString())
           .whereType<String>()
           .where((id) => id.isNotEmpty),
     }.toList();
+
     final profiles = profileIds.isEmpty
         ? <Map<String, dynamic>>[]
         : List<Map<String, dynamic>>.from(
@@ -1192,31 +860,32 @@ class AuthService {
                 .select('id, full_name, phone')
                 .inFilter('id', profileIds),
           );
-    final profileById = {for (final p in profiles) p['id'].toString(): p};
+
+    final profileById = {
+      for (final profile in profiles)
+        if (profile['id'] != null) profile['id'].toString(): profile,
+    };
 
     return orders.map((order) {
       final orderId = order['id']?.toString() ?? '';
       final assignment = assignmentByOrderId[orderId];
-      final autoAssignmentEvent = autoAssignmentEventByOrderId[orderId];
       final rawDriverId = assignment?['driver_id']?.toString();
       final driver = rawDriverId == null ? null : driverById[rawDriverId];
       final hasValidDriver =
           rawDriverId != null && rawDriverId.isNotEmpty && driver != null;
       final driverProfileId = driver?['profile_id']?.toString();
-      final driverProfile = driverProfileId == null
-          ? null
-          : profileById[driverProfileId];
+      final driverProfile =
+          driverProfileId == null ? null : profileById[driverProfileId];
+
       final customerProfileId = order['customer_profile_id']?.toString();
-      final customerProfile = customerProfileId == null
-          ? null
-          : profileById[customerProfileId];
+      final customerProfile =
+          customerProfileId == null ? null : profileById[customerProfileId];
       final branch = branchById[order['branch_id']?.toString()];
       final pickup = pickupById[order['pickup_point_id']?.toString()];
-      final merchant =
-          merchantById[_firstNonEmpty([
-            order['merchant_id'],
-            branch?['merchant_id'],
-          ])];
+      final merchant = merchantById[_firstNonEmpty([
+        order['merchant_id'],
+        branch?['merchant_id'],
+      ])];
       final address = orderAddressByOrderId[orderId];
 
       return {
@@ -1226,69 +895,44 @@ class AuthService {
         'status': order['status']?.toString() ?? 'created',
         'pickup_name':
             _firstNonEmpty([pickup?['name'], branch?['name']]) ??
-            'Pickup point',
+                'Pickup point',
         'pickup_address':
             _firstNonEmpty([
               pickup?['address_text'],
               branch?['address_text'],
             ]) ??
-            'No pickup address',
+                'No pickup address',
         'merchant_name':
             _firstNonEmpty([merchant?['name']]) ?? 'Unknown merchant',
         'driver_id': hasValidDriver ? rawDriverId : null,
-        'driver_name': hasValidDriver
-            ? (driverProfile?['full_name']?.toString())
-            : null,
-        'driver_phone': hasValidDriver
-            ? (driverProfile?['phone']?.toString())
-            : null,
-        'driver_vehicle': hasValidDriver
-            ? (driver['vehicle_type']?.toString())
-            : null,
+        'driver_name':
+            hasValidDriver ? (driverProfile?['full_name']?.toString()) : null,
+        'driver_phone':
+            hasValidDriver ? (driverProfile?['phone']?.toString()) : null,
+        'vehicle_type':
+            hasValidDriver ? (driver?['vehicle_type']?.toString()) : null,
         'accepted_at': assignment?['accepted_at'],
         'customer_name':
             _firstNonEmpty([
               customerProfile?['full_name'],
               order['customer_name'],
             ]) ??
-            'Unknown customer',
+                'Unknown customer',
         'customer_phone':
             _firstNonEmpty([
               customerProfile?['phone'],
               order['customer_phone'],
             ]) ??
-            'No phone',
+                'No phone',
         'dropoff_address':
             _firstNonEmpty([
               address?['dropoff_address_text'],
               address?['dropoff_address'],
               order['customer_address_text'],
             ]) ??
-            'No dropoff address',
-        'auto_assignment_failed': autoAssignmentEvent != null,
-        'auto_assignment_reason': autoAssignmentEvent?['note']?.toString(),
-        'auto_assignment_metadata': autoAssignmentEvent?['metadata'],
+                'No dropoff address',
       };
     }).toList();
-  }
-
-  bool _isAutoAssignmentFailureEvent(Map<String, dynamic> row) {
-    if ((row['event_type']?.toString() ?? '').toLowerCase() != 'note_added') {
-      return false;
-    }
-
-    final metadata = row['metadata'];
-    if (metadata is Map &&
-        (metadata['assignment_status']?.toString().toLowerCase() ==
-            'unassigned')) {
-      return true;
-    }
-
-    final note = row['note']?.toString().toLowerCase() ?? '';
-    return note.contains('automatic assignment failed') ||
-        note.contains('no feasible driver found') ||
-        note.contains('no approved available drivers') ||
-        note.contains('missing company, package, or routing data');
   }
 
   Future<void> _backfillLegacyOrderCompanyLinks(String companyId) async {
@@ -1298,21 +942,19 @@ class AuthService {
             .from('assignments')
             .select('order_id')
             .eq('company_id', companyId);
+
         final orderIds = List<Map<String, dynamic>>.from(assignmentRows)
-            .map((r) => r['order_id']?.toString())
+            .map((row) => row['order_id']?.toString())
             .whereType<String>()
             .where((id) => id.isNotEmpty)
             .toSet()
             .toList();
+
         if (orderIds.isNotEmpty) {
-          await _client
-              .from('orders')
-              .update({
-                'delivery_company_id': companyId,
-                'updated_at': DateTime.now().toUtc().toIso8601String(),
-              })
-              .inFilter('id', orderIds)
-              .isFilter('delivery_company_id', null);
+          await _client.from('orders').update({
+            'delivery_company_id': companyId,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          }).inFilter('id', orderIds).isFilter('delivery_company_id', null);
         }
       } catch (_) {}
 
@@ -1323,12 +965,14 @@ class AuthService {
             .eq('company_id', companyId)
             .eq('is_active', true),
       );
+
       final merchantIds = directMappings
-          .map((r) => r['merchant_id']?.toString())
+          .map((row) => row['merchant_id']?.toString())
           .whereType<String>()
           .where((id) => id.isNotEmpty)
           .toSet()
           .toList();
+
       if (merchantIds.isEmpty) return;
 
       final allActiveMappings = List<Map<String, dynamic>>.from(
@@ -1338,32 +982,43 @@ class AuthService {
             .inFilter('merchant_id', merchantIds)
             .eq('is_active', true),
       );
+
       final companiesByMerchant = <String, Set<String>>{};
-      for (final r in allActiveMappings) {
-        final mid = r['merchant_id']?.toString();
-        final cid = r['company_id']?.toString();
-        if (mid == null || mid.isEmpty || cid == null || cid.isEmpty) continue;
-        companiesByMerchant.putIfAbsent(mid, () => <String>{}).add(cid);
+      for (final row in allActiveMappings) {
+        final merchantId = row['merchant_id']?.toString();
+        final mappedCompanyId = row['company_id']?.toString();
+        if (merchantId == null ||
+            merchantId.isEmpty ||
+            mappedCompanyId == null ||
+            mappedCompanyId.isEmpty) {
+          continue;
+        }
+        companiesByMerchant
+            .putIfAbsent(merchantId, () => <String>{})
+            .add(mappedCompanyId);
       }
+
       final safeMerchantIds = companiesByMerchant.entries
-          .where((e) => e.value.length == 1 && e.value.first == companyId)
-          .map((e) => e.key)
+          .where(
+            (entry) =>
+                entry.value.length == 1 && entry.value.first == companyId,
+          )
+          .map((entry) => entry.key)
           .toList();
+
       if (safeMerchantIds.isEmpty) return;
 
-      await _client
-          .from('orders')
-          .update({
-            'delivery_company_id': companyId,
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          })
-          .inFilter('merchant_id', safeMerchantIds)
-          .isFilter('delivery_company_id', null);
+      await _client.from('orders').update({
+        'delivery_company_id': companyId,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      }).inFilter('merchant_id', safeMerchantIds).isFilter(
+            'delivery_company_id',
+            null,
+          );
     } catch (_) {}
   }
 
-  Future<List<Map<String, dynamic>>>
-  getApprovedDriversForCurrentCompany() async {
+  Future<List<Map<String, dynamic>>> getApprovedDriversForCurrentCompany() async {
     final user = _client.auth.currentUser;
     if (user == null) throw Exception('User not logged in');
 
@@ -1371,15 +1026,16 @@ class AuthService {
       await _client
           .from('drivers')
           .select(
-            'id, profile_id, company_id, vehicle_type, verification_status, capacity_weight, capacity_item_count',
+            'id, profile_id, company_id, vehicle_type, verification_status',
           )
           .eq('company_id', user.id)
           .eq('verification_status', 'approved'),
     );
+
     if (driversRows.isEmpty) return [];
 
     final profileIds = driversRows
-        .map((r) => r['profile_id']?.toString() ?? r['id']?.toString())
+        .map((row) => row['profile_id']?.toString() ?? row['id']?.toString())
         .whereType<String>()
         .where((id) => id.isNotEmpty)
         .toSet()
@@ -1391,7 +1047,11 @@ class AuthService {
           .select('id, full_name, phone')
           .inFilter('id', profileIds),
     );
-    final profileById = {for (final r in profiles) r['id'].toString(): r};
+
+    final profileById = {
+      for (final row in profiles)
+        if (row['id'] != null) row['id'].toString(): row,
+    };
 
     return driversRows
         .map((row) {
@@ -1409,13 +1069,11 @@ class AuthService {
             'profile_id': profileId,
             'full_name': profile?['full_name'] ?? 'Driver',
             'phone': profile?['phone'] ?? '-',
-            'vehicle_type': row['vehicle_type'] ?? 'motorcycle',
-            'verification_status': row['verification_status'],
-            'capacity_weight': row['capacity_weight'],
-            'capacity_item_count': row['capacity_item_count'],
+            'vehicle_type': row['vehicle_type']?.toString(),
+            'verification_status': row['verification_status']?.toString(),
           };
         })
-        .where((r) => r.isNotEmpty)
+        .where((row) => row.isNotEmpty)
         .toList();
   }
 
@@ -1431,12 +1089,15 @@ class AuthService {
         .select('id, status, delivery_company_id')
         .eq('id', orderId)
         .limit(1);
+
     final orderList = List<Map<String, dynamic>>.from(orderRows);
-    if (orderList.isEmpty) throw Exception('Order not found');
+    if (orderList.isEmpty) {
+      throw Exception('Order not found');
+    }
 
     final order = orderList.first;
-    final currentStatus = (order['status']?.toString() ?? 'created')
-        .toLowerCase();
+    final currentStatus =
+        (order['status']?.toString() ?? 'created').toLowerCase();
     final orderCompanyId = order['delivery_company_id']?.toString();
 
     if (orderCompanyId == null || orderCompanyId.isEmpty) {
@@ -1451,8 +1112,11 @@ class AuthService {
         .select('id, company_id, profile_id')
         .eq('id', driverId)
         .limit(1);
+
     final driverList = List<Map<String, dynamic>>.from(driverRows);
-    if (driverList.isEmpty) throw Exception('Selected driver not found');
+    if (driverList.isEmpty) {
+      throw Exception('Selected driver not found');
+    }
 
     final driver = driverList.first;
     final driverCompanyId = driver['company_id']?.toString();
@@ -1463,6 +1127,7 @@ class AuthService {
     if (_companyTerminalStatuses.contains(currentStatus)) {
       throw Exception('Cannot assign a closed order');
     }
+
     if (!_companyAssignableStatuses.contains(currentStatus)) {
       throw Exception('Order already in progress and cannot be reassigned');
     }
@@ -1474,15 +1139,16 @@ class AuthService {
         .eq('order_id', orderId)
         .order('assigned_at', ascending: false)
         .limit(1);
-    final existingAssignments = List<Map<String, dynamic>>.from(
-      existingAssignmentRows,
-    );
-    final existingAssignment = existingAssignments.isEmpty
-        ? null
-        : existingAssignments.first;
+
+    final existingAssignments =
+        List<Map<String, dynamic>>.from(existingAssignmentRows);
+    final existingAssignment =
+        existingAssignments.isEmpty ? null : existingAssignments.first;
 
     final previousDriverId = existingAssignment?['driver_id']?.toString();
-    if (previousDriverId == driverId && currentStatus == 'assigned') return;
+    if (previousDriverId == driverId && currentStatus == 'assigned') {
+      return;
+    }
 
     final assignedAt = DateTime.now().toUtc().toIso8601String();
     if (existingAssignment != null) {
@@ -1506,10 +1172,11 @@ class AuthService {
       });
     }
 
+    const nextStatus = 'assigned';
     await _client
         .from('orders')
         .update({
-          'status': 'assigned',
+          'status': nextStatus,
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', orderId)
@@ -1523,7 +1190,9 @@ class AuthService {
     });
   }
 
-  Future<void> unassignOrderFromDriver({required String orderId}) async {
+  Future<void> unassignOrderFromDriver({
+    required String orderId,
+  }) async {
     final user = _client.auth.currentUser;
     if (user == null) throw Exception('User not logged in');
 
@@ -1532,12 +1201,15 @@ class AuthService {
         .select('id, status, delivery_company_id')
         .eq('id', orderId)
         .limit(1);
+
     final orderList = List<Map<String, dynamic>>.from(orderRows);
-    if (orderList.isEmpty) throw Exception('Order not found');
+    if (orderList.isEmpty) {
+      throw Exception('Order not found');
+    }
 
     final order = orderList.first;
-    final currentStatus = (order['status']?.toString() ?? 'created')
-        .toLowerCase();
+    final currentStatus =
+        (order['status']?.toString() ?? 'created').toLowerCase();
     final orderCompanyId = order['delivery_company_id']?.toString();
 
     if (orderCompanyId == null || orderCompanyId.isEmpty) {
@@ -1557,13 +1229,18 @@ class AuthService {
         .eq('order_id', orderId)
         .order('assigned_at', ascending: false)
         .limit(1);
+
     final assignments = List<Map<String, dynamic>>.from(assignmentRows);
-    if (assignments.isEmpty) return;
+    if (assignments.isEmpty) {
+      return;
+    }
 
     final assignment = assignments.first;
     final hadDriver =
         (assignment['driver_id']?.toString().trim().isNotEmpty ?? false);
-    if (!hadDriver) return;
+    if (!hadDriver) {
+      return;
+    }
 
     await _client
         .from('assignments')
@@ -1595,11 +1272,13 @@ class AuthService {
   Future<Map<String, dynamic>?> getDriverLocationByDriverId(
     String driverId,
   ) async {
-    return await _client
+    final response = await _client
         .from('driver_locations')
         .select()
         .eq('driver_id', driverId)
         .maybeSingle();
+
+    return response;
   }
 
   Future<void> upsertDriverLocation({
@@ -1623,7 +1302,9 @@ class AuthService {
     for (final value in values) {
       if (value == null) continue;
       final text = value.toString().trim();
-      if (text.isNotEmpty && text != '-') return text;
+      if (text.isNotEmpty && text != '-') {
+        return text;
+      }
     }
     return null;
   }

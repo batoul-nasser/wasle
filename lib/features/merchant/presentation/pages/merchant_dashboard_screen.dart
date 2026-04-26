@@ -152,108 +152,111 @@ class _MerchantDashboardScreenState extends State<MerchantDashboardScreen> {
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
               onRefresh: _loadData,
-              child: ListView(
-                padding: EdgeInsets.fromLTRB(
-                  14,
-                  0,
-                  14,
-                  28 + MediaQuery.of(context).padding.bottom,
-                ),
-                children: [
-                  const _TopBar(),
-                  const SizedBox(height: 4),
-                  if (_error != null) ...[
-                    _InfoBox(
-                      icon: Icons.error_outline,
-                      text: _error ?? 'Unable to load merchant dashboard.',
-                      color: _W.red,
-                      background: _W.redLt,
-                    ),
-                    const SizedBox(height: 12),
-                  ],
-                  _HeroCard(
-                    merchantName: fullName,
-                    totalOrders: totalOrders,
-                    activeOrders: activeOrders,
-                    issueOrders: issueOrders,
+              child: SafeArea(
+                bottom: false,
+                child: ListView(
+                  padding: EdgeInsets.fromLTRB(
+                    14,
+                    0,
+                    14,
+                    28 + MediaQuery.of(context).padding.bottom,
                   ),
-                  const SizedBox(height: 14),
-                  LayoutBuilder(
-                    builder: (context, constraints) {
-                      final useStackedActions =
-                          constraints.maxWidth.isFinite &&
-                          constraints.maxWidth < 360;
-                      final cardWidth = constraints.maxWidth.isFinite
-                          ? (constraints.maxWidth - 10) / 2
-                          : 160.0;
-                      final createAction = _ActionCard(
-                        icon: Icons.add_box_outlined,
-                        title: 'Create Order',
-                        subtitle: 'Start a paid delivery',
-                        color: _W.blue,
-                        background: _W.blueLt,
-                        onTap: widget.onOpenCreate,
-                      );
-                      final ordersAction = _ActionCard(
-                        icon: Icons.receipt_long_outlined,
-                        title: 'View Orders',
-                        subtitle: 'Search and filter',
-                        color: _W.green,
-                        background: _W.greenLt,
-                        onTap: widget.onOpenOrders,
-                      );
+                  children: [
+                    const _TopBar(),
+                    const SizedBox(height: 4),
+                    if (_error != null) ...[
+                      _InfoBox(
+                        icon: Icons.error_outline,
+                        text: _error ?? 'Unable to load merchant dashboard.',
+                        color: _W.red,
+                        background: _W.redLt,
+                      ),
+                      const SizedBox(height: 12),
+                    ],
+                    _HeroCard(
+                      merchantName: fullName,
+                      totalOrders: totalOrders,
+                      activeOrders: activeOrders,
+                      issueOrders: issueOrders,
+                    ),
+                    const SizedBox(height: 14),
+                    LayoutBuilder(
+                      builder: (context, constraints) {
+                        final width = constraints.maxWidth;
+                        final useStackedActions = width < 360;
+                        final spacing = 10.0;
+                        final cardWidth = (width - spacing) / 2;
 
-                      if (useStackedActions) {
-                        return Column(
+                        final createAction = _ActionCard(
+                          icon: Icons.add_box_outlined,
+                          title: 'Create Order',
+                          subtitle: 'Start a paid delivery',
+                          color: _W.blue,
+                          background: _W.blueLt,
+                          onTap: widget.onOpenCreate,
+                        );
+
+                        final ordersAction = _ActionCard(
+                          icon: Icons.receipt_long_outlined,
+                          title: 'View Orders',
+                          subtitle: 'Search and filter',
+                          color: _W.green,
+                          background: _W.greenLt,
+                          onTap: widget.onOpenOrders,
+                        );
+
+                        if (useStackedActions) {
+                          return Column(
+                            children: [
+                              createAction,
+                              const SizedBox(height: 10),
+                              ordersAction,
+                            ],
+                          );
+                        }
+
+                        return Row(
                           children: [
-                            createAction,
-                            const SizedBox(height: 10),
-                            ordersAction,
+                            SizedBox(width: cardWidth, child: createAction),
+                            const SizedBox(width: 10),
+                            SizedBox(width: cardWidth, child: ordersAction),
                           ],
                         );
-                      }
-
-                      return Row(
-                        children: [
-                          SizedBox(width: cardWidth, child: createAction),
-                          const SizedBox(width: 10),
-                          SizedBox(width: cardWidth, child: ordersAction),
-                        ],
-                      );
-                    },
-                  ),
-                  const SizedBox(height: 14),
-                  _StatsGrid(
-                    totalOrders: totalOrders,
-                    activeOrders: activeOrders,
-                    deliveredOrders: deliveredOrders,
-                    issueOrders: issueOrders,
-                  ),
-                  const SizedBox(height: 14),
-                  _SectionCard(
-                    icon: Icons.history_outlined,
-                    iconColor: _W.slate,
-                    iconBg: _W.slateLt,
-                    title: 'Recent Orders',
-                    subtitle: 'Latest merchant activity',
-                    child: recentOrders.isEmpty
-                        ? const _EmptyRecentOrders()
-                        : Column(
-                            children: [
-                              for (final order in recentOrders)
-                                _RecentOrderTile(
-                                  order: order,
-                                  statusLabel: _statusLabel(
-                                    _normalizedStatus(order['status']),
+                      },
+                    ),
+                    const SizedBox(height: 14),
+                    _StatsGrid(
+                      totalOrders: totalOrders,
+                      activeOrders: activeOrders,
+                      deliveredOrders: deliveredOrders,
+                      issueOrders: issueOrders,
+                    ),
+                    const SizedBox(height: 14),
+                    _SectionCard(
+                      icon: Icons.history_outlined,
+                      iconColor: _W.slate,
+                      iconBg: _W.slateLt,
+                      title: 'Recent Orders',
+                      subtitle: 'Latest merchant activity',
+                      child: recentOrders.isEmpty
+                          ? const _EmptyRecentOrders()
+                          : Column(
+                              children: [
+                                for (final order in recentOrders)
+                                  _RecentOrderTile(
+                                    order: order,
+                                    statusLabel: _statusLabel(
+                                      _normalizedStatus(order['status']),
+                                    ),
+                                    statusColor: _statusColor(
+                                      _normalizedStatus(order['status']),
+                                    ),
                                   ),
-                                  statusColor: _statusColor(
-                                    _normalizedStatus(order['status']),
-                                  ),
-                                ),
-                            ],
-                          ),
-                  ),
-                ],
+                              ],
+                            ),
+                    ),
+                  ],
+                ),
               ),
             ),
     );
@@ -316,37 +319,43 @@ class _TopBar extends StatelessWidget {
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: _W.blue,
-                  borderRadius: BorderRadius.circular(8),
+          Flexible(
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Container(
+                  width: 34,
+                  height: 34,
+                  decoration: BoxDecoration(
+                    color: _W.blue,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.local_shipping_outlined,
+                    color: Colors.white,
+                    size: 18,
+                  ),
                 ),
-                child: const Icon(
-                  Icons.local_shipping_outlined,
-                  color: Colors.white,
-                  size: 18,
-                ),
-              ),
-              const SizedBox(width: 8),
-              RichText(
-                text: TextSpan(
-                  style: _t(22, FontWeight.w900),
-                  children: const [
-                    TextSpan(text: 'wa'),
-                    TextSpan(
-                      text: 'sle',
-                      style: TextStyle(color: _W.blue),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: RichText(
+                    overflow: TextOverflow.ellipsis,
+                    text: TextSpan(
+                      style: _t(22, FontWeight.w900),
+                      children: const [
+                        TextSpan(text: 'wa'),
+                        TextSpan(
+                          text: 'sle',
+                          style: TextStyle(color: _W.blue),
+                        ),
+                      ],
                     ),
-                  ],
+                  ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
+          const SizedBox(width: 10),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
             decoration: BoxDecoration(
@@ -443,7 +452,13 @@ class _HeroChip extends StatelessWidget {
         children: [
           Icon(icon, color: Colors.white, size: 14),
           const SizedBox(width: 6),
-          Text(label, style: _t(12, FontWeight.w700, color: Colors.white)),
+          Flexible(
+            child: Text(
+              label,
+              overflow: TextOverflow.ellipsis,
+              style: _t(12, FontWeight.w700, color: Colors.white),
+            ),
+          ),
         ],
       ),
     );
@@ -476,7 +491,7 @@ class _ActionCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(8),
         child: Container(
-          constraints: const BoxConstraints(minHeight: 98),
+          width: double.infinity,
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(8),
@@ -486,14 +501,22 @@ class _ActionCard extends StatelessWidget {
             ),
           ),
           child: Column(
+            mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Icon(icon, color: color, size: 22),
-              const SizedBox(height: 18),
-              Text(title, style: _t(13.5, FontWeight.w800, color: color)),
+              const SizedBox(height: 14),
+              Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _t(13.5, FontWeight.w800, color: color),
+              ),
               const SizedBox(height: 3),
               Text(
                 subtitle,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: _t(12, FontWeight.w600, color: color, height: 1.3),
               ),
             ],
@@ -519,39 +542,67 @@ class _StatsGrid extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return GridView.count(
-      crossAxisCount: 2,
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      crossAxisSpacing: 10,
-      mainAxisSpacing: 10,
-      childAspectRatio: 1.36,
-      children: [
-        _StatCard(
-          title: 'Total Orders',
-          value: '$totalOrders',
-          icon: Icons.inventory_2_outlined,
-          color: _W.blue,
-        ),
-        _StatCard(
-          title: 'Active',
-          value: '$activeOrders',
-          icon: Icons.route_outlined,
-          color: _W.amber,
-        ),
-        _StatCard(
-          title: 'Delivered',
-          value: '$deliveredOrders',
-          icon: Icons.check_circle_outline,
-          color: _W.green,
-        ),
-        _StatCard(
-          title: 'Issues',
-          value: '$issueOrders',
-          icon: Icons.warning_amber_outlined,
-          color: _W.red,
-        ),
-      ],
+    final items = [
+      (
+        title: 'Total Orders',
+        value: '$totalOrders',
+        icon: Icons.inventory_2_outlined,
+        color: _W.blue,
+      ),
+      (
+        title: 'Active',
+        value: '$activeOrders',
+        icon: Icons.route_outlined,
+        color: _W.amber,
+      ),
+      (
+        title: 'Delivered',
+        value: '$deliveredOrders',
+        icon: Icons.check_circle_outline,
+        color: _W.green,
+      ),
+      (
+        title: 'Issues',
+        value: '$issueOrders',
+        icon: Icons.warning_amber_outlined,
+        color: _W.red,
+      ),
+    ];
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+
+        int crossAxisCount;
+        if (width >= 1100) {
+          crossAxisCount = 4;
+        } else if (width >= 700) {
+          crossAxisCount = 3;
+        } else {
+          crossAxisCount = 2;
+        }
+
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: items.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: crossAxisCount,
+            crossAxisSpacing: 10,
+            mainAxisSpacing: 10,
+            mainAxisExtent: 132,
+          ),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return _StatCard(
+              title: item.title,
+              value: item.value,
+              icon: item.icon,
+              color: item.color,
+            );
+          },
+        );
+      },
     );
   }
 }
@@ -578,10 +629,20 @@ class _StatCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Icon(icon, color: color, size: 22),
-          const SizedBox(height: 14),
-          Text(value, style: _t(24, FontWeight.w900, color: color)),
-          const SizedBox(height: 2),
-          Text(title, style: _t(12, FontWeight.w600, color: _W.gray)),
+          const SizedBox(height: 12),
+          Text(
+            value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: _t(24, FontWeight.w900, color: color),
+          ),
+          const Spacer(),
+          Text(
+            title,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: _t(12, FontWeight.w600, color: _W.gray),
+          ),
         ],
       ),
     );
@@ -696,9 +757,66 @@ class _RecentOrderTile extends StatelessWidget {
         ),
         child: LayoutBuilder(
           builder: (context, constraints) {
-            final statusWidth = constraints.maxWidth.isFinite
-                ? (constraints.maxWidth < 280 ? 72.0 : 96.0)
-                : 96.0;
+            final narrow = constraints.maxWidth < 320;
+
+            if (narrow) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        width: 38,
+                        height: 38,
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Icon(
+                          Icons.receipt_long_outlined,
+                          color: statusColor,
+                          size: 18,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              _safe(order['customer_name'], fallback: 'Customer'),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: _t(13, FontWeight.w800),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              _safe(order['tracking_code']),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: _t(11.5, FontWeight.w600, color: _W.gray),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      statusLabel,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.end,
+                      style: _t(11.5, FontWeight.w800, color: statusColor),
+                    ),
+                  ),
+                ],
+              );
+            }
+
+            final statusWidth = constraints.maxWidth < 380 ? 88.0 : 100.0;
             final detailsWidth = constraints.maxWidth.isFinite
                 ? (constraints.maxWidth - 38 - 10 - 8 - statusWidth).clamp(
                     0.0,
