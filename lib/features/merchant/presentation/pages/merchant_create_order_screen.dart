@@ -57,7 +57,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   String? _recommendedDeliveryCompanyId;
   String? _automationHint;
 
-  List<_PickupPointOption> _pickupPoints = const [];
+  List<_PickupPointOption> _allPickupPoints = const [];
+  List<_PickupPointOption> _sourcePickupPoints = const [];
+  List<_PickupPointOption> _destinationPickupPoints = const [];
+
   List<_DeliveryCompanyOption> _allDeliveryCompanies = const [];
   List<_DeliveryCompanyOption> _filteredDeliveryCompanies = const [];
 
@@ -79,6 +82,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       DeliveryCompanyMode.linkedOnly;
 
   static const int _maxRecommendedCompanies = 3;
+  static const int _maxSourcePickupSuggestions = 5;
+  static const int _maxDestinationPickupSuggestions = 5;
 
   @override
   void initState() {
@@ -127,11 +132,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       if (!mounted) return;
 
       setState(() {
-        _pickupPoints = pickupPoints;
+        _allPickupPoints = pickupPoints;
+        _sourcePickupPoints = const [];
+        _destinationPickupPoints = const [];
         _allDeliveryCompanies = deliveryCompanies;
         _filteredDeliveryCompanies = const [];
-        _selectedSourcePickupPointId =
-            pickupPoints.length == 1 ? pickupPoints.first.id : null;
+        _selectedSourcePickupPointId = null;
         _selectedDestinationPickupPointId = null;
         _selectedDeliveryCompanyId = null;
         _loadingFormData = false;
@@ -254,7 +260,13 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
               area: area,
             );
           })
-          .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
+          .where(
+            (option) =>
+                option.id.isNotEmpty &&
+                option.name.isNotEmpty &&
+                option.lat != null &&
+                option.lng != null,
+          )
           .toList();
 
       options.sort(
@@ -532,8 +544,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       _pickupSourceType = value;
       if (_pickupSourceType != _pickupFromPickupPoint) {
         _selectedSourcePickupPointId = null;
-      } else if (_pickupPoints.length == 1) {
-        _selectedSourcePickupPointId = _pickupPoints.first.id;
       }
     });
 
@@ -546,10 +556,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
       if (_dropoffType == _dropoffHome) {
         _selectedDestinationPickupPointId = null;
-      } else if (_dropoffType == _dropoffPickupSpecific) {
-        if (_pickupPoints.length == 1) {
-          _selectedDestinationPickupPointId = _pickupPoints.first.id;
-        }
       } else if (_dropoffType == _dropoffPickupNearest) {
         _selectedDestinationPickupPointId = null;
       }
@@ -571,124 +577,170 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   Future<void> _recomputeAutomation() async {
     if (!mounted) return;
 
-    String? info;
-    String? nearestDestinationPickupId = _selectedDestinationPickupPointId;
+    final merchantLocation = _merchantLocation();
+    final nextSourcePickupPoints = _computeSourcePickupCandidates(
+      merchantLocation: merchantLocation,
+    );
+    final nextDestinationPickupPoints = _computeDestinationPickupCandidates(
+      customerLat: _selectedCustomerLat,
+      customerLng: _selectedCustomerLng,
+    );
 
-    if (_dropoffType == _dropoffPickupNearest) {
-      final nearest = _findNearestEligiblePickupPoint(
+    String? nextSourcePickupId = _selectedSourcePickupPointId;
+    String? nextDestinationPickupId = _selectedDestinationPickupPointId;
+    String? nextSelectedCompanyId;
+    String? nextRecommendedCompanyId;
+    String? info;
+
+    if (_pickupSourceType == _pickupFromPickupPoint) {
+      if (!_containsPickup(nextSourcePickupPoints, nextSourcePickupId)) {
+        nextSourcePickupId =
+            nextSourcePickupPoints.isNotEmpty ? nextSourcePickupPoints.first.id : null;
+      }
+    } else {
+      nextSourcePickupId = null;
+    }
+
+    if (_dropoffType == _dropoffPickupSpecific) {
+      if (!_containsPickup(nextDestinationPickupPoints, nextDestinationPickupId)) {
+        nextDestinationPickupId = nextDestinationPickupPoints.isNotEmpty
+            ? nextDestinationPickupPoints.first.id
+            : null;
+      }
+    } else if (_dropoffType == _dropoffPickupNearest) {
+      final nearest = _findNearestPickupFromList(
+        points: nextDestinationPickupPoints,
         lat: _selectedCustomerLat,
         lng: _selectedCustomerLng,
       );
 
-      if (nearest != null) {
-        nearestDestinationPickupId = nearest.id;
-      } else {
-        nearestDestinationPickupId = null;
+      nextDestinationPickupId = nearest?.id;
+      if (nearest == null) {
         info =
-            'Nearest pickup automation needs a customer map location and pickup points with valid coordinates.';
+            'Nearest pickup automation needs a customer map location and nearby pickup points.';
       }
+    } else {
+      nextDestinationPickupId = null;
     }
 
-    final sourceLocation = _resolveSourceLocation();
     final destinationLocation = _resolveDestinationLocation(
-      overrideNearestPickupId: nearestDestinationPickupId,
+      overrideNearestPickupId: nextDestinationPickupId,
+      destinationCandidates: nextDestinationPickupPoints,
     );
 
-    if (sourceLocation == null || destinationLocation == null) {
-      info ??=
-          'Delivery company automation will activate once both source and destination locations are available.';
+    final rankedCompanies = _rankDeliveryCompaniesForMerchant(
+      merchantLocation: merchantLocation,
+      destination: destinationLocation,
+    );
+
+    if (rankedCompanies.isNotEmpty) {
+      final topCompanies = rankedCompanies
+          .map((e) => e.company)
+          .take(_maxRecommendedCompanies)
+          .toList();
+
+      nextRecommendedCompanyId = topCompanies.first.id;
+      nextSelectedCompanyId = topCompanies.any(
+        (company) => company.id == _selectedDeliveryCompanyId,
+      )
+          ? _selectedDeliveryCompanyId
+          : topCompanies.first.id;
+
+      final best = rankedCompanies.first;
+      final sourceLabel = _sourceLabel(sourcePickupId: nextSourcePickupId, sourceCandidates: nextSourcePickupPoints);
+      final destinationLabel = _destinationLabel(
+        overrideNearestPickupId: nextDestinationPickupId,
+        destinationCandidates: nextDestinationPickupPoints,
+      );
+
+      info =
+          'Top ${topCompanies.length} companies are filtered by merchant location first, then capacity. '
+          'Best match: ${best.company.name}'
+          '${best.bestHub == null || best.bestHub!.name.isEmpty ? '' : ' via ${best.bestHub!.name}'} '
+          'for merchant area around ${_merchantBranchName ?? 'store'} and route $sourceLabel → $destinationLabel.';
 
       if (!mounted) return;
       setState(() {
-        _selectedDestinationPickupPointId = nearestDestinationPickupId;
-        _recommendedDeliveryCompanyId = null;
-        _filteredDeliveryCompanies = const [];
-        _selectedDeliveryCompanyId = null;
+        _sourcePickupPoints = nextSourcePickupPoints;
+        _destinationPickupPoints = nextDestinationPickupPoints;
+        _selectedSourcePickupPointId = nextSourcePickupId;
+        _selectedDestinationPickupPointId = nextDestinationPickupId;
+        _filteredDeliveryCompanies = topCompanies;
+        _selectedDeliveryCompanyId = nextSelectedCompanyId;
+        _recommendedDeliveryCompanyId = nextRecommendedCompanyId;
         _automationHint = info;
       });
       return;
     }
 
-    final ranked = _rankDeliveryCompanies(
-      source: sourceLocation,
-      destination: destinationLocation,
-    );
-
-    final topCompanies = ranked
-        .take(_maxRecommendedCompanies)
-        .map((rankedCompany) {
-          for (final company in _allDeliveryCompanies) {
-            if (company.id == rankedCompany.id) return company;
-          }
-          return null;
-        })
-        .whereType<_DeliveryCompanyOption>()
-        .toList();
-
-    String? nextSelectedCompanyId;
-    String? nextRecommendedCompanyId;
-
-    if (topCompanies.isNotEmpty) {
-      nextRecommendedCompanyId = topCompanies.first.id;
-
-      final currentStillValid = topCompanies.any(
-        (company) => company.id == _selectedDeliveryCompanyId,
-      );
-
-      nextSelectedCompanyId =
-          currentStillValid ? _selectedDeliveryCompanyId : topCompanies.first.id;
-
-      final best = ranked.first;
-      final nearestHubName = best.bestHub?.name;
-      final sourceLabel = _sourceLabel();
-      final destinationLabel = _destinationLabel(
-        overrideNearestPickupId: nearestDestinationPickupId,
-      );
-
-      info =
-          'Top ${topCompanies.length} companies filtered by location and capacity. '
-          'Best match: ${best.name}'
-          '${nearestHubName == null || nearestHubName.isEmpty ? '' : ' via $nearestHubName'} '
-          'for $sourceLabel → $destinationLabel.';
-    } else {
-      info ??=
-          'No delivery company matched this route after location and capacity filtering.';
-      nextSelectedCompanyId = null;
-      nextRecommendedCompanyId = null;
-    }
+    info ??=
+        'Automation needs merchant location for company filtering and customer location for destination pickup suggestions when applicable.';
 
     if (!mounted) return;
-
     setState(() {
-      _selectedDestinationPickupPointId = nearestDestinationPickupId;
-      _filteredDeliveryCompanies = topCompanies;
-      _selectedDeliveryCompanyId = nextSelectedCompanyId;
-      _recommendedDeliveryCompanyId = nextRecommendedCompanyId;
+      _sourcePickupPoints = nextSourcePickupPoints;
+      _destinationPickupPoints = nextDestinationPickupPoints;
+      _selectedSourcePickupPointId = nextSourcePickupId;
+      _selectedDestinationPickupPointId = nextDestinationPickupId;
+      _filteredDeliveryCompanies = const [];
+      _selectedDeliveryCompanyId = null;
+      _recommendedDeliveryCompanyId = null;
       _automationHint = info;
     });
   }
 
-  _LatLngOption? _resolveSourceLocation() {
-    if (_pickupSourceType == _pickupFromStore) {
-      if (_merchantBranchLat == null || _merchantBranchLng == null) return null;
-      return _LatLngOption(
-        lat: _merchantBranchLat!,
-        lng: _merchantBranchLng!,
+  _LatLngOption? _merchantLocation() {
+    if (_merchantBranchLat == null || _merchantBranchLng == null) return null;
+    return _LatLngOption(
+      lat: _merchantBranchLat!,
+      lng: _merchantBranchLng!,
+    );
+  }
+
+  List<_PickupPointOption> _computeSourcePickupCandidates({
+    required _LatLngOption? merchantLocation,
+  }) {
+    if (merchantLocation == null) return const [];
+
+    final points = List<_PickupPointOption>.from(_allPickupPoints);
+    points.sort((a, b) {
+      final da = _distanceKm(
+        merchantLocation.lat,
+        merchantLocation.lng,
+        a.lat!,
+        a.lng!,
       );
-    }
+      final db = _distanceKm(
+        merchantLocation.lat,
+        merchantLocation.lng,
+        b.lat!,
+        b.lng!,
+      );
+      return da.compareTo(db);
+    });
 
-    final sourcePickup = _selectedSourcePickupPoint();
-    if (sourcePickup == null ||
-        sourcePickup.lat == null ||
-        sourcePickup.lng == null) {
-      return null;
-    }
+    return points.take(_maxSourcePickupSuggestions).toList();
+  }
 
-    return _LatLngOption(lat: sourcePickup.lat!, lng: sourcePickup.lng!);
+  List<_PickupPointOption> _computeDestinationPickupCandidates({
+    required double? customerLat,
+    required double? customerLng,
+  }) {
+    if (customerLat == null || customerLng == null) return const [];
+
+    final points = List<_PickupPointOption>.from(_allPickupPoints);
+    points.sort((a, b) {
+      final da = _distanceKm(customerLat, customerLng, a.lat!, a.lng!);
+      final db = _distanceKm(customerLat, customerLng, b.lat!, b.lng!);
+      return da.compareTo(db);
+    });
+
+    return points.take(_maxDestinationPickupSuggestions).toList();
   }
 
   _LatLngOption? _resolveDestinationLocation({
     String? overrideNearestPickupId,
+    List<_PickupPointOption>? destinationCandidates,
   }) {
     switch (_dropoffType) {
       case _dropoffHome:
@@ -701,17 +753,19 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         );
 
       case _dropoffPickupSpecific:
-        final point = _destinationPickupPoint();
-        if (point == null || point.lat == null || point.lng == null) {
-          return null;
-        }
+        final point = _pickupPointByIdFrom(
+          _selectedDestinationPickupPointId,
+          destinationCandidates ?? _destinationPickupPoints,
+        );
+        if (point == null) return null;
         return _LatLngOption(lat: point.lat!, lng: point.lng!);
 
       case _dropoffPickupNearest:
-        final point = _pickupPointById(overrideNearestPickupId);
-        if (point == null || point.lat == null || point.lng == null) {
-          return null;
-        }
+        final point = _pickupPointByIdFrom(
+          overrideNearestPickupId,
+          destinationCandidates ?? _destinationPickupPoints,
+        );
+        if (point == null) return null;
         return _LatLngOption(lat: point.lat!, lng: point.lng!);
 
       default:
@@ -719,80 +773,111 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
   }
 
-  _PickupPointOption? _findNearestEligiblePickupPoint({
+  _PickupPointOption? _findNearestPickupFromList({
+    required List<_PickupPointOption> points,
     required double? lat,
     required double? lng,
   }) {
-    if (lat == null || lng == null) return null;
+    if (lat == null || lng == null || points.isEmpty) return null;
 
-    final eligible = _pickupPoints
-        .where((point) => point.lat != null && point.lng != null)
-        .toList();
+    final sorted = List<_PickupPointOption>.from(points)
+      ..sort((a, b) {
+        final da = _distanceKm(lat, lng, a.lat!, a.lng!);
+        final db = _distanceKm(lat, lng, b.lat!, b.lng!);
+        return da.compareTo(db);
+      });
 
-    if (eligible.isEmpty) return null;
-
-    eligible.sort((a, b) {
-      final da = _distanceKm(lat, lng, a.lat!, a.lng!);
-      final db = _distanceKm(lat, lng, b.lat!, b.lng!);
-      return da.compareTo(db);
-    });
-
-    return eligible.first;
+    return sorted.first;
   }
 
-  List<_RankedCompany> _rankDeliveryCompanies({
-    required _LatLngOption source,
-    required _LatLngOption destination,
+  List<_RankedCompanyForMerchant> _rankDeliveryCompaniesForMerchant({
+    required _LatLngOption? merchantLocation,
+    required _LatLngOption? destination,
   }) {
-    final ranked = <_RankedCompany>[];
+    if (merchantLocation == null) return const [];
+
+    final nearestToMerchant = <_MerchantNearestCompany>[];
 
     for (final company in _allDeliveryCompanies) {
-      if (!_companyHasAvailableCapacity(company)) continue;
-
-      _CompanyHub? bestHub;
-      double? bestScore;
+      _CompanyHub? nearestHub;
+      double? nearestDistanceKm;
 
       for (final hub in company.hubs) {
         if (!hub.isUsable) continue;
 
-        final sourceDistance = _distanceKm(
-          source.lat,
-          source.lng,
-          hub.lat!,
-          hub.lng!,
-        );
-        final destinationDistance = _distanceKm(
-          destination.lat,
-          destination.lng,
+        final distance = _distanceKm(
+          merchantLocation.lat,
+          merchantLocation.lng,
           hub.lat!,
           hub.lng!,
         );
 
-        final pickupPenalty =
-            _dropoffType == _dropoffHome ? 1.0 : -0.35;
-
-        final score = sourceDistance + destinationDistance + pickupPenalty;
-
-        if (bestScore == null || score < bestScore) {
-          bestScore = score;
-          bestHub = hub;
+        if (nearestDistanceKm == null || distance < nearestDistanceKm) {
+          nearestDistanceKm = distance;
+          nearestHub = hub;
         }
       }
 
-      if (bestHub != null && bestScore != null) {
-        ranked.add(
-          _RankedCompany(
-            id: company.id,
-            name: company.name,
-            bestHub: bestHub,
-            score: bestScore,
+      if (nearestHub != null && nearestDistanceKm != null) {
+        nearestToMerchant.add(
+          _MerchantNearestCompany(
+            company: company,
+            nearestHub: nearestHub,
+            merchantDistanceKm: nearestDistanceKm,
           ),
         );
       }
     }
 
-    ranked.sort((a, b) => a.score.compareTo(b.score));
-    return ranked;
+    nearestToMerchant.sort(
+      (a, b) => a.merchantDistanceKm.compareTo(b.merchantDistanceKm),
+    );
+
+    final topNearest = nearestToMerchant.take(_maxRecommendedCompanies).toList();
+
+    final feasible = topNearest
+        .where((entry) => _companyHasAvailableCapacity(entry.company))
+        .map((entry) {
+          final cap = entry.company.capacity;
+          final remainingActive = cap?.remainingActiveOrders ?? 999999;
+          final remainingDaily = cap?.remainingDailyOrders ?? 999999;
+          final destinationDistance = destination == null
+              ? 999999.0
+              : _distanceKm(
+                  destination.lat,
+                  destination.lng,
+                  entry.nearestHub.lat!,
+                  entry.nearestHub.lng!,
+                );
+
+          return _RankedCompanyForMerchant(
+            company: entry.company,
+            bestHub: entry.nearestHub,
+            merchantDistanceKm: entry.merchantDistanceKm,
+            destinationDistanceKm: destinationDistance,
+            remainingActiveOrders: remainingActive,
+            remainingDailyOrders: remainingDaily,
+          );
+        })
+        .toList();
+
+    feasible.sort((a, b) {
+      final activeCompare =
+          b.remainingActiveOrders.compareTo(a.remainingActiveOrders);
+      if (activeCompare != 0) return activeCompare;
+
+      final dailyCompare =
+          b.remainingDailyOrders.compareTo(a.remainingDailyOrders);
+      if (dailyCompare != 0) return dailyCompare;
+
+      final destinationCompare =
+          a.destinationDistanceKm.compareTo(b.destinationDistanceKm);
+      if (destinationCompare != 0) return destinationCompare;
+
+      return a.merchantDistanceKm.compareTo(b.merchantDistanceKm);
+    });
+
+    return feasible;
   }
 
   bool _companyHasAvailableCapacity(_DeliveryCompanyOption company) {
@@ -933,38 +1018,38 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   }
 
   Future<void> _saveOrderExtras(String orderId) async {
-  if (orderId.trim().isEmpty || orderId == '-') return;
+    if (orderId.trim().isEmpty || orderId == '-') return;
 
-  final destinationPickupId = switch (_dropoffType) {
-    _dropoffPickupSpecific => _selectedDestinationPickupPointId,
-    _dropoffPickupNearest => _selectedDestinationPickupPointId,
-    _ => null,
-  };
+    final destinationPickupId = switch (_dropoffType) {
+      _dropoffPickupSpecific => _selectedDestinationPickupPointId,
+      _dropoffPickupNearest => _selectedDestinationPickupPointId,
+      _ => null,
+    };
 
-  await _client.from('orders').update({
-    'branch_id': _merchantBranchId,
-    'pickup_source_type':
-        _pickupSourceType == _pickupFromPickupPoint ? 'pickup_point' : 'store',
-    'pickup_point_id':
-        _pickupSourceType == _pickupFromPickupPoint
-            ? _selectedSourcePickupPointId
-            : null,
-    'destination_pickup_point_id': destinationPickupId,
-    'dropoff_type': _normalizedDropoffType(),
-    'parcel_description': _parcelDescriptionCtrl.text.trim().isEmpty
-        ? null
-        : _parcelDescriptionCtrl.text.trim(),
-    'item_count': _parseItemCount(),
-    'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
-    'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
-    'customer_address_text': _customerAddressForStorage(),
-    'customer_lat': _selectedCustomerLat,
-    'customer_lng': _selectedCustomerLng,
-    'delivery_company_id': _selectedDeliveryCompanyId,
-    'notes': _mergedNotes(),
-    'updated_at': DateTime.now().toUtc().toIso8601String(),
-  }).eq('id', orderId);
-}
+    await _client.from('orders').update({
+      'branch_id': _merchantBranchId,
+      'pickup_source_type':
+          _pickupSourceType == _pickupFromPickupPoint ? 'pickup_point' : 'store',
+      'pickup_point_id':
+          _pickupSourceType == _pickupFromPickupPoint
+              ? _selectedSourcePickupPointId
+              : null,
+      'destination_pickup_point_id': destinationPickupId,
+      'dropoff_type': _normalizedDropoffType(),
+      'parcel_description': _parcelDescriptionCtrl.text.trim().isEmpty
+          ? null
+          : _parcelDescriptionCtrl.text.trim(),
+      'item_count': _parseItemCount(),
+      'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
+      'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
+      'customer_address_text': _customerAddressForStorage(),
+      'customer_lat': _selectedCustomerLat,
+      'customer_lng': _selectedCustomerLng,
+      'delivery_company_id': _selectedDeliveryCompanyId,
+      'notes': _mergedNotes(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }).eq('id', orderId);
+  }
 
   String _normalizedDropoffType() {
     switch (_dropoffType) {
@@ -983,236 +1068,241 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     switch (_dropoffType) {
       case _dropoffHome:
         return _addressCtrl.text.trim();
-
       case _dropoffPickupSpecific:
-        return _destinationPickupPoint()?.addressText.trim().isNotEmpty == true
-            ? _destinationPickupPoint()!.addressText
-            : _addressCtrl.text.trim();
-
       case _dropoffPickupNearest:
         return _destinationPickupPoint()?.addressText.trim().isNotEmpty == true
             ? _destinationPickupPoint()!.addressText
             : _addressCtrl.text.trim();
-
       default:
         return _addressCtrl.text.trim();
     }
   }
 
   String? _customerAddressForStorage() {
-    switch (_dropoffType) {
-      case _dropoffHome:
-        return _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim();
-      case _dropoffPickupNearest:
-        return _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim();
-      case _dropoffPickupSpecific:
-        return _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim();
-      default:
-        return _addressCtrl.text.trim().isEmpty ? null : _addressCtrl.text.trim();
-    }
+    final value = _addressCtrl.text.trim();
+    return value.isEmpty ? null : value;
   }
 
   String? _mergedNotes() {
-  final parts = <String>[];
+    final parts = <String>[];
 
-  final merchantNotes = _notesCtrl.text.trim();
-  final timeWindow = _timeWindowCtrl.text.trim();
-  final selectedCompany = _selectedCompany();
-  final customerName = _customerNameCtrl.text.trim();
-  final customerPhone = _phoneCtrl.text.trim();
-  final customerEmail = _emailCtrl.text.trim();
+    final merchantNotes = _notesCtrl.text.trim();
+    final timeWindow = _timeWindowCtrl.text.trim();
+    final selectedCompany = _selectedCompany();
+    final customerName = _customerNameCtrl.text.trim();
+    final customerPhone = _phoneCtrl.text.trim();
+    final customerEmail = _emailCtrl.text.trim();
 
-  parts.add('=== ROUTING DETAILS ===');
-  parts.add(
-    'Pickup source type: ${_pickupSourceType == _pickupFromPickupPoint ? 'pickup_point' : 'store'}',
-  );
-  parts.add('Pickup source: ${_sourceLabel()}');
-
-  final sourceAddress = _sourceAddressLabel();
-  if (sourceAddress != null) {
-    parts.add('Pickup source address: $sourceAddress');
-  }
-
-  final sourceCoords = _sourceCoordinatesLabel();
-  if (sourceCoords != null) {
-    parts.add('Pickup source coordinates: $sourceCoords');
-  }
-
-  parts.add('Dropoff type: ${_normalizedDropoffType()}');
-  parts.add('Dropoff destination: ${_destinationLabel()}');
-
-  final destinationAddress = _destinationAddressLabel();
-  if (destinationAddress != null) {
-    parts.add('Dropoff address: $destinationAddress');
-  }
-
-  final destinationCoords = _destinationCoordinatesLabel();
-  if (destinationCoords != null) {
-    parts.add('Dropoff coordinates: $destinationCoords');
-  }
-
-  if (_selectedSourcePickupPointId != null) {
-    parts.add('Source pickup point id: $_selectedSourcePickupPointId');
-  }
-
-  if (_selectedDestinationPickupPointId != null) {
-    parts.add('Destination pickup point id: $_selectedDestinationPickupPointId');
-  }
-
-  parts.add('');
-  parts.add('=== CUSTOMER DETAILS ===');
-
-  if (customerName.isNotEmpty) {
-    parts.add('Customer name: $customerName');
-  }
-
-  if (customerPhone.isNotEmpty) {
-    parts.add('Customer phone: $customerPhone');
-  }
-
-  if (customerEmail.isNotEmpty) {
-    parts.add('Customer email: $customerEmail');
-  }
-
-  final requestedAddress = _addressCtrl.text.trim();
-  if (requestedAddress.isNotEmpty) {
-    parts.add('Customer requested address: $requestedAddress');
-  }
-
-  final requestedCoords = _customerRequestedCoordinatesLabel();
-  if (requestedCoords != null) {
-    parts.add('Customer requested coordinates: $requestedCoords');
-  }
-
-  parts.add('');
-  parts.add('=== DELIVERY COMPANY ===');
-
-  if (selectedCompany != null) {
-    parts.add('Assigned delivery company: ${selectedCompany.name}');
+    parts.add('=== ROUTING DETAILS ===');
     parts.add(
-      'Assignment mode: ${_recommendedDeliveryCompanyId == selectedCompany.id ? 'auto_recommended' : 'manual_selection'}',
+      'Pickup source type: ${_pickupSourceType == _pickupFromPickupPoint ? 'pickup_point' : 'store'}',
     );
-  }
+    parts.add('Pickup source: ${_sourceLabel()}');
 
-  if (timeWindow.isNotEmpty) {
-    parts.add('Preferred time window: $timeWindow');
-  }
+    final sourceAddress = _sourceAddressLabel();
+    if (sourceAddress != null) {
+      parts.add('Pickup source address: $sourceAddress');
+    }
 
-  if (merchantNotes.isNotEmpty) {
+    final sourceCoords = _sourceCoordinatesLabel();
+    if (sourceCoords != null) {
+      parts.add('Pickup source coordinates: $sourceCoords');
+    }
+
+    parts.add('Dropoff type: ${_normalizedDropoffType()}');
+    parts.add('Dropoff destination: ${_destinationLabel()}');
+
+    final destinationAddress = _destinationAddressLabel();
+    if (destinationAddress != null) {
+      parts.add('Dropoff address: $destinationAddress');
+    }
+
+    final destinationCoords = _destinationCoordinatesLabel();
+    if (destinationCoords != null) {
+      parts.add('Dropoff coordinates: $destinationCoords');
+    }
+
+    if (_selectedSourcePickupPointId != null) {
+      parts.add('Source pickup point id: $_selectedSourcePickupPointId');
+    }
+
+    if (_selectedDestinationPickupPointId != null) {
+      parts.add('Destination pickup point id: $_selectedDestinationPickupPointId');
+    }
+
     parts.add('');
-    parts.add('=== MERCHANT NOTES ===');
-    parts.add(merchantNotes);
+    parts.add('=== CUSTOMER DETAILS ===');
+
+    if (customerName.isNotEmpty) {
+      parts.add('Customer name: $customerName');
+    }
+
+    if (customerPhone.isNotEmpty) {
+      parts.add('Customer phone: $customerPhone');
+    }
+
+    if (customerEmail.isNotEmpty) {
+      parts.add('Customer email: $customerEmail');
+    }
+
+    final requestedAddress = _addressCtrl.text.trim();
+    if (requestedAddress.isNotEmpty) {
+      parts.add('Customer requested address: $requestedAddress');
+    }
+
+    final requestedCoords = _customerRequestedCoordinatesLabel();
+    if (requestedCoords != null) {
+      parts.add('Customer requested coordinates: $requestedCoords');
+    }
+
+    parts.add('');
+    parts.add('=== DELIVERY COMPANY ===');
+
+    if (selectedCompany != null) {
+      parts.add('Assigned delivery company: ${selectedCompany.name}');
+      parts.add(
+        'Assignment mode: ${_recommendedDeliveryCompanyId == selectedCompany.id ? 'auto_recommended' : 'manual_selection'}',
+      );
+      if (_merchantBranchName != null && _merchantBranchName!.trim().isNotEmpty) {
+        parts.add('Company filtering base: merchant location (${_merchantBranchName!.trim()})');
+      }
+    }
+
+    if (timeWindow.isNotEmpty) {
+      parts.add('Preferred time window: $timeWindow');
+    }
+
+    if (merchantNotes.isNotEmpty) {
+      parts.add('');
+      parts.add('=== MERCHANT NOTES ===');
+      parts.add(merchantNotes);
+    }
+
+    return parts.isEmpty ? null : parts.join('\n');
   }
 
-  return parts.isEmpty ? null : parts.join('\n');
-}
   String? _sourceAddressLabel() {
-  if (_pickupSourceType == _pickupFromStore) {
-    final address = _merchantBranchAddress?.trim();
+    if (_pickupSourceType == _pickupFromStore) {
+      final address = _merchantBranchAddress?.trim();
+      if (address != null && address.isNotEmpty) return address;
+      return null;
+    }
+
+    final sourcePickup = _selectedSourcePickupPoint();
+    final address = sourcePickup?.addressText.trim();
     if (address != null && address.isNotEmpty) return address;
+
     return null;
   }
 
-  final sourcePickup = _selectedSourcePickupPoint();
-  final address = sourcePickup?.addressText.trim();
-  if (address != null && address.isNotEmpty) return address;
+  String? _sourceCoordinatesLabel() {
+    if (_pickupSourceType == _pickupFromStore) {
+      if (_merchantBranchLat != null && _merchantBranchLng != null) {
+        return _formatCoordinates(_merchantBranchLat!, _merchantBranchLng!);
+      }
+      return null;
+    }
 
-  return null;
-}
+    final sourcePickup = _selectedSourcePickupPoint();
+    if (sourcePickup?.lat != null && sourcePickup?.lng != null) {
+      return _formatCoordinates(sourcePickup!.lat!, sourcePickup.lng!);
+    }
 
-String? _sourceCoordinatesLabel() {
-  if (_pickupSourceType == _pickupFromStore) {
-    if (_merchantBranchLat != null && _merchantBranchLng != null) {
-      return _formatCoordinates(_merchantBranchLat!, _merchantBranchLng!);
+    return null;
+  }
+
+  String? _destinationAddressLabel() {
+    switch (_dropoffType) {
+      case _dropoffHome:
+        final address = _addressCtrl.text.trim();
+        return address.isEmpty ? null : address;
+
+      case _dropoffPickupSpecific:
+      case _dropoffPickupNearest:
+        final destinationPickup = _destinationPickupPoint();
+        final pickupAddress = destinationPickup?.addressText.trim();
+        if (pickupAddress != null && pickupAddress.isNotEmpty) {
+          return pickupAddress;
+        }
+
+        final fallback = _addressCtrl.text.trim();
+        return fallback.isEmpty ? null : fallback;
+
+      default:
+        final address = _addressCtrl.text.trim();
+        return address.isEmpty ? null : address;
+    }
+  }
+
+  String? _destinationCoordinatesLabel() {
+    switch (_dropoffType) {
+      case _dropoffHome:
+        if (_selectedCustomerLat != null && _selectedCustomerLng != null) {
+          return _formatCoordinates(_selectedCustomerLat!, _selectedCustomerLng!);
+        }
+        return null;
+
+      case _dropoffPickupSpecific:
+      case _dropoffPickupNearest:
+        final destinationPickup = _destinationPickupPoint();
+        if (destinationPickup?.lat != null && destinationPickup?.lng != null) {
+          return _formatCoordinates(
+            destinationPickup!.lat!,
+            destinationPickup.lng!,
+          );
+        }
+        return null;
+
+      default:
+        return null;
+    }
+  }
+
+  String? _customerRequestedCoordinatesLabel() {
+    if (_selectedCustomerLat != null && _selectedCustomerLng != null) {
+      return _formatCoordinates(_selectedCustomerLat!, _selectedCustomerLng!);
     }
     return null;
   }
 
-  final sourcePickup = _selectedSourcePickupPoint();
-  if (sourcePickup?.lat != null && sourcePickup?.lng != null) {
-    return _formatCoordinates(sourcePickup!.lat!, sourcePickup.lng!);
+  String _formatCoordinates(double lat, double lng) {
+    return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}';
   }
 
-  return null;
-}
-
-String? _destinationAddressLabel() {
-  switch (_dropoffType) {
-    case _dropoffHome:
-      final address = _addressCtrl.text.trim();
-      return address.isEmpty ? null : address;
-
-    case _dropoffPickupSpecific:
-    case _dropoffPickupNearest:
-      final destinationPickup = _destinationPickupPoint();
-      final pickupAddress = destinationPickup?.addressText.trim();
-      if (pickupAddress != null && pickupAddress.isNotEmpty) {
-        return pickupAddress;
-      }
-
-      final fallback = _addressCtrl.text.trim();
-      return fallback.isEmpty ? null : fallback;
-
-    default:
-      final address = _addressCtrl.text.trim();
-      return address.isEmpty ? null : address;
-  }
-}
-
-String? _destinationCoordinatesLabel() {
-  switch (_dropoffType) {
-    case _dropoffHome:
-      if (_selectedCustomerLat != null && _selectedCustomerLng != null) {
-        return _formatCoordinates(_selectedCustomerLat!, _selectedCustomerLng!);
-      }
-      return null;
-
-    case _dropoffPickupSpecific:
-    case _dropoffPickupNearest:
-      final destinationPickup = _destinationPickupPoint();
-      if (destinationPickup?.lat != null && destinationPickup?.lng != null) {
-        return _formatCoordinates(
-          destinationPickup!.lat!,
-          destinationPickup.lng!,
-        );
-      }
-      return null;
-
-    default:
-      return null;
-  }
-}
-
-String? _customerRequestedCoordinatesLabel() {
-  if (_selectedCustomerLat != null && _selectedCustomerLng != null) {
-    return _formatCoordinates(_selectedCustomerLat!, _selectedCustomerLng!);
-  }
-  return null;
-}
-
-String _formatCoordinates(double lat, double lng) {
-  return '${lat.toStringAsFixed(6)}, ${lng.toStringAsFixed(6)}';
-}
-
-  String _sourceLabel() {
+  String _sourceLabel({
+    String? sourcePickupId,
+    List<_PickupPointOption>? sourceCandidates,
+  }) {
     if (_pickupSourceType == _pickupFromStore) {
       return _merchantBranchName?.isNotEmpty == true
           ? _merchantBranchName!
           : _pickupFromStore;
     }
 
-    return _selectedSourcePickupPoint()?.displayName ?? 'Pickup Point';
+    final point = _pickupPointByIdFrom(
+      sourcePickupId ?? _selectedSourcePickupPointId,
+      sourceCandidates ?? _sourcePickupPoints,
+    );
+    return point?.displayName ?? 'Pickup Point';
   }
 
-  String _destinationLabel({String? overrideNearestPickupId}) {
+  String _destinationLabel({
+    String? overrideNearestPickupId,
+    List<_PickupPointOption>? destinationCandidates,
+  }) {
     switch (_dropoffType) {
       case _dropoffHome:
         return _dropoffHome;
       case _dropoffPickupSpecific:
-        return _destinationPickupPoint()?.displayName ?? 'Specific Pickup Point';
+        final point = _pickupPointByIdFrom(
+          _selectedDestinationPickupPointId,
+          destinationCandidates ?? _destinationPickupPoints,
+        );
+        return point?.displayName ?? 'Specific Pickup Point';
       case _dropoffPickupNearest:
-        final point = _pickupPointById(
+        final point = _pickupPointByIdFrom(
           overrideNearestPickupId ?? _selectedDestinationPickupPointId,
+          destinationCandidates ?? _destinationPickupPoints,
         );
         return point == null
             ? 'Nearest Pickup Point'
@@ -1264,11 +1354,12 @@ String _formatCoordinates(double lat, double lng) {
     setState(() {
       _pickupSourceType = _pickupFromStore;
       _dropoffType = _dropoffHome;
-      _selectedSourcePickupPointId =
-          _pickupPoints.length == 1 ? _pickupPoints.first.id : null;
+      _selectedSourcePickupPointId = null;
       _selectedDestinationPickupPointId = null;
       _selectedDeliveryCompanyId = null;
       _recommendedDeliveryCompanyId = null;
+      _sourcePickupPoints = const [];
+      _destinationPickupPoints = const [];
       _filteredDeliveryCompanies = const [];
       _paymentMethod = PaymentMethod.cashAtPickup;
       _paymentAmount = 0;
@@ -1291,20 +1382,37 @@ String _formatCoordinates(double lat, double lng) {
     );
   }
 
+  bool _containsPickup(List<_PickupPointOption> points, String? id) {
+    if (id == null || id.isEmpty) return false;
+    return points.any((point) => point.id == id);
+  }
+
   _PickupPointOption? _pickupPointById(String? id) {
+    return _pickupPointByIdFrom(id, _allPickupPoints);
+  }
+
+  _PickupPointOption? _pickupPointByIdFrom(
+    String? id,
+    List<_PickupPointOption> points,
+  ) {
     if (id == null || id.isEmpty) return null;
-    for (final point in _pickupPoints) {
+    for (final point in points) {
       if (point.id == id) return point;
     }
     return null;
   }
 
   _PickupPointOption? _selectedSourcePickupPoint() {
-    return _pickupPointById(_selectedSourcePickupPointId);
+    return _pickupPointByIdFrom(_selectedSourcePickupPointId, _sourcePickupPoints) ??
+        _pickupPointById(_selectedSourcePickupPointId);
   }
 
   _PickupPointOption? _destinationPickupPoint() {
-    return _pickupPointById(_selectedDestinationPickupPointId);
+    return _pickupPointByIdFrom(
+          _selectedDestinationPickupPointId,
+          _destinationPickupPoints,
+        ) ??
+        _pickupPointById(_selectedDestinationPickupPointId);
   }
 
   _DeliveryCompanyOption? _selectedCompany() {
@@ -1367,7 +1475,7 @@ String _formatCoordinates(double lat, double lng) {
   }
 
   String get _deliveryCompanySubtitle {
-    return 'Best 3 companies by location and capacity';
+    return 'Nearest 3 to merchant, then capacity';
   }
 
   String get _submitHint {
@@ -1597,10 +1705,18 @@ String _formatCoordinates(double lat, double lng) {
                         background: _W.blueLt,
                       ),
                     if (showSourcePickupSelector) ...[
-                      if (_pickupPoints.isEmpty)
+                      _InfoBox(
+                        icon: Icons.near_me_outlined,
+                        text:
+                            'Source pickup points are filtered near the merchant location.',
+                        color: _W.blue,
+                        background: _W.blueLt,
+                      ),
+                      const SizedBox(height: 10),
+                      if (_sourcePickupPoints.isEmpty)
                         const _InfoBox(
                           icon: Icons.info_outline,
-                          text: 'No approved pickup points found in the system.',
+                          text: 'No nearby source pickup points were found around the merchant location.',
                           color: _W.amber,
                           background: _W.amberLt,
                         )
@@ -1616,7 +1732,7 @@ String _formatCoordinates(double lat, double lng) {
                             hint: 'Choose source pickup point',
                             icon: Icons.store_mall_directory_outlined,
                           ),
-                          items: _pickupPoints
+                          items: _sourcePickupPoints
                               .map(
                                 (point) => DropdownMenuItem<String>(
                                   value: point.id,
@@ -1708,10 +1824,18 @@ String _formatCoordinates(double lat, double lng) {
                     ],
                     if (showDestinationPickupSelector) ...[
                       if (_dropoffType == _dropoffPickupSpecific) ...[
-                        if (_pickupPoints.isEmpty)
+                        _InfoBox(
+                          icon: Icons.near_me_outlined,
+                          text:
+                              'Destination pickup points are filtered near the customer location.',
+                          color: _W.blue,
+                          background: _W.blueLt,
+                        ),
+                        const SizedBox(height: 10),
+                        if (_destinationPickupPoints.isEmpty)
                           const _InfoBox(
                             icon: Icons.info_outline,
-                            text: 'No approved pickup points found in the system.',
+                            text: 'No nearby destination pickup points were found around the customer location.',
                             color: _W.amber,
                             background: _W.amberLt,
                           )
@@ -1727,7 +1851,7 @@ String _formatCoordinates(double lat, double lng) {
                               hint: 'Choose destination pickup point',
                               icon: Icons.pin_drop_outlined,
                             ),
-                            items: _pickupPoints
+                            items: _destinationPickupPoints
                                 .map(
                                   (point) => DropdownMenuItem<String>(
                                     value: point.id,
@@ -1866,7 +1990,7 @@ String _formatCoordinates(double lat, double lng) {
                 iconColor: _W.blue,
                 iconBg: _W.blueLt,
                 title: 'Delivery Company',
-                subtitle: 'Best 3 companies by location and capacity',
+                subtitle: 'Nearest 3 to merchant, then capacity',
                 child: _allDeliveryCompanies.isEmpty
                     ? const _InfoBox(
                         icon: Icons.info_outline,
@@ -1901,7 +2025,7 @@ String _formatCoordinates(double lat, double lng) {
                               _InfoBox(
                                 icon: Icons.filter_alt_outlined,
                                 text:
-                                    'Showing only the best ${_filteredDeliveryCompanies.length} companies for this route.',
+                                    'Showing the 3 nearest companies to the merchant location, then ranked by capacity.',
                                 color: _W.blue,
                                 background: _W.blueLt,
                               ),
@@ -1914,7 +2038,7 @@ String _formatCoordinates(double lat, double lng) {
                                 isExpanded: true,
                                 decoration: _inputDecor(
                                   label: 'Select Delivery Company',
-                                  hint: 'Choose from best matched companies',
+                                  hint: 'Choose from nearest merchant companies',
                                   icon: Icons.local_shipping_outlined,
                                 ),
                                 items: _filteredDeliveryCompanies
@@ -2113,19 +2237,45 @@ class _CompanyCapacity {
     required this.currentDailyOrders,
     required this.isActive,
   });
+
+  int get remainingActiveOrders {
+    if (maxActiveOrders == null) return 999999;
+    return maxActiveOrders! - currentActiveOrders;
+  }
+
+  int get remainingDailyOrders {
+    if (maxDailyOrders == null) return 999999;
+    return maxDailyOrders! - currentDailyOrders;
+  }
 }
 
-class _RankedCompany {
-  final String id;
-  final String name;
-  final _CompanyHub? bestHub;
-  final double score;
+class _MerchantNearestCompany {
+  final _DeliveryCompanyOption company;
+  final _CompanyHub nearestHub;
+  final double merchantDistanceKm;
 
-  const _RankedCompany({
-    required this.id,
-    required this.name,
+  const _MerchantNearestCompany({
+    required this.company,
+    required this.nearestHub,
+    required this.merchantDistanceKm,
+  });
+}
+
+class _RankedCompanyForMerchant {
+  final _DeliveryCompanyOption company;
+  final _CompanyHub? bestHub;
+  final double merchantDistanceKm;
+  final double destinationDistanceKm;
+  final int remainingActiveOrders;
+  final int remainingDailyOrders;
+
+  const _RankedCompanyForMerchant({
+    required this.company,
     required this.bestHub,
-    required this.score,
+    required this.merchantDistanceKm,
+    required this.destinationDistanceKm,
+    required this.remainingActiveOrders,
+    required this.remainingDailyOrders,
   });
 }
 
