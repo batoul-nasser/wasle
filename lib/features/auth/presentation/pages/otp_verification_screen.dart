@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -95,7 +94,7 @@ class OtpVerificationScreen extends StatefulWidget {
 }
 
 class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
-  static const int _otpLength = 8;
+  static const int _otpLength = 6;
 
   final AuthService _authService = AuthService();
   final TextEditingController _otpController = TextEditingController();
@@ -177,8 +176,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       return 'OTP code must contain numbers only.';
     }
 
-    if (otp.length < _otpLength) {
-      return 'Please enter the full verification code.';
+    if (otp.length != _otpLength) {
+      return 'Please enter the 6-digit verification code.';
     }
 
     return null;
@@ -281,14 +280,14 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             bytes: _requiredBytes(widget.idImageBytes, 'ID image'),
           );
 
-          final storageAreaUrl =
-              await _authService.uploadPickupPointStorageAreaImage(
-            fileName: storageAreaFileName,
-            bytes: _requiredBytes(
-              widget.storageAreaImageBytes,
-              'Storage area image',
-            ),
-          );
+          final storageAreaUrl = await _authService
+              .uploadPickupPointStorageAreaImage(
+                fileName: storageAreaFileName,
+                bytes: _requiredBytes(
+                  widget.storageAreaImageBytes,
+                  'Storage area image',
+                ),
+              );
 
           final shelvesUrl = await _authService.uploadPickupPointShelvesImage(
             fileName: shelvesFileName,
@@ -307,11 +306,15 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             ownerName: _required(widget.fullName, 'Owner name'),
             phone: _required(widget.phone, 'Phone'),
             email: widget.email,
-            pickupPointName:
-                _required(widget.pickupPointName, 'Pickup point name'),
+            pickupPointName: _required(
+              widget.pickupPointName,
+              'Pickup point name',
+            ),
             addressText: _required(widget.addressText, 'Address'),
-            confirmAddressText:
-                _required(widget.confirmAddressText, 'Confirm address'),
+            confirmAddressText: _required(
+              widget.confirmAddressText,
+              'Confirm address',
+            ),
             city: _required(widget.city, 'City'),
             area: _required(widget.area, 'Area'),
             maxOrdersPerDay: widget.maxOrdersPerDay,
@@ -373,9 +376,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       _startTimer();
 
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Code sent successfully.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Code sent successfully.')));
     } catch (error, stackTrace) {
       AuthErrorMapper.log('otp_resend', error, stackTrace);
       setState(() {
@@ -392,9 +395,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     final timeText = '00:${_secondsRemaining.toString().padLeft(2, '0')}';
 
     return Scaffold(
-      appBar: AppBar(
-        title: Text(widget.title),
-      ),
+      appBar: AppBar(title: Text(widget.title)),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.xl),
         child: Column(
@@ -460,10 +461,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
                   const SizedBox(height: AppSpacing.sm),
                   Row(
                     children: [
-                      Text(
-                        'Expires in ',
-                        style: AppTextStyles.bodyMuted,
-                      ),
+                      Text('Expires in ', style: AppTextStyles.bodyMuted),
                       Text(
                         timeText,
                         style: AppTextStyles.title.copyWith(
