@@ -1,23 +1,17 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:wasle/features/auth/data/auth_service.dart';
 
-enum AuthErrorContext { passwordLogin, otpRequest, otpVerification }
+enum AuthErrorContext {
+  passwordLogin,
+  otpRequest,
+  otpVerification,
+}
 
 class AuthErrorMapper {
-  static String map(Object error, {required AuthErrorContext context}) {
-    if (error is EmailAlreadyRegisteredException) {
-      return error.message;
-    }
-
-    if (error is PendingSignupException) {
-      return error.message;
-    }
-
-    if (error is EmailOtpException) {
-      return error.message;
-    }
-
+  static String map(
+    Object error, {
+    required AuthErrorContext context,
+  }) {
     final code = _extractCode(error);
     final message = _extractMessage(error).toLowerCase();
 
@@ -35,9 +29,6 @@ class AuthErrorMapper {
         return 'Unable to log in right now. Please try again.';
 
       case AuthErrorContext.otpRequest:
-        if (_isEmailAlreadyRegistered(code, message)) {
-          return EmailAlreadyRegisteredException.defaultMessage;
-        }
         if (_isInvalidEmail(code, message)) {
           return 'Please enter a valid email address.';
         }
@@ -47,16 +38,12 @@ class AuthErrorMapper {
         if (_isAccountMissing(code, message)) {
           return "We couldn't send a code to this email.";
         }
-        if (message.contains('rate limit') ||
-            message.contains('too many requests')) {
+        if (message.contains('rate limit') || message.contains('too many requests')) {
           return 'Too many attempts. Please try again in a moment.';
         }
         return "We couldn't send a code to this email.";
 
       case AuthErrorContext.otpVerification:
-        if (_isEmailAlreadyRegistered(code, message)) {
-          return EmailAlreadyRegisteredException.defaultMessage;
-        }
         if (_isOtpExpired(code, message)) {
           return 'This code has expired. Please request a new one.';
         }
@@ -112,15 +99,6 @@ class AuthErrorMapper {
         code == 'email_invalid' ||
         message.contains('invalid email') ||
         message.contains('email address is invalid');
-  }
-
-  static bool _isEmailAlreadyRegistered(String code, String message) {
-    return code == 'email_exists' ||
-        code == 'user_already_exists' ||
-        code == 'email_already_registered' ||
-        message.contains('already registered') ||
-        message.contains('already exists') && message.contains('email') ||
-        message.contains('user already exists');
   }
 
   static bool _isOtpNotEligible(String code, String message) {
