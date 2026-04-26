@@ -7,18 +7,31 @@ class PickupPointRepository {
   final SupabaseClient _client = Supabase.instance.client;
 
   Future<Map<String, dynamic>?> getMyPickupPoint() async {
-  final user = _client.auth.currentUser;
-  if (user == null) return null;
+    final user = _client.auth.currentUser;
+    if (user == null) return null;
 
-  // Check pickup_point_operators first (signup flow writes here)
-  final link = await _client
-      .from('pickup_point_operators')
-      .select('pickup_point_id')
-      .eq('profile_id', user.id)
-      .maybeSingle();
+    // Check pickup_point_operators first (signup flow writes here)
+    final link = await _client
+        .from('pickup_point_operators')
+        .select('pickup_point_id')
+        .eq('profile_id', user.id)
+        .maybeSingle();
 
-  if (link != null) {
-    final ppId = link['pickup_point_id'].toString();
+    if (link != null) {
+      final ppId = link['pickup_point_id'].toString();
+      final row = await _client
+          .from('pickup_points')
+          .select(
+            'id, name, owner_name, address_text, phone, email, city, area, '
+            'image_url, opens_at, closes_at, opening_hours, preferred_payment_method, '
+            'payment_handling_method, working_days, max_orders_per_day, status, is_active',
+          )
+          .eq('id', ppId)
+          .maybeSingle();
+      return row;
+    }
+
+    // Fallback: check owner_profile_id
     final row = await _client
         .from('pickup_points')
         .select(
@@ -26,23 +39,10 @@ class PickupPointRepository {
           'image_url, opens_at, closes_at, opening_hours, preferred_payment_method, '
           'payment_handling_method, working_days, max_orders_per_day, status, is_active',
         )
-        .eq('id', ppId)
+        .eq('owner_profile_id', user.id)
         .maybeSingle();
     return row;
   }
-
-  // Fallback: check owner_profile_id
-  final row = await _client
-      .from('pickup_points')
-      .select(
-        'id, name, owner_name, address_text, phone, email, city, area, '
-        'image_url, opens_at, closes_at, opening_hours, preferred_payment_method, '
-        'payment_handling_method, working_days, max_orders_per_day, status, is_active',
-      )
-      .eq('owner_profile_id', user.id)
-      .maybeSingle();
-  return row;
-}
 
   Future<List<Map<String, dynamic>>> getPickupPointsForSearch() async {
     final rows = await _client
@@ -58,7 +58,9 @@ class PickupPointRepository {
     return List<Map<String, dynamic>>.from(rows);
   }
 
-  Future<Map<String, int>> getPickupPointUsageCounts(List<String> pickupPointIds) async {
+  Future<Map<String, int>> getPickupPointUsageCounts(
+    List<String> pickupPointIds,
+  ) async {
     if (pickupPointIds.isEmpty) return {};
 
     final rows = await _client
@@ -73,6 +75,35 @@ class PickupPointRepository {
       counts[pickupPointId] = (counts[pickupPointId] ?? 0) + 1;
     }
     return counts;
+  }
+
+  Future<String?> uploadShopImage({
+    required String pickupPointId,
+    required Uint8List bytes,
+    required String fileExtension,
+  }) async {
+    final path =
+        'shops/$pickupPointId-${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
+
+    await _client.storage
+        .from('pickup-point-shops')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return _client.storage.from('pickup-point-shops').getPublicUrl(path);
+  }
+
+  Future<void> updatePickupPointImage({
+    required String pickupPointId,
+    required String imageUrl,
+  }) async {
+    await _client
+        .from('pickup_points')
+        .update({'image_url': imageUrl})
+        .eq('id', pickupPointId);
   }
 
   Future<List<Map<String, dynamic>>> getPickupPointParcels({
@@ -134,10 +165,13 @@ class PickupPointRepository {
     required String orderId,
     required String newStatus,
   }) async {
-    await _client.from('orders').update({
-      'status': newStatus,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', orderId);
+    await _client
+        .from('orders')
+        .update({
+          'status': newStatus,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', orderId);
   }
 
   Future<String?> uploadIssuePhoto({
@@ -148,7 +182,9 @@ class PickupPointRepository {
     final path =
         'issues/$orderId-${DateTime.now().millisecondsSinceEpoch}.$fileExtension';
 
-    await _client.storage.from('pickup-point-storage').uploadBinary(
+    await _client.storage
+        .from('pickup-point-storage')
+        .uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -181,7 +217,9 @@ class PickupPointRepository {
     }
   }
 
-  Stream<List<Map<String, dynamic>>> watchPickupPointOrders(String pickupPointId) {
+  Stream<List<Map<String, dynamic>>> watchPickupPointOrders(
+    String pickupPointId,
+  ) {
     return _client
         .from('orders')
         .stream(primaryKey: ['id'])

@@ -110,9 +110,9 @@ class _PickupPointPageState extends State<PickupPointPage> {
       final bRating = (b['rating_average'] as num?)?.toDouble() ?? 0.0;
       if (aRating != bRating) return bRating.compareTo(aRating);
 
-      return (a['name']?.toString() ?? '')
-          .toLowerCase()
-          .compareTo((b['name']?.toString() ?? '').toLowerCase());
+      return (a['name']?.toString() ?? '').toLowerCase().compareTo(
+        (b['name']?.toString() ?? '').toLowerCase(),
+      );
     });
 
     return filtered;
@@ -125,7 +125,8 @@ class _PickupPointPageState extends State<PickupPointPage> {
     final usage = (point['usage_count'] as int?) ?? 0;
     final topUsage = _allPickupPoints
         .where(
-          (item) => (item['city']?.toString().trim().toLowerCase() ?? '') == city,
+          (item) =>
+              (item['city']?.toString().trim().toLowerCase() ?? '') == city,
         )
         .fold<int>(0, (max, item) {
           final count = (item['usage_count'] as int?) ?? 0;
@@ -155,54 +156,59 @@ class _PickupPointPageState extends State<PickupPointPage> {
           style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
         ),
         const SizedBox(height: 12),
-        ..._recentPickupPoints.take(3).map(
-          (point) => Container(
-            margin: const EdgeInsets.only(bottom: 10),
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: Colors.blue.shade50),
-            ),
-            child: Row(
-              children: [
-                Container(
-                  width: 40,
-                  height: 40,
-                  decoration: BoxDecoration(
-                    color: Colors.blue.shade50,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(
-                    Icons.history,
-                    color: Colors.blue,
-                  ),
+        ..._recentPickupPoints
+            .take(3)
+            .map(
+              (point) => Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(14),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: Colors.blue.shade50),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        point['name']?.toString() ?? 'Pickup Point',
-                        style: const TextStyle(fontWeight: FontWeight.bold),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: Colors.blue.shade50,
+                        borderRadius: BorderRadius.circular(12),
                       ),
-                      const SizedBox(height: 2),
-                      Text(
-                        [
-                          point['address_text'],
-                          point['city'],
-                          point['area'],
-                        ].whereType<String>().where((part) => part.trim().isNotEmpty).join(', '),
-                        style: const TextStyle(color: Colors.black54, fontSize: 12),
+                      child: const Icon(Icons.history, color: Colors.blue),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            point['name']?.toString() ?? 'Pickup Point',
+                            style: const TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            [
+                                  point['address_text'],
+                                  point['city'],
+                                  point['area'],
+                                ]
+                                .whereType<String>()
+                                .where((part) => part.trim().isNotEmpty)
+                                .join(', '),
+                            style: const TextStyle(
+                              color: Colors.black54,
+                              fontSize: 12,
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
         const SizedBox(height: 18),
       ],
     );
@@ -246,7 +252,8 @@ class _PickupPointPageState extends State<PickupPointPage> {
                 width: 64,
                 height: 64,
                 color: Colors.blue.shade50,
-                child: (point['image_url']?.toString().trim().isNotEmpty ?? false)
+                child:
+                    (point['image_url']?.toString().trim().isNotEmpty ?? false)
                     ? Image.network(
                         point['image_url'].toString(),
                         fit: BoxFit.cover,
@@ -309,8 +316,12 @@ class _PickupPointPageState extends State<PickupPointPage> {
                     spacing: 8,
                     runSpacing: 8,
                     children: [
-                      if ((point['phone']?.toString().trim().isNotEmpty ?? false))
-                        _miniChip(Icons.phone_outlined, point['phone'].toString()),
+                      if ((point['phone']?.toString().trim().isNotEmpty ??
+                          false))
+                        _miniChip(
+                          Icons.phone_outlined,
+                          point['phone'].toString(),
+                        ),
                       if (_isTopUsedInCity(point))
                         _miniChip(
                           Icons.local_fire_department_outlined,
@@ -376,7 +387,8 @@ class _PickupPointPageState extends State<PickupPointPage> {
                   TextField(
                     controller: _searchCtrl,
                     decoration: InputDecoration(
-                      hintText: 'Search by pickup point, city, area, or address',
+                      hintText:
+                          'Search by pickup point, city, area, or address',
                       prefixIcon: const Icon(Icons.search),
                       filled: true,
                       fillColor: Colors.white,
@@ -607,10 +619,39 @@ class _PickupPointDetailPageState extends State<PickupPointDetailPage> {
     );
   }
 
+  String _paymentMethodLabel(String? raw) {
+    final value = (raw ?? '').trim().toLowerCase();
+    switch (value) {
+      case 'customer_pays_online':
+        return 'Customer Pays Online';
+      case 'customer_pays_at_pickup':
+        return 'Customer Pays At Pickup';
+      case 'wish_money':
+        return 'Wish Money';
+      case 'hybrid':
+        return 'Hybrid';
+      case '':
+        return 'Not specified';
+      default:
+        return value
+            .split('_')
+            .where((part) => part.isNotEmpty)
+            .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')
+            .join(' ');
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final point = widget.pickupPoint;
     final imageUrl = point['image_url']?.toString().trim() ?? '';
+    final ownerName = point['owner_name']?.toString().trim() ?? '-';
+    final paymentMethod = _paymentMethodLabel(
+      point['preferred_payment_method']?.toString(),
+    );
+    final paymentHandling = _paymentMethodLabel(
+      point['payment_handling_method']?.toString(),
+    );
     final address = [
       point['address_text']?.toString().trim(),
       point['city']?.toString().trim(),
@@ -655,19 +696,27 @@ class _PickupPointDetailPageState extends State<PickupPointDetailPage> {
                     fontWeight: FontWeight.bold,
                   ),
                 ),
+                const SizedBox(height: 6),
+                Text(
+                  'Owner: $ownerName',
+                  style: const TextStyle(
+                    color: Colors.black54,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 const SizedBox(height: 12),
                 Row(
                   children: [
                     Expanded(
                       child: _buildStatChip(
                         'Rating',
-                        _reviewCount == 0 ? 'New' : _averageRating.toStringAsFixed(1),
+                        _reviewCount == 0
+                            ? 'New'
+                            : _averageRating.toStringAsFixed(1),
                       ),
                     ),
                     const SizedBox(width: 10),
-                    Expanded(
-                      child: _buildStatChip('Reviews', '$_reviewCount'),
-                    ),
+                    Expanded(child: _buildStatChip('Reviews', '$_reviewCount')),
                   ],
                 ),
                 const SizedBox(height: 18),
@@ -693,6 +742,16 @@ class _PickupPointDetailPageState extends State<PickupPointDetailPage> {
                         Icons.schedule_outlined,
                         'Working Hours',
                         point['opening_hours']?.toString() ?? '-',
+                      ),
+                      _infoRow(
+                        Icons.payments_outlined,
+                        'Preferred Payment',
+                        paymentMethod,
+                      ),
+                      _infoRow(
+                        Icons.account_balance_wallet_outlined,
+                        'Payment Handling',
+                        paymentHandling,
                       ),
                     ],
                   ),
@@ -747,7 +806,8 @@ class _PickupPointDetailPageState extends State<PickupPointDetailPage> {
                             children: [
                               Expanded(
                                 child: Text(
-                                  review['customer_name']?.toString() ?? 'Customer',
+                                  review['customer_name']?.toString() ??
+                                      'Customer',
                                   style: const TextStyle(
                                     fontWeight: FontWeight.bold,
                                   ),
@@ -762,7 +822,11 @@ class _PickupPointDetailPageState extends State<PickupPointDetailPage> {
                               ),
                             ],
                           ),
-                          if ((review['comment']?.toString().trim().isNotEmpty ?? false)) ...[
+                          if ((review['comment']
+                                  ?.toString()
+                                  .trim()
+                                  .isNotEmpty ??
+                              false)) ...[
                             const SizedBox(height: 8),
                             Text(
                               review['comment'].toString(),

@@ -18,7 +18,7 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
   Map<String, dynamic>? _pickupPoint;
   bool _loading = true;
 
-  bool get _usesWhishRemittance => _service.usesWhishRemittance(_pickupPoint);
+  bool get _showsAgentCollection => _service.usesAgentCollection(_pickupPoint);
 
   @override
   void initState() {
@@ -134,9 +134,9 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
       backgroundColor: const Color(0xFFF5F7FB),
       appBar: AppBar(
         title: Text(
-          _usesWhishRemittance
-              ? 'Orders - Pending Cash'
-              : 'Orders - Awaiting Agent',
+          _showsAgentCollection
+              ? 'Orders - Awaiting Agent'
+              : 'Orders - Pending Cash',
         ),
         centerTitle: true,
       ),
@@ -145,9 +145,9 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
           : _orders.isEmpty
           ? Center(
               child: Text(
-                _usesWhishRemittance
-                    ? 'No orders waiting for cash payment.'
-                    : 'No orders are waiting for an agent collection.',
+                _showsAgentCollection
+                    ? 'No orders are waiting for an agent collection.'
+                    : 'No orders waiting for cash payment.',
                 style: const TextStyle(color: Colors.black54),
               ),
             )
@@ -191,9 +191,9 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
                               ),
                               const SizedBox(height: 4),
                               Text(
-                                _usesWhishRemittance
-                                    ? 'Cash to send to Wasle: \$${amount.toStringAsFixed(2)}'
-                                    : 'Cash waiting for agent collection: \$${amount.toStringAsFixed(2)}',
+                                _showsAgentCollection
+                                    ? 'Cash waiting for agent collection: \$${amount.toStringAsFixed(2)}'
+                                    : 'Cash to send Wasle: \$${amount.toStringAsFixed(2)}',
                                 style: const TextStyle(
                                   color: Color(0xFFD4800A),
                                   fontWeight: FontWeight.w600,
@@ -202,8 +202,23 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
                             ],
                           ),
                         ),
-                        _usesWhishRemittance
-                            ? ElevatedButton(
+                        _showsAgentCollection
+                            ? OutlinedButton.icon(
+                                onPressed: () => _confirmAgentCollected(order),
+                                icon: const Icon(
+                                  Icons.handshake_outlined,
+                                  size: 16,
+                                ),
+                                label: const Text('Agent collected'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: Colors.green,
+                                  side: const BorderSide(color: Colors.green),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                ),
+                              )
+                            : ElevatedButton(
                                 onPressed: () => Navigator.push(
                                   context,
                                   MaterialPageRoute(
@@ -223,21 +238,6 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
                                   ),
                                 ),
                                 child: const Text('Send to Wasle'),
-                              )
-                            : OutlinedButton.icon(
-                                onPressed: () => _confirmAgentCollected(order),
-                                icon: const Icon(
-                                  Icons.handshake_outlined,
-                                  size: 16,
-                                ),
-                                label: const Text('Agent collected'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.green,
-                                  side: const BorderSide(color: Colors.green),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
                               ),
                       ],
                     ),

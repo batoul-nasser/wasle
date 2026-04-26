@@ -25,7 +25,7 @@ class _PickupPointDashboardScreenState
   double _completedTodayAmount = 0.0;
   List<Map<String, dynamic>> _recentCompletedOrders = [];
 
-  bool get _usesWhishRemittance => _service.usesWhishRemittance(_pickupPoint);
+  bool get _showsAgentCollection => _service.usesAgentCollection(_pickupPoint);
 
   @override
   void initState() {
@@ -41,9 +41,12 @@ class _PickupPointDashboardScreenState
       final pp = await _service.getMyPickupPoint();
       final orders = await _service.getPendingCashOrders();
       final total = await _service.getTotalPendingAmount();
-      final completed = _service.usesWhishRemittance(pp)
-          ? await _service.getRecentRemittedOrders(since: startOfDay, limit: 10)
-          : await _service.getRecentAgentCollections(
+      final completed = _service.usesAgentCollection(pp)
+          ? await _service.getRecentAgentCollections(
+              since: startOfDay,
+              limit: 10,
+            )
+          : await _service.getRecentRemittedOrders(
               since: startOfDay,
               limit: 10,
             );
@@ -115,9 +118,9 @@ class _PickupPointDashboardScreenState
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          _usesWhishRemittance
-                              ? 'View orders and send collected cash to Wasle.'
-                              : 'View orders waiting for collection by a Wasle agent.',
+                          _showsAgentCollection
+                              ? 'View orders waiting for collection by a Wasle agent.'
+                              : 'View orders and send collected cash to Wasle.',
                           style: const TextStyle(color: Colors.white70),
                         ),
                       ],
@@ -134,9 +137,9 @@ class _PickupPointDashboardScreenState
                       const SizedBox(width: 12),
                       _stat(
                         Icons.payments_outlined,
-                        _usesWhishRemittance
-                            ? 'To send Wasle'
-                            : 'Awaiting agent',
+                        _showsAgentCollection
+                            ? 'Awaiting agent'
+                            : 'To send Wasle',
                         '\$${_pendingAmount.toStringAsFixed(2)}',
                         valueColor: _pendingAmount > 0
                             ? const Color(0xFFD4800A)
@@ -149,7 +152,9 @@ class _PickupPointDashboardScreenState
                     children: [
                       _stat(
                         Icons.check_circle_outline,
-                        _usesWhishRemittance ? 'Sent today' : 'Collected today',
+                        _showsAgentCollection
+                            ? 'Collected today'
+                            : 'Sent today',
                         '$_completedTodayCount',
                         valueColor: _completedTodayCount > 0
                             ? const Color(0xFF0BA360)
@@ -158,9 +163,9 @@ class _PickupPointDashboardScreenState
                       const SizedBox(width: 12),
                       _stat(
                         Icons.account_balance_wallet_outlined,
-                        _usesWhishRemittance
-                            ? 'Sent to Wasle'
-                            : 'Collected by agent',
+                        _showsAgentCollection
+                            ? 'Collected by agent'
+                            : 'Sent to Wasle',
                         '\$${_completedTodayAmount.toStringAsFixed(2)}',
                         valueColor: _completedTodayAmount > 0
                             ? const Color(0xFF0BA360)
@@ -180,9 +185,9 @@ class _PickupPointDashboardScreenState
                       ).then((_) => _load()),
                       icon: const Icon(Icons.list_alt_outlined),
                       label: Text(
-                        _usesWhishRemittance
-                            ? 'View Orders to Send to Wasle'
-                            : 'View Orders Awaiting Agent Collection',
+                        _showsAgentCollection
+                            ? 'View Orders Awaiting Agent Collection'
+                            : 'View Orders with Pending Cash',
                       ),
                       style: ElevatedButton.styleFrom(
                         padding: const EdgeInsets.symmetric(vertical: 16),
@@ -195,9 +200,9 @@ class _PickupPointDashboardScreenState
                   if (_recentCompletedOrders.isNotEmpty) ...[
                     const SizedBox(height: 24),
                     Text(
-                      _usesWhishRemittance
-                          ? 'Today\'s Completed Orders'
-                          : 'Today\'s Agent Collections',
+                      _showsAgentCollection
+                          ? 'Today\'s Agent Collections'
+                          : 'Today\'s Completed Orders',
                       style: const TextStyle(
                         fontSize: 18,
                         fontWeight: FontWeight.bold,
@@ -206,9 +211,9 @@ class _PickupPointDashboardScreenState
                     ),
                     const SizedBox(height: 6),
                     Text(
-                      _usesWhishRemittance
-                          ? 'Orders handed to customers and already sent to Wasle.'
-                          : 'Orders handed to customers and already collected by a Wasle agent.',
+                      _showsAgentCollection
+                          ? 'Orders handed to customers and already collected by a Wasle agent.'
+                          : 'Orders handed to customers and already sent to Wasle.',
                       style: const TextStyle(
                         color: Colors.black54,
                         height: 1.4,
@@ -227,9 +232,9 @@ class _PickupPointDashboardScreenState
                       final collectorName =
                           entry['collector_name']?.toString() ?? '';
                       final eventNote = entry['note']?.toString() ?? '';
-                      final completedAt = _usesWhishRemittance
-                          ? entry['sent_at']?.toString() ?? ''
-                          : entry['created_at']?.toString() ?? '';
+                      final completedAt = _showsAgentCollection
+                          ? entry['created_at']?.toString() ?? ''
+                          : entry['sent_at']?.toString() ?? '';
 
                       return Container(
                         margin: const EdgeInsets.only(bottom: 12),
@@ -287,9 +292,9 @@ class _PickupPointDashboardScreenState
                                   ),
                                   const SizedBox(height: 8),
                                   Text(
-                                    _usesWhishRemittance
-                                        ? 'Sent to Wasle: \$${amount.toStringAsFixed(2)}'
-                                        : 'Collected by agent: \$${amount.toStringAsFixed(2)}',
+                                    _showsAgentCollection
+                                        ? 'Collected by agent: \$${amount.toStringAsFixed(2)}'
+                                        : 'Sent to Wasle: \$${amount.toStringAsFixed(2)}',
                                     style: const TextStyle(
                                       color: Color(0xFF0BA360),
                                       fontWeight: FontWeight.w700,
@@ -297,17 +302,17 @@ class _PickupPointDashboardScreenState
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
-                                    _usesWhishRemittance
-                                        ? 'Whish ref: $whishRef'
-                                        : collectorName.isNotEmpty
-                                        ? 'Confirmed by: $collectorName'
-                                        : 'Confirmed by pickup point',
+                                    _showsAgentCollection
+                                        ? collectorName.isNotEmpty
+                                              ? 'Confirmed by: $collectorName'
+                                              : 'Confirmed by pickup point'
+                                        : 'Whish ref: $whishRef',
                                     style: const TextStyle(
                                       color: Colors.black54,
                                       fontSize: 12,
                                     ),
                                   ),
-                                  if (!_usesWhishRemittance &&
+                                  if (_showsAgentCollection &&
                                       eventNote.isNotEmpty) ...[
                                     const SizedBox(height: 2),
                                     Text(
@@ -321,9 +326,9 @@ class _PickupPointDashboardScreenState
                                   if (completedAt.isNotEmpty) ...[
                                     const SizedBox(height: 2),
                                     Text(
-                                      _usesWhishRemittance
-                                          ? 'Sent at: $completedAt'
-                                          : 'Collected at: $completedAt',
+                                      _showsAgentCollection
+                                          ? 'Collected at: $completedAt'
+                                          : 'Sent at: $completedAt',
                                       style: const TextStyle(
                                         color: Colors.black45,
                                         fontSize: 12,
@@ -359,9 +364,9 @@ class _PickupPointDashboardScreenState
                           const SizedBox(width: 12),
                           Expanded(
                             child: Text(
-                              _usesWhishRemittance
-                                  ? 'You have \$${_pendingAmount.toStringAsFixed(2)} to send to Wasle via Whish.'
-                                  : 'You have \$${_pendingAmount.toStringAsFixed(2)} waiting for a Wasle agent to collect.',
+                              _showsAgentCollection
+                                  ? 'You have \$${_pendingAmount.toStringAsFixed(2)} waiting for a Wasle agent to collect.'
+                                  : 'You have \$${_pendingAmount.toStringAsFixed(2)} to send to Wasle via Whish.',
                               style: const TextStyle(
                                 fontSize: 14,
                                 color: Color(0xFFD4800A),

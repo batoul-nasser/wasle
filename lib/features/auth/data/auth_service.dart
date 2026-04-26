@@ -62,11 +62,19 @@ class AuthService {
   }
 
   Future<void> resendSignupOtp({required String email}) async {
-    await _client.auth.resend(type: OtpType.signup, email: email);
+    await _resendEmailOtp(
+      email: email,
+      preferredType: OtpType.email,
+      fallbackType: OtpType.signup,
+    );
   }
 
   Future<void> resendLoginOtp({required String email}) async {
-    await _client.auth.resend(type: OtpType.email, email: email);
+    await _resendEmailOtp(
+      email: email,
+      preferredType: OtpType.email,
+      fallbackType: OtpType.signup,
+    );
   }
 
   Future<AuthResponse> verifyOtp({
@@ -74,13 +82,75 @@ class AuthService {
     required String token,
     required AuthFlowMode mode,
   }) async {
-    final otpType = mode == AuthFlowMode.login ? OtpType.email : OtpType.signup;
+    final preferredType =
+        mode == AuthFlowMode.login ? OtpType.email : OtpType.signup;
 
-    return await _client.auth.verifyOTP(
+    return await _verifyEmailOtp(
       email: email,
       token: token,
-      type: otpType,
+      preferredType: preferredType,
+      fallbackType: preferredType == OtpType.email
+          ? OtpType.signup
+          : OtpType.email,
     );
+  }
+
+  Future<AuthResponse> _verifyEmailOtp({
+    required String email,
+    required String token,
+    required OtpType preferredType,
+    OtpType? fallbackType,
+  }) async {
+    AuthException? firstError;
+
+    try {
+      return await _client.auth.verifyOTP(
+        email: email,
+        token: token,
+        type: preferredType,
+      );
+    } on AuthException catch (error) {
+      firstError = error;
+    }
+
+    if (fallbackType == null || fallbackType == preferredType) {
+      throw firstError!;
+    }
+
+    try {
+      return await _client.auth.verifyOTP(
+        email: email,
+        token: token,
+        type: fallbackType,
+      );
+    } on AuthException {
+      throw firstError!;
+    }
+  }
+
+  Future<void> _resendEmailOtp({
+    required String email,
+    required OtpType preferredType,
+    OtpType? fallbackType,
+  }) async {
+    AuthException? firstError;
+
+    try {
+      await _client.auth.resend(type: preferredType, email: email);
+      return;
+    } on AuthException catch (error) {
+      firstError = error;
+    }
+
+    if (fallbackType == null || fallbackType == preferredType) {
+      throw firstError!;
+    }
+
+    try {
+      await _client.auth.resend(type: fallbackType, email: email);
+    } on AuthException {
+      throw firstError!;
+    }
   }
 
   Future<void> signOut() async {

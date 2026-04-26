@@ -42,6 +42,22 @@ class PickupPointService {
         handling == 'customer_pays_online';
   }
 
+  bool usesAgentCollection(Map<String, dynamic>? pickupPoint) {
+    if (usesWhishRemittance(pickupPoint)) return false;
+
+    final preferred = pickupPoint?['preferred_payment_method']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    final handling = pickupPoint?['payment_handling_method']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+
+    return preferred == 'customer_pays_at_pickup' ||
+        handling == 'customer_pays_at_pickup';
+  }
+
   Future<List<Map<String, dynamic>>> getPendingCashOrders() async {
     try {
       final pp = await getMyPickupPoint();
