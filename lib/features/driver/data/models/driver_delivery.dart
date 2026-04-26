@@ -23,6 +23,7 @@ class DriverDelivery {
 
   final String customerName;
   final String customerPhone;
+  final String? customerEmail;
   final int? itemCount;
   final double? estimatedWeightKg;
   final double? estimatedVolumeCm3;
@@ -53,6 +54,7 @@ class DriverDelivery {
     required this.dropoffLng,
     required this.customerName,
     required this.customerPhone,
+    required this.customerEmail,
     required this.itemCount,
     required this.estimatedWeightKg,
     required this.estimatedVolumeCm3,

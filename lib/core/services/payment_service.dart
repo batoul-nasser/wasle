@@ -75,7 +75,7 @@ class PaymentService {
         headers: _authHeaders,
         body: {
           'merchant_id': merchantId,
-          if (branchId != null) 'branch_id': branchId,
+          if (branchId != null && branchId.isNotEmpty) 'branch_id': branchId,
           'customer_name': customerName,
           'customer_phone': customerPhone,
           if (customerEmail != null && customerEmail.isNotEmpty)

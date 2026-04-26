@@ -397,3 +397,18 @@ entrypoint = "./functions/route-estimate/index.ts"
 # Specifies static files to be bundled with the function. Supports glob patterns.
 # For example, if you want to serve static HTML pages in your function:
 # static_files = [ "./functions/route-estimate/*.html" ]
+
+[functions.request-email-otp]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/request-email-otp/index.ts"
+
+[functions.verify-email-otp]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/verify-email-otp/index.ts"
+
+[functions.complete-driver-signup]
+enabled = true
+verify_jwt = false
+entrypoint = "./functions/complete-driver-signup/index.ts"

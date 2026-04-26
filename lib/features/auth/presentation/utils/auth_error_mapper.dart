@@ -2,18 +2,19 @@ import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
 
-enum AuthErrorContext {
-  passwordLogin,
-  otpRequest,
-  otpVerification,
-}
+enum AuthErrorContext { passwordLogin, otpRequest, otpVerification }
 
 class AuthErrorMapper {
-  static String map(
-    Object error, {
-    required AuthErrorContext context,
-  }) {
+  static String map(Object error, {required AuthErrorContext context}) {
     if (error is EmailAlreadyRegisteredException) {
+      return error.message;
+    }
+
+    if (error is PendingSignupException) {
+      return error.message;
+    }
+
+    if (error is EmailOtpException) {
       return error.message;
     }
 
@@ -46,7 +47,8 @@ class AuthErrorMapper {
         if (_isAccountMissing(code, message)) {
           return "We couldn't send a code to this email.";
         }
-        if (message.contains('rate limit') || message.contains('too many requests')) {
+        if (message.contains('rate limit') ||
+            message.contains('too many requests')) {
           return 'Too many attempts. Please try again in a moment.';
         }
         return "We couldn't send a code to this email.";

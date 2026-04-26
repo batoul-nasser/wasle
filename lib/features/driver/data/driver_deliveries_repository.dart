@@ -306,6 +306,7 @@ class DriverDeliveriesRepository {
       orderNotes: orderNotes ?? delivery.notes,
       dropoffAddress: _firstNonEmpty([
         orderAddress?['dropoff_address_text'],
+        orderAddress?['dropoff_address'],
         delivery.dropoffAddress,
       ]),
       dropoffLat:
@@ -781,16 +782,27 @@ class DriverDeliveriesRepository {
       final merchant = merchantKey == null ? null : merchantById[merchantKey];
       final customerProfileId = order['customer_profile_id']?.toString().trim();
       final customer = customerById[customerProfileId];
-      final fallbackName = _firstNonEmpty([
+      final customerName = _firstNonEmpty([
+        customer?['full_name'],
         order['customer_name'],
+        order['recipient_name'],
+        order['receiver_name'],
+        order['contact_name'],
+        order['consignee_name'],
         orderAddress?['customer_name'],
         orderAddress?['recipient_name'],
         orderAddress?['receiver_name'],
         orderAddress?['contact_name'],
         orderAddress?['consignee_name'],
       ]);
-      final fallbackPhone = _firstNonEmpty([
+      final customerPhone = _firstNonEmpty([
+        customer?['phone'],
         order['customer_phone'],
+        order['recipient_phone'],
+        order['receiver_phone'],
+        order['contact_phone'],
+        order['consignee_phone'],
+        order['phone'],
         orderAddress?['customer_phone'],
         orderAddress?['recipient_phone'],
         orderAddress?['receiver_phone'],
@@ -798,11 +810,25 @@ class DriverDeliveriesRepository {
         orderAddress?['consignee_phone'],
         orderAddress?['phone'],
       ]);
+      final customerEmail = _firstNonEmpty([
+        order['customer_email'],
+        order['recipient_email'],
+        order['receiver_email'],
+        order['contact_email'],
+        order['consignee_email'],
+        orderAddress?['customer_email'],
+        orderAddress?['recipient_email'],
+        orderAddress?['receiver_email'],
+        orderAddress?['contact_email'],
+        orderAddress?['consignee_email'],
+        orderAddress?['email'],
+      ]);
       final pickupName =
           _firstNonEmpty([
             pickup?['name'],
-            branch?['name'],
             order['pickup_name'],
+            orderAddress?['pickup_name'],
+            branch?['name'],
             order['merchant_name'],
             merchant?['name'],
           ]) ??
@@ -810,23 +836,22 @@ class DriverDeliveriesRepository {
       final pickupAddress =
           _firstNonEmpty([
             pickup?['address_text'],
-            branch?['address_text'],
             orderAddress?['pickup_address_text'],
             order['pickup_address_text'],
+            order['pickup_address'],
+            branch?['address_text'],
           ]) ??
           'Not provided';
-      final pickupLat = _toDouble(
-        pickup?['lat'] ??
-            branch?['lat'] ??
-            orderAddress?['pickup_lat'] ??
-            order['pickup_lat'],
-      );
-      final pickupLng = _toDouble(
-        pickup?['lng'] ??
-            branch?['lng'] ??
-            orderAddress?['pickup_lng'] ??
-            order['pickup_lng'],
-      );
+      final pickupLat =
+          _toDouble(pickup?['lat']) ??
+          _toDouble(orderAddress?['pickup_lat']) ??
+          _toDouble(order['pickup_lat']) ??
+          _toDouble(branch?['lat']);
+      final pickupLng =
+          _toDouble(pickup?['lng']) ??
+          _toDouble(orderAddress?['pickup_lng']) ??
+          _toDouble(order['pickup_lng']) ??
+          _toDouble(branch?['lng']);
       final pickupPointDropoffName = isPickupPointDropoff
           ? (pickup?['name'])
           : null;
@@ -847,6 +872,9 @@ class DriverDeliveriesRepository {
         orderAddress?['dropoff_address'],
         order['customer_address_text'],
         order['dropoff_address_text'],
+        order['dropoff_address'],
+        order['delivery_address'],
+        order['address'],
       ]);
       final dropoffLat = _toDouble(
         isPickupPointDropoff
@@ -892,16 +920,9 @@ class DriverDeliveriesRepository {
           dropoffAddress: dropoffAddress,
           dropoffLat: dropoffLat,
           dropoffLng: dropoffLng,
-          customerName:
-              customer?['full_name']?.toString() ??
-              order['customer_name']?.toString() ??
-              fallbackName ??
-              'Not provided',
-          customerPhone:
-              customer?['phone']?.toString() ??
-              order['customer_phone']?.toString() ??
-              fallbackPhone ??
-              'Not provided',
+          customerName: customerName ?? 'Not provided',
+          customerPhone: customerPhone ?? 'Not provided',
+          customerEmail: customerEmail,
           itemCount: _toInt(order['item_count'] ?? order['items_count']),
           estimatedWeightKg: _toDouble(
             order['estimated_weight'] ?? order['estimated_weight_kg'],

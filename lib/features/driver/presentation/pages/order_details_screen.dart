@@ -566,6 +566,13 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     'Phone: ${delivery.customerPhone}',
                     style: AppTextStyles.body,
                   ),
+                  if ((delivery.customerEmail ?? '').trim().isNotEmpty) ...[
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      'Email: ${delivery.customerEmail ?? ''}',
+                      style: AppTextStyles.body,
+                    ),
+                  ],
                 ],
               ),
             ),

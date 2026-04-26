@@ -16,6 +16,7 @@ class OtpVerificationScreen extends StatefulWidget {
   final String? phone;
   final String? city;
   final VehicleType? vehicleType;
+  final String? signupPassword;
   final String? companyName;
   final String? location;
   final String? businessName;
@@ -29,12 +30,18 @@ class OtpVerificationScreen extends StatefulWidget {
     this.phone,
     this.city,
     this.vehicleType,
+    this.signupPassword,
     this.companyName,
     this.location,
     this.businessName,
   }) : assert(
          mode != AuthFlowMode.driverSignup || vehicleType != null,
          'Driver signup requires a selected vehicle type.',
+       ),
+       assert(
+         mode != AuthFlowMode.driverSignup ||
+             (signupPassword != null && signupPassword != ''),
+         'Driver signup requires a password.',
        );
 
   @override
@@ -42,8 +49,6 @@ class OtpVerificationScreen extends StatefulWidget {
 }
 
 class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
-  static const int _otpLength = 8;
-
   final AuthService _authService = AuthService();
   final TextEditingController _otpController = TextEditingController();
 
@@ -52,9 +57,71 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   bool _isLoading = false;
   String? _errorText;
 
+  bool get _hasValidSignupContext {
+    if (widget.mode == AuthFlowMode.login) return true;
+
+    switch (widget.mode) {
+      case AuthFlowMode.driverSignup:
+        return widget.fullName != null &&
+            widget.fullName!.trim().isNotEmpty &&
+            widget.phone != null &&
+            widget.phone!.trim().isNotEmpty &&
+            widget.city != null &&
+            widget.city!.trim().isNotEmpty &&
+            widget.vehicleType != null &&
+            widget.signupPassword != null &&
+            widget.signupPassword!.isNotEmpty;
+      case AuthFlowMode.companySignup:
+        return widget.fullName != null &&
+            widget.fullName!.trim().isNotEmpty &&
+            widget.companyName != null &&
+            widget.companyName!.trim().isNotEmpty &&
+            widget.location != null &&
+            widget.location!.trim().isNotEmpty;
+      case AuthFlowMode.customerSignup:
+        return widget.fullName != null &&
+            widget.fullName!.trim().isNotEmpty &&
+            widget.phone != null &&
+            widget.phone!.trim().isNotEmpty;
+      case AuthFlowMode.merchantSignup:
+        return widget.fullName != null &&
+            widget.fullName!.trim().isNotEmpty &&
+            widget.phone != null &&
+            widget.phone!.trim().isNotEmpty &&
+            widget.businessName != null &&
+            widget.businessName!.trim().isNotEmpty;
+      case AuthFlowMode.login:
+        return true;
+    }
+  }
+
+  String get _invalidSessionMessage {
+    if (widget.mode == AuthFlowMode.login) {
+      return 'This login code request is no longer valid. Please start again.';
+    }
+    return 'This signup request is no longer valid. Please start signup again.';
+  }
+
+  int get _otpLength {
+    switch (widget.mode) {
+      case AuthFlowMode.driverSignup:
+        return 8;
+      case AuthFlowMode.login:
+      case AuthFlowMode.companySignup:
+      case AuthFlowMode.customerSignup:
+      case AuthFlowMode.merchantSignup:
+        return 6;
+    }
+  }
+
   @override
   void initState() {
     super.initState();
+    _otpController.clear();
+    if (!_hasValidSignupContext) {
+      _errorText = _invalidSessionMessage;
+      return;
+    }
     _startTimer();
   }
 
@@ -82,15 +149,23 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   }
 
   Future<void> _resendOtp() async {
+    if (!_hasValidSignupContext) {
+      setState(() => _errorText = _invalidSessionMessage);
+      return;
+    }
+
     try {
       setState(() {
         _isLoading = true;
         _errorText = null;
       });
-      await _authService.sendOtp(
-        email: widget.email,
-        shouldCreateUser: widget.mode != AuthFlowMode.login,
-      );
+      if (widget.mode == AuthFlowMode.login) {
+        await _authService.requestLoginOtp(email: widget.email);
+      } else if (widget.mode == AuthFlowMode.driverSignup) {
+        await _authService.resendDriverSignupOtpCode(email: widget.email);
+      } else {
+        await _authService.resendSignupOtp(email: widget.email);
+      }
       _startTimer();
     } catch (e, st) {
       AuthErrorMapper.log('otp_resend', e, st);
@@ -106,6 +181,11 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   }
 
   Future<void> _verifyOtp() async {
+    if (!_hasValidSignupContext) {
+      setState(() => _errorText = _invalidSessionMessage);
+      return;
+    }
+
     final token = _otpController.text.trim();
     if (token.isEmpty || token.length != _otpLength) {
       setState(() => _errorText = 'Please enter the $_otpLength-digit code');
@@ -118,10 +198,39 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         _errorText = null;
       });
 
-      final response = await _authService.verifyOtp(
-        email: widget.email,
-        token: token,
-      );
+      if (widget.mode == AuthFlowMode.driverSignup) {
+        final response = await _authService.verifyDriverSignupOtpCode(
+          email: widget.email,
+          token: token,
+        );
+        final userId = response.user?.id;
+        if (userId == null || userId.isEmpty) {
+          setState(() => _errorText = 'Verification failed. Please try again.');
+          return;
+        }
+        await _authService.completeDriverSignup(
+          password: widget.signupPassword!,
+          fullName: widget.fullName ?? '',
+          phone: widget.phone ?? '',
+          city: widget.city ?? '',
+          vehicleType: widget.vehicleType!,
+          userId: userId,
+        );
+        if (!mounted) return;
+        Navigator.pushNamedAndRemoveUntil(
+          context,
+          '/waiting-approval',
+          (_) => false,
+        );
+        return;
+      }
+
+      final response = widget.mode == AuthFlowMode.login
+          ? await _authService.verifyLoginOtp(email: widget.email, token: token)
+          : await _authService.verifySignupOtp(
+              email: widget.email,
+              token: token,
+            );
 
       final userId = response.user?.id;
       if (userId == null) {
@@ -131,20 +240,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
       switch (widget.mode) {
         case AuthFlowMode.driverSignup:
-          await _authService.createDriverProfile(
-            userId: userId,
-            fullName: widget.fullName ?? '',
-            phone: widget.phone ?? '',
-            city: widget.city ?? '',
-            vehicleType: widget.vehicleType!,
+          throw StateError(
+            'Driver signup should complete before reaching the shared verification switch.',
           );
-          if (!mounted) return;
-          Navigator.pushNamedAndRemoveUntil(
-            context,
-            '/waiting-approval',
-            (_) => false,
-          );
-          break;
 
         case AuthFlowMode.companySignup:
           await _authService.createCompanyProfile(
@@ -213,7 +311,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final canResend = _secondsRemaining <= 0 && !_isLoading;
+    final canResend =
+        _hasValidSignupContext && _secondsRemaining <= 0 && !_isLoading;
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.title)),
@@ -253,12 +352,15 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             controller: _otpController,
             keyboardType: TextInputType.number,
             maxLength: _otpLength,
+            enabled: _hasValidSignupContext && !_isLoading,
             inputFormatters: [FilteringTextInputFormatter.digitsOnly],
             textAlign: TextAlign.center,
+            enableSuggestions: false,
+            autocorrect: false,
             style: AppTextStyles.heading2,
             decoration: const InputDecoration(
               labelText: 'Verification Code',
-              hintText: '........',
+              hintText: 'Enter code',
               counterText: '',
               prefixIcon: Icon(Icons.lock_outline_rounded),
             ),
@@ -276,7 +378,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             label: 'Verify Code',
             icon: Icons.check_circle_outline,
             isLoading: _isLoading,
-            onPressed: _isLoading ? null : _verifyOtp,
+            onPressed: (_isLoading || !_hasValidSignupContext)
+                ? null
+                : _verifyOtp,
           ),
           const SizedBox(height: AppSpacing.md),
           Center(

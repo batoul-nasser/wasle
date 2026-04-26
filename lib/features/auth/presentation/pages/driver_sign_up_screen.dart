@@ -20,6 +20,9 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
   final TextEditingController emailController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController cityController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  final TextEditingController confirmPasswordController =
+      TextEditingController();
 
   VehicleType? _selectedVehicle;
   String? errorText;
@@ -35,6 +38,8 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
     final email = emailController.text.trim();
     final phone = phoneController.text.trim();
     final city = cityController.text.trim();
+    final password = passwordController.text;
+    final confirmPassword = confirmPasswordController.text;
     final selectedVehicle = _selectedVehicle;
 
     if (fullName.isEmpty || email.isEmpty || phone.isEmpty || city.isEmpty) {
@@ -59,6 +64,28 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
       return;
     }
 
+    if (password.isEmpty) {
+      setState(() => errorText = 'Please enter a password.');
+      return;
+    }
+
+    if (password.length < 8) {
+      setState(
+        () => errorText = 'Password must be at least 8 characters long.',
+      );
+      return;
+    }
+
+    if (confirmPassword.isEmpty) {
+      setState(() => errorText = 'Please confirm your password.');
+      return;
+    }
+
+    if (password != confirmPassword) {
+      setState(() => errorText = 'Password and confirm password do not match.');
+      return;
+    }
+
     if (selectedVehicle == null) {
       setState(() => errorText = 'Please select a vehicle type');
       return;
@@ -70,7 +97,7 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
         errorText = null;
       });
 
-      await _authService.sendOtp(email: email, shouldCreateUser: true);
+      await _authService.requestDriverSignupOtpCode(email: email);
 
       if (!mounted) return;
 
@@ -85,6 +112,7 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
             phone: phone,
             city: city,
             vehicleType: selectedVehicle,
+            signupPassword: password,
           ),
         ),
       );
@@ -107,6 +135,8 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
     emailController.dispose();
     phoneController.dispose();
     cityController.dispose();
+    passwordController.dispose();
+    confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -186,6 +216,24 @@ class _DriverSignUpScreenState extends State<DriverSignUpScreen> {
             decoration: const InputDecoration(
               labelText: 'City / Location',
               prefixIcon: Icon(Icons.location_city_outlined),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: passwordController,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: 'Password',
+              prefixIcon: Icon(Icons.lock_outline_rounded),
+            ),
+          ),
+          const SizedBox(height: AppSpacing.md),
+          TextField(
+            controller: confirmPasswordController,
+            obscureText: true,
+            decoration: const InputDecoration(
+              labelText: 'Confirm Password',
+              prefixIcon: Icon(Icons.lock_reset_rounded),
             ),
           ),
 

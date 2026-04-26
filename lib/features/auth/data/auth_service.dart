@@ -14,6 +14,28 @@ class EmailAlreadyRegisteredException implements Exception {
   String toString() => message;
 }
 
+class PendingSignupException implements Exception {
+  static const String defaultMessage =
+      'This account is still pending verification. Please finish signup with the email code.';
+
+  final String message;
+
+  const PendingSignupException([this.message = defaultMessage]);
+
+  @override
+  String toString() => message;
+}
+
+class EmailOtpException implements Exception {
+  final String code;
+  final String message;
+
+  const EmailOtpException({required this.code, required this.message});
+
+  @override
+  String toString() => message;
+}
+
 enum AuthFlowMode {
   login,
   driverSignup,
@@ -21,6 +43,8 @@ enum AuthFlowMode {
   customerSignup,
   merchantSignup,
 }
+
+enum SignupEmailState { available, pending, confirmed }
 
 /// Vehicle types supported by the platform.
 /// Capacity values are predefined per the routing algorithm spec (PDF §3).
@@ -108,8 +132,12 @@ class AuthService {
     required String email,
     required String password,
   }) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    await _assertEmailReadyForLogin(normalizedEmail);
+
+    debugPrint('AUTH [password_login] attempting sign-in for $normalizedEmail');
     return await _client.auth.signInWithPassword(
-      email: email,
+      email: normalizedEmail,
       password: password,
     );
   }
@@ -119,22 +147,127 @@ class AuthService {
     required bool shouldCreateUser,
     String? emailRedirectTo,
   }) async {
-    final normalizedEmail = email.trim().toLowerCase();
     if (shouldCreateUser) {
-      await _assertEmailAvailableForSignup(normalizedEmail);
+      await requestSignupOtp(email: email, emailRedirectTo: emailRedirectTo);
+      return;
     }
 
+    await requestLoginOtp(email: email, emailRedirectTo: emailRedirectTo);
+  }
+
+  Future<void> requestSignupOtp({
+    required String email,
+    String? emailRedirectTo,
+  }) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    await _assertEmailAvailableForSignup(normalizedEmail);
+
+    debugPrint('AUTH [signup_otp_request] requesting OTP for $normalizedEmail');
     await _client.auth.signInWithOtp(
       email: normalizedEmail,
-      shouldCreateUser: shouldCreateUser,
+      shouldCreateUser: true,
       emailRedirectTo: emailRedirectTo,
     );
   }
 
-  Future<AuthResponse> verifyOtp({
+  Future<void> requestDriverSignupOtpCode({required String email}) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    final state = await getSignupEmailState(normalizedEmail);
+    if (state == SignupEmailState.confirmed) {
+      debugPrint(
+        'AUTH [driver_signup_request] email exists + confirmed, blocking signup for $normalizedEmail',
+      );
+      throw const EmailAlreadyRegisteredException();
+    }
+
+    if (state == SignupEmailState.pending) {
+      debugPrint(
+        'AUTH [driver_signup_request] email exists + unverified, continuing pending signup for $normalizedEmail',
+      );
+    } else {
+      debugPrint(
+        'AUTH [driver_signup_request] email available, starting signup for $normalizedEmail',
+      );
+    }
+
+    debugPrint(
+      'AUTH [driver_signup_supabase_email_otp_request] requesting OTP for $normalizedEmail',
+    );
+    try {
+      await _client.auth.signInWithOtp(
+        email: normalizedEmail,
+        shouldCreateUser: true,
+        emailRedirectTo: null,
+      );
+    } catch (error, stackTrace) {
+      if (state == SignupEmailState.pending && _isRateLimitError(error)) {
+        debugPrint(
+          'AUTH [driver_signup_request] pending signup OTP resend rate-limited for $normalizedEmail, continuing to OTP screen\n$error\n$stackTrace',
+        );
+        return;
+      }
+      rethrow;
+    }
+  }
+
+  Future<void> resendDriverSignupOtpCode({required String email}) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    final state = await getSignupEmailState(normalizedEmail);
+    if (state == SignupEmailState.confirmed) {
+      debugPrint(
+        'AUTH [driver_signup_resend] email exists + confirmed, blocking resend for $normalizedEmail',
+      );
+      throw const EmailAlreadyRegisteredException();
+    }
+    debugPrint(
+      'AUTH [driver_signup_resend] email state=$state, resending OTP for $normalizedEmail',
+    );
+    debugPrint(
+      'AUTH [driver_signup_supabase_email_otp_resend] resending OTP for $normalizedEmail',
+    );
+    await _client.auth.signInWithOtp(
+      email: normalizedEmail,
+      shouldCreateUser: true,
+      emailRedirectTo: null,
+    );
+  }
+
+  Future<void> resendSignupOtp({
+    required String email,
+    String? emailRedirectTo,
+  }) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    debugPrint('AUTH [signup_otp_resend] resending OTP for $normalizedEmail');
+
+    await _client.auth.resend(
+      email: normalizedEmail,
+      type: OtpType.signup,
+      emailRedirectTo: emailRedirectTo,
+    );
+  }
+
+  Future<void> requestLoginOtp({
+    required String email,
+    String? emailRedirectTo,
+  }) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    await _assertEmailReadyForLogin(normalizedEmail);
+    debugPrint('AUTH [login_otp_request] requesting OTP for $normalizedEmail');
+
+    await _client.auth.signInWithOtp(
+      email: normalizedEmail,
+      shouldCreateUser: false,
+      emailRedirectTo: emailRedirectTo,
+    );
+  }
+
+  Future<AuthResponse> verifyLoginOtp({
     required String email,
     required String token,
   }) async {
+    debugPrint(
+      'AUTH [login_otp_verify] verifying OTP for ${email.trim().toLowerCase()}',
+    );
     return await _client.auth.verifyOTP(
       email: email.trim().toLowerCase(),
       token: token,
@@ -142,31 +275,190 @@ class AuthService {
     );
   }
 
-  Future<bool> isEmailRegistered(String email) async {
+  Future<AuthResponse> verifySignupOtp({
+    required String email,
+    required String token,
+  }) async {
+    debugPrint(
+      'AUTH [signup_otp_verify] verifying OTP for ${email.trim().toLowerCase()}',
+    );
+    return await _client.auth.verifyOTP(
+      email: email.trim().toLowerCase(),
+      token: token,
+      type: OtpType.signup,
+    );
+  }
+
+  Future<AuthResponse> verifyDriverSignupOtpCode({
+    required String email,
+    required String token,
+  }) async {
     final normalizedEmail = email.trim().toLowerCase();
-    if (normalizedEmail.isEmpty) return false;
+    debugPrint(
+      'AUTH [driver_signup_supabase_email_otp_verify] verifying OTP for $normalizedEmail',
+    );
+    try {
+      final response = await _client.auth.verifyOTP(
+        email: normalizedEmail,
+        token: token,
+        type: OtpType.email,
+      );
+      debugPrint(
+        'AUTH [driver_signup_verify_success] verify success for $normalizedEmail user=${response.user?.id}',
+      );
+      return response;
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AUTH [driver_signup_verify_email_failed] $error\n$stackTrace',
+      );
+      if (_isInvalidOtpError(error)) rethrow;
+
+      final fallbackResponse = await _client.auth.verifyOTP(
+        email: normalizedEmail,
+        token: token,
+        type: OtpType.signup,
+      );
+      debugPrint(
+        'AUTH [driver_signup_verify_success_fallback] signup verify success for $normalizedEmail user=${fallbackResponse.user?.id}',
+      );
+      return fallbackResponse;
+    }
+  }
+
+  Future<String> completeDriverSignup({
+    required String password,
+    required String fullName,
+    required String phone,
+    required String city,
+    required VehicleType vehicleType,
+    String? userId,
+  }) async {
+    final currentUser = _client.auth.currentUser;
+    final resolvedUserId =
+        userId?.trim().isNotEmpty == true ? userId!.trim() : currentUser?.id;
+
+    if (resolvedUserId == null || resolvedUserId.isEmpty) {
+      throw StateError('Unable to complete signup. Please verify again.');
+    }
+
+    debugPrint(
+      'AUTH [driver_signup_complete] setting password for user=$resolvedUserId',
+    );
+    try {
+      await _client.auth.updateUser(UserAttributes(password: password));
+      debugPrint(
+        'AUTH [driver_signup_password_set_success] password set successfully for user=$resolvedUserId',
+      );
+    } catch (error, stackTrace) {
+      debugPrint(
+        'AUTH [driver_signup_password_set_failure] $error\n$stackTrace',
+      );
+      rethrow;
+    }
+
+    await createDriverProfile(
+      userId: resolvedUserId,
+      fullName: fullName,
+      phone: phone,
+      city: city,
+      vehicleType: vehicleType,
+    );
+    debugPrint(
+      'AUTH [driver_signup_complete_success] created profile/driver for user=$resolvedUserId vehicle=${vehicleType.dbValue}',
+    );
+
+    return resolvedUserId;
+  }
+
+  Future<bool> isEmailRegistered(String email) async {
+    return (await getSignupEmailState(email)) == SignupEmailState.confirmed;
+  }
+
+  Future<SignupEmailState> getSignupEmailState(String email) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.isEmpty) return SignupEmailState.available;
 
     final response = await _client.rpc(
-      'is_email_registered',
+      'get_email_signup_state',
       params: {'lookup_email': normalizedEmail},
     );
 
-    if (response is bool) return response;
-    if (response is num) return response != 0;
     if (response is String) {
-      return response.toLowerCase() == 'true';
+      switch (response.toLowerCase().trim()) {
+        case 'confirmed':
+          return SignupEmailState.confirmed;
+        case 'pending':
+          return SignupEmailState.pending;
+        default:
+          return SignupEmailState.available;
+      }
     }
-    return false;
+    return SignupEmailState.available;
   }
 
   Future<void> _assertEmailAvailableForSignup(String email) async {
-    final exists = await isEmailRegistered(email);
-    if (!exists) return;
+    final state = await getSignupEmailState(email);
+    if (state != SignupEmailState.confirmed) {
+      if (state == SignupEmailState.pending) {
+        debugPrint(
+          'AUTH [signup_precheck] continuing pending OTP signup for existing unconfirmed email: $email',
+        );
+      }
+      return;
+    }
 
     debugPrint(
-      'AUTH [signup_precheck] blocked OTP signup for already-registered email: $email',
+      'AUTH [signup_precheck] blocked OTP signup for confirmed email: $email',
     );
     throw const EmailAlreadyRegisteredException();
+  }
+
+  Future<void> _assertEmailReadyForLogin(String email) async {
+    final state = await getSignupEmailState(email);
+    switch (state) {
+      case SignupEmailState.pending:
+        debugPrint(
+          'AUTH [login_precheck] blocked login for pending signup email: $email',
+        );
+        throw const PendingSignupException();
+      case SignupEmailState.confirmed:
+        debugPrint(
+          'AUTH [login_precheck] confirmed email allowed to login: $email',
+        );
+        return;
+      case SignupEmailState.available:
+        debugPrint(
+          'AUTH [login_precheck] no confirmed account found for email: $email',
+        );
+        return;
+    }
+  }
+
+  bool _isRateLimitError(Object error) {
+    final raw = error.toString().toLowerCase();
+    if (error is AuthApiException) {
+      final code = (error.code ?? '').toLowerCase();
+      return code == 'over_request_rate_limit' ||
+          code == 'over_email_send_rate_limit';
+    }
+    return raw.contains('too many requests') ||
+        raw.contains('rate limit') ||
+        raw.contains('over_request_rate_limit') ||
+        raw.contains('over_email_send_rate_limit');
+  }
+
+  bool _isInvalidOtpError(Object error) {
+    final raw = error.toString().toLowerCase();
+    if (error is AuthApiException) {
+      final code = (error.code ?? '').toLowerCase();
+      return code == 'invalid_otp' ||
+          code == 'otp_expired' ||
+          code == 'invalid_grant';
+    }
+    return raw.contains('invalid otp') ||
+        raw.contains('otp_expired') ||
+        raw.contains('invalid token') ||
+        raw.contains('token has expired');
   }
 
   Future<void> signOut() async {
