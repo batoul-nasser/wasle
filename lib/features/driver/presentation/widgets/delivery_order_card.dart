@@ -80,6 +80,8 @@ class DeliveryOrderCard extends StatelessWidget {
         return 'Driver Received Order';
       case 'in_transit':
         return 'In Transit';
+      case 'pending_pickup_point_delivery':
+        return 'Pending Pickup Point Delivery';
       case 'delivered':
         return 'Delivered';
       case 'dropped_at_pickup_point':

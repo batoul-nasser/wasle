@@ -25,6 +25,7 @@ class OrderAssignmentService {
   Future<AssignmentResult> autoAssignOrderFromCreationResponse(
     Map<String, dynamic> response, {
     required String merchantId,
+    String? companyIdHint,
   }) async {
     final orderId = _extractOrderId(response);
     if (orderId == null || orderId.isEmpty) {
@@ -36,12 +37,17 @@ class OrderAssignmentService {
         feasibleInsertions: 0,
       );
     }
-    return autoAssignOrder(orderId, merchantIdHint: merchantId);
+    return autoAssignOrder(
+      orderId,
+      merchantIdHint: merchantId,
+      companyIdHint: companyIdHint,
+    );
   }
 
   Future<AssignmentResult> autoAssignOrder(
     String orderId, {
     String? merchantIdHint,
+    String? companyIdHint,
   }) async {
     var testedDrivers = 0;
     var feasibleInsertions = 0;
@@ -50,6 +56,7 @@ class OrderAssignmentService {
       final order = await _loadAssignmentOrder(
         orderId,
         merchantIdHint: merchantIdHint,
+        companyIdHint: companyIdHint,
       );
       if (order == null) {
         return AssignmentResult.unassigned(
@@ -116,6 +123,14 @@ class OrderAssignmentService {
         testedDrivers: testedDrivers,
         feasibleInsertions: feasibleInsertions,
       );
+    } on _AutoAssignmentFailure catch (error) {
+      await _recordUnassignedEvent(orderId, error.message);
+      return AssignmentResult.unassigned(
+        orderId: orderId,
+        reason: error.message,
+        testedDrivers: testedDrivers,
+        feasibleInsertions: feasibleInsertions,
+      );
     } catch (error) {
       await _recordUnassignedEvent(
         orderId,
@@ -133,6 +148,7 @@ class OrderAssignmentService {
   Future<AssignmentOrder?> _loadAssignmentOrder(
     String orderId, {
     String? merchantIdHint,
+    String? companyIdHint,
   }) async {
     final orderRows = await _db
         .from('orders')
@@ -149,6 +165,7 @@ class OrderAssignmentService {
     var companyId = _firstNonEmpty([
       order['delivery_company_id'],
       order['company_id'],
+      companyIdHint,
     ]);
     companyId ??= await _resolveActiveCompanyIdForMerchant(merchantId);
     if (companyId == null || companyId.isEmpty) return null;
@@ -162,19 +179,31 @@ class OrderAssignmentService {
     final address = await _loadOrderAddress(orderId);
     final dropoffType = _parseDropoffType(order);
     final demand = _tryOrderDemand(order);
-    if (demand == null) return null;
+    if (demand == null) {
+      throw const _AutoAssignmentFailure(
+        'Auto assignment failed: missing package demand',
+      );
+    }
+
+    final pickupLocation = _pickupLocation(order, branch, pickupPoint, address);
+    final dropoffLocation = _dropoffLocation(
+      order,
+      address,
+      pickupPoint,
+      dropoffType,
+    );
+    if (!pickupLocation.hasCoordinates || !dropoffLocation.hasCoordinates) {
+      throw const _AutoAssignmentFailure(
+        'Auto assignment failed: missing pickup/dropoff coordinates',
+      );
+    }
 
     return AssignmentOrder(
       id: orderId,
       companyId: companyId,
       merchantId: merchantId,
-      pickupLocation: _pickupLocation(order, branch, pickupPoint, address),
-      dropoffLocation: _dropoffLocation(
-        order,
-        address,
-        pickupPoint,
-        dropoffType,
-      ),
+      pickupLocation: pickupLocation,
+      dropoffLocation: dropoffLocation,
       dropoffType: dropoffType,
       demand: demand,
       createdAt: _parseDate(order['created_at']) ?? DateTime.now().toUtc(),
@@ -919,4 +948,13 @@ class OrderAssignmentService {
     if (value is num) return value.round();
     return int.tryParse(value.toString());
   }
+}
+
+class _AutoAssignmentFailure implements Exception {
+  final String message;
+
+  const _AutoAssignmentFailure(this.message);
+
+  @override
+  String toString() => message;
 }

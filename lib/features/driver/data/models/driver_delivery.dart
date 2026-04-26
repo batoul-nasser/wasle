@@ -16,6 +16,8 @@ class DriverDelivery {
   final String pickupAddress;
   final double? pickupLat;
   final double? pickupLng;
+  final String? pickupPointId;
+  final String? dropoffType;
   final String? dropoffName;
   final String? dropoffAddress;
   final double? dropoffLat;
@@ -48,6 +50,8 @@ class DriverDelivery {
     required this.pickupAddress,
     required this.pickupLat,
     required this.pickupLng,
+    required this.pickupPointId,
+    required this.dropoffType,
     required this.dropoffName,
     required this.dropoffAddress,
     required this.dropoffLat,

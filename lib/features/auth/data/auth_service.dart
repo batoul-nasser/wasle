@@ -42,6 +42,7 @@ enum AuthFlowMode {
   companySignup,
   customerSignup,
   merchantSignup,
+  pickupPointSignup,
 }
 
 enum SignupEmailState { available, pending, confirmed }
@@ -334,8 +335,9 @@ class AuthService {
     String? userId,
   }) async {
     final currentUser = _client.auth.currentUser;
-    final resolvedUserId =
-        userId?.trim().isNotEmpty == true ? userId!.trim() : currentUser?.id;
+    final resolvedUserId = userId?.trim().isNotEmpty == true
+        ? userId!.trim()
+        : currentUser?.id;
 
     if (resolvedUserId == null || resolvedUserId.isEmpty) {
       throw StateError('Unable to complete signup. Please verify again.');
@@ -512,6 +514,30 @@ class AuthService {
     return result;
   }
 
+  Future<Map<String, dynamic>?> getMyPickupPoint() async {
+    final user = _client.auth.currentUser;
+    if (user == null) return null;
+
+    return await _client
+        .from('pickup_points')
+        .select()
+        .eq('owner_profile_id', user.id)
+        .maybeSingle();
+  }
+
+  Future<Map<String, dynamic>?> getMyPickupPointApplication() async {
+    final user = _client.auth.currentUser;
+    if (user == null) return null;
+
+    return await _client
+        .from('pickup_point_applications')
+        .select()
+        .eq('user_id', user.id)
+        .order('submitted_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+  }
+
   Future<String?> getCurrentRole() async {
     final profile = await getCurrentProfile();
     final role = profile?['role']?.toString();
@@ -521,7 +547,9 @@ class AuthService {
 
   Future<String> resolveInitialRoute() async {
     final user = _client.auth.currentUser;
-    if (user == null) return '/welcome';
+    if (user == null) {
+      return '/welcome';
+    }
 
     final role = await getCurrentRole();
 
@@ -537,8 +565,28 @@ class AuthService {
         return '/customer-dashboard';
       case 'merchant':
         return '/merchant-dashboard';
+      case 'pickup_point_applicant':
+        final application = await getMyPickupPointApplication();
+        final status = application?['verification_status']
+            ?.toString()
+            .trim()
+            .toLowerCase();
+
+        if (status == 'approved') {
+          return '/pickup-dashboard';
+        }
+        if (status == 'rejected') {
+          return '/pickup-application-rejected';
+        }
+        return '/pickup-application-pending';
       case 'pickup_point_operator':
         return '/pickup-point-dashboard';
+      case 'platform_admin':
+        return '/admin-dashboard';
+      case 'agent':
+        return '/agent-dashboard';
+      case 'pickup_point':
+        return '/pickup-dashboard';
       default:
         return '/welcome';
     }
@@ -556,6 +604,74 @@ class AuthService {
     final raw = response['verification_status']?.toString();
     if (raw == null) return null;
     return raw.trim().toLowerCase();
+  }
+
+  Future<String?> uploadPickupPointStorageAreaImage({
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    final path = 'storage/$fileName';
+
+    await _client.storage
+        .from('pickup-point-storage')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return _client.storage.from('pickup-point-storage').getPublicUrl(path);
+  }
+
+  Future<String?> uploadPickupPointShelvesImage({
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    final path = 'shelves/$fileName';
+
+    await _client.storage
+        .from('pickup-point-shelves')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return _client.storage.from('pickup-point-shelves').getPublicUrl(path);
+  }
+
+  Future<String?> uploadPickupPointShopImage({
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    final path = 'shops/$fileName';
+
+    await _client.storage
+        .from('pickup-point-shops')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return _client.storage.from('pickup-point-shops').getPublicUrl(path);
+  }
+
+  Future<String?> uploadPickupPointIdImage({
+    required String fileName,
+    required Uint8List bytes,
+  }) async {
+    final path = 'ids/$fileName';
+
+    await _client.storage
+        .from('pickup-point-ids')
+        .uploadBinary(
+          path,
+          bytes,
+          fileOptions: const FileOptions(upsert: true),
+        );
+
+    return _client.storage.from('pickup-point-ids').getPublicUrl(path);
   }
 
   /// Creates a driver profile with vehicle type + auto-assigned capacity values.
@@ -603,18 +719,23 @@ class AuthService {
     required String userId,
     required String adminName,
     required String companyName,
-    required String location,
+    required String addressText,
+    required double lat,
+    required double lng,
   }) async {
     await _client.from('profiles').upsert({
       'id': userId,
       'full_name': adminName,
       'role': 'company_admin',
-    });
-    await _client.from('delivery_companies').insert({
+    }, onConflict: 'id');
+    await _client.from('delivery_companies').upsert({
       'id': userId,
       'name': companyName,
-      'location': location,
-    });
+      'location': addressText,
+      'address_text': addressText,
+      'lat': lat,
+      'lng': lng,
+    }, onConflict: 'id');
   }
 
   Future<void> createCustomerProfile({
@@ -657,6 +778,74 @@ class AuthService {
       'role': 'owner',
       'business_name': businessName,
     });
+  }
+
+  Future<void> createPickupPointApplication({
+    required String userId,
+    required String ownerName,
+    required String phone,
+    required String email,
+    required String pickupPointName,
+    required String addressText,
+    required String confirmAddressText,
+    required String city,
+    required String area,
+    int? maxOrdersPerDay,
+    List<String>? workingDays,
+    required String opensAt,
+    required String closesAt,
+    String commissionType = 'custom',
+    double? commissionValue,
+    String? commissionPlan,
+    required String preferredPaymentMethod,
+    String? paymentHandlingMethod,
+    String? storageTier,
+    double? estimatedStorageSqm,
+    bool hasShelves = false,
+    int? estimatedCapacityUnits,
+    required String shopImageUrl,
+    required String idImageUrl,
+    required String storageAreaImageUrl,
+    required String shelvesImageUrl,
+  }) async {
+    await _client.from('profiles').upsert({
+      'id': userId,
+      'full_name': ownerName,
+      'phone': phone,
+      'role': 'pickup_point_applicant',
+    }, onConflict: 'id');
+
+    await _client.from('pickup_point_applications').upsert({
+      'user_id': userId,
+      'owner_name': ownerName,
+      'phone': phone,
+      'email': email,
+      'pickup_point_name': pickupPointName,
+      'address_text': addressText,
+      'confirm_address_text': confirmAddressText,
+      'city': city,
+      'area': area,
+      'max_orders_per_day': maxOrdersPerDay,
+      'working_days': workingDays,
+      'opens_at': opensAt,
+      'closes_at': closesAt,
+      'commission_type': commissionType,
+      'commission_value': commissionValue,
+      'commission_plan': commissionPlan,
+      'preferred_payment_method': preferredPaymentMethod,
+      'payment_handling_method':
+          paymentHandlingMethod ?? preferredPaymentMethod,
+      'storage_tier': storageTier,
+      'estimated_storage_sqm': estimatedStorageSqm,
+      'has_shelves': hasShelves,
+      'estimated_capacity_units': estimatedCapacityUnits,
+      'shop_image_url': shopImageUrl,
+      'id_image_url': idImageUrl,
+      'storage_area_image_url': storageAreaImageUrl,
+      'shelves_image_url': shelvesImageUrl,
+      'verification_status': 'pending',
+      'submitted_at': DateTime.now().toUtc().toIso8601String(),
+    }, onConflict: 'user_id');
   }
 
   Future<List<Map<String, dynamic>>> getDeliveryCompanies() async {
@@ -895,6 +1084,22 @@ class AuthService {
       };
     } catch (_) {}
 
+    Map<String, Map<String, dynamic>> autoAssignmentEventByOrderId = {};
+    try {
+      final eventRows = await _client
+          .from('order_events')
+          .select('order_id, event_type, note, metadata, created_at')
+          .inFilter('order_id', orderIds)
+          .order('created_at', ascending: false);
+      for (final row in List<Map<String, dynamic>>.from(eventRows)) {
+        final orderId = row['order_id']?.toString();
+        if (orderId == null || orderId.isEmpty) continue;
+        if (autoAssignmentEventByOrderId.containsKey(orderId)) continue;
+        if (!_isAutoAssignmentFailureEvent(row)) continue;
+        autoAssignmentEventByOrderId[orderId] = row;
+      }
+    } catch (_) {}
+
     final branchIds = orders
         .map((o) => o['branch_id']?.toString())
         .whereType<String>()
@@ -992,6 +1197,7 @@ class AuthService {
     return orders.map((order) {
       final orderId = order['id']?.toString() ?? '';
       final assignment = assignmentByOrderId[orderId];
+      final autoAssignmentEvent = autoAssignmentEventByOrderId[orderId];
       final rawDriverId = assignment?['driver_id']?.toString();
       final driver = rawDriverId == null ? null : driverById[rawDriverId];
       final hasValidDriver =
@@ -1059,8 +1265,30 @@ class AuthService {
               order['customer_address_text'],
             ]) ??
             'No dropoff address',
+        'auto_assignment_failed': autoAssignmentEvent != null,
+        'auto_assignment_reason': autoAssignmentEvent?['note']?.toString(),
+        'auto_assignment_metadata': autoAssignmentEvent?['metadata'],
       };
     }).toList();
+  }
+
+  bool _isAutoAssignmentFailureEvent(Map<String, dynamic> row) {
+    if ((row['event_type']?.toString() ?? '').toLowerCase() != 'note_added') {
+      return false;
+    }
+
+    final metadata = row['metadata'];
+    if (metadata is Map &&
+        (metadata['assignment_status']?.toString().toLowerCase() ==
+            'unassigned')) {
+      return true;
+    }
+
+    final note = row['note']?.toString().toLowerCase() ?? '';
+    return note.contains('automatic assignment failed') ||
+        note.contains('no feasible driver found') ||
+        note.contains('no approved available drivers') ||
+        note.contains('missing company, package, or routing data');
   }
 
   Future<void> _backfillLegacyOrderCompanyLinks(String companyId) async {
@@ -1143,7 +1371,7 @@ class AuthService {
       await _client
           .from('drivers')
           .select(
-            'id, profile_id, company_id, vehicle_type, capacity_weight, capacity_item_count',
+            'id, profile_id, company_id, vehicle_type, verification_status, capacity_weight, capacity_item_count',
           )
           .eq('company_id', user.id)
           .eq('verification_status', 'approved'),
@@ -1182,6 +1410,7 @@ class AuthService {
             'full_name': profile?['full_name'] ?? 'Driver',
             'phone': profile?['phone'] ?? '-',
             'vehicle_type': row['vehicle_type'] ?? 'motorcycle',
+            'verification_status': row['verification_status'],
             'capacity_weight': row['capacity_weight'],
             'capacity_item_count': row['capacity_item_count'],
           };

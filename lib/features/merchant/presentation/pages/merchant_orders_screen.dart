@@ -1,4 +1,6 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/utils/app_date_time.dart';
 import 'package:wasle/features/merchant/presentation/pages/merchant_order_details_screen.dart';
 import 'package:wasle/features/orders/data/order_service.dart';
@@ -26,6 +28,9 @@ const List<String> _kFilters = [
 class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
   final OrdersService _ordersService = OrdersService();
 
+  // ✅ Real-time subscription
+  RealtimeChannel? _paymentsChannel;
+
   bool _loading = true;
   String _selectedStatus = 'All';
   String _search = '';
@@ -35,6 +40,28 @@ class _MerchantOrdersScreenState extends State<MerchantOrdersScreen> {
   void initState() {
     super.initState();
     _load();
+    _subscribeToPayments(); // ✅ Start listening for payment updates
+  }
+
+  @override
+  void dispose() {
+    _paymentsChannel?.unsubscribe(); // ✅ Clean up when screen closes
+    super.dispose();
+  }
+
+  // ✅ Real-time listener — when payment status changes, reload orders
+  void _subscribeToPayments() {
+    _paymentsChannel = Supabase.instance.client
+        .channel('merchant_payments_channel')
+        .onPostgresChanges(
+          event: PostgresChangeEvent.update,
+          schema: 'public',
+          table: 'payments',
+          callback: (payload) {
+            if (mounted) _load();
+          },
+        )
+        .subscribe();
   }
 
   Future<void> _load() async {
@@ -410,7 +437,7 @@ class _Toolbar extends StatelessWidget {
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: _kFilters.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 7),
+              separatorBuilder: (_, __) => const SizedBox(width: 7),
               itemBuilder: (_, i) {
                 final f = _kFilters[i];
                 final active = selectedStatus == f;
@@ -628,7 +655,7 @@ class _OrderCard extends StatelessWidget {
                         _FooterChip(
                           icon: Icons.payments_outlined,
                           label: _paymentMethodLabel,
-                          value: _paymentAmountLabel,
+                          value: '${_paymentAmountLabel} · ${_safe(order['payment_status'], fallback: 'pending').toUpperCase()}',
                           valueColor: _paymentColor,
                           bgColor: _paymentColor.withValues(alpha: 0.10),
                           borderColor: _paymentColor,

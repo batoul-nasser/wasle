@@ -17,6 +17,8 @@ class _CustomerSignUpScreenState extends State<CustomerSignUpScreen> {
   final TextEditingController fullNameController = TextEditingController();
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
+  final TextEditingController passwordController = TextEditingController();
+  final TextEditingController confirmPasswordController = TextEditingController();
 
   bool isLoading = false;
   String? errorText;
@@ -25,14 +27,30 @@ class _CustomerSignUpScreenState extends State<CustomerSignUpScreen> {
     final fullName = fullNameController.text.trim();
     final phone = phoneController.text.trim();
     final email = emailController.text.trim();
+    final password = passwordController.text;
+    final confirmPassword = confirmPasswordController.text;
 
-    if (fullName.isEmpty || phone.isEmpty || email.isEmpty) {
+    if (fullName.isEmpty ||
+        phone.isEmpty ||
+        email.isEmpty ||
+        password.isEmpty ||
+        confirmPassword.isEmpty) {
       setState(() => errorText = 'Please fill all fields');
       return;
     }
 
     if (!_emailRegex.hasMatch(email)) {
       setState(() => errorText = 'Please enter a valid email address.');
+      return;
+    }
+
+    if (password.length < 6) {
+      setState(() => errorText = 'Password must be at least 6 characters.');
+      return;
+    }
+
+    if (password != confirmPassword) {
+      setState(() => errorText = 'Password and confirm password do not match.');
       return;
     }
 
@@ -78,6 +96,8 @@ class _CustomerSignUpScreenState extends State<CustomerSignUpScreen> {
     fullNameController.dispose();
     phoneController.dispose();
     emailController.dispose();
+    passwordController.dispose();
+    confirmPasswordController.dispose();
     super.dispose();
   }
 
@@ -104,12 +124,21 @@ class _CustomerSignUpScreenState extends State<CustomerSignUpScreen> {
               decoration: const InputDecoration(labelText: 'Email'),
             ),
             const SizedBox(height: 16),
-
+            TextField(
+              controller: passwordController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Password'),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: confirmPasswordController,
+              obscureText: true,
+              decoration: const InputDecoration(labelText: 'Confirm Password'),
+            ),
+            const SizedBox(height: 16),
             if (errorText != null)
               Text(errorText!, style: const TextStyle(color: Colors.red)),
-
             const SizedBox(height: 16),
-
             ElevatedButton(
               onPressed: isLoading ? null : _sendOtp,
               child: Text(isLoading ? 'Sending...' : 'Send OTP'),

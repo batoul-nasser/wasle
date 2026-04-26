@@ -2,13 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:wasle/core/theme/app_colors.dart';
 
-enum StatusChipTone {
-  info,
-  success,
-  warning,
-  danger,
-  neutral,
-}
+enum StatusChipTone { info, success, warning, danger, neutral }
 
 class StatusChip extends StatelessWidget {
   final String label;
@@ -35,6 +29,7 @@ class StatusChip extends StatelessWidget {
       case 'pending_driver_receipt':
       case 'assigned':
       case 'ready_for_driver_pickup':
+      case 'pending_pickup_point_delivery':
       case 'rescheduled':
         return StatusChipTone.warning;
       case 'driver_received_order':

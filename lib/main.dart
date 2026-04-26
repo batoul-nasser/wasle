@@ -7,22 +7,13 @@ import 'env.dart';
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
-  await dotenv.load(fileName: ".env");
-
-  print('URL: ${Env.supabaseUrl}');
-  print('KEY: ${Env.supabaseAnonKey}');
-
-  
+  try {
+    await dotenv.load(fileName: '.env');
+  } catch (_) {}
 
   String? startupError;
 
-  try {
-    await dotenv.load(fileName: '.env');
-  } catch (_) {
-    // Allow production builds to rely on --dart-define without crashing on startup.
-  }
-
-  if (!Env.hasSupabaseConfig) {
+  if (Env.supabaseUrl.isEmpty || Env.supabaseAnonKey.isEmpty) {
     startupError =
         'Missing Supabase configuration. Add SUPABASE_URL and SUPABASE_ANON_KEY to .env '
         'or provide them with --dart-define.';

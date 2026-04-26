@@ -1,7 +1,4 @@
-// File: lib/features/auth/presentation/pages/otp_verification_screen.dart
-
 import 'dart:async';
-
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:wasle/core/ui/ui.dart';
@@ -19,7 +16,35 @@ class OtpVerificationScreen extends StatefulWidget {
   final String? signupPassword;
   final String? companyName;
   final String? location;
+  final double? companyLat;
+  final double? companyLng;
   final String? businessName;
+  final String? pickupPointName;
+  final String? addressText;
+  final String? confirmAddressText;
+  final String? area;
+  final int? maxOrdersPerDay;
+  final List<String>? workingDays;
+  final String? opensAt;
+  final String? closesAt;
+  final double? commissionPercentage;
+  final String? preferredPaymentMethod;
+  final String? paymentHandlingMethod;
+  final String? commissionType;
+  final double? commissionValue;
+  final String? commissionPlan;
+  final String? storageTier;
+  final double? estimatedStorageSqm;
+  final bool? hasShelves;
+  final int? estimatedCapacityUnits;
+  final Uint8List? shopImageBytes;
+  final Uint8List? idImageBytes;
+  final Uint8List? storageAreaImageBytes;
+  final Uint8List? shelvesImageBytes;
+  final String? shopImageFileName;
+  final String? idImageFileName;
+  final String? storageAreaImageFileName;
+  final String? shelvesImageFileName;
 
   const OtpVerificationScreen({
     super.key,
@@ -33,7 +58,35 @@ class OtpVerificationScreen extends StatefulWidget {
     this.signupPassword,
     this.companyName,
     this.location,
+    this.companyLat,
+    this.companyLng,
     this.businessName,
+    this.pickupPointName,
+    this.addressText,
+    this.confirmAddressText,
+    this.area,
+    this.maxOrdersPerDay,
+    this.workingDays,
+    this.opensAt,
+    this.closesAt,
+    this.commissionPercentage,
+    this.preferredPaymentMethod,
+    this.paymentHandlingMethod,
+    this.commissionType,
+    this.commissionValue,
+    this.commissionPlan,
+    this.storageTier,
+    this.estimatedStorageSqm,
+    this.hasShelves,
+    this.estimatedCapacityUnits,
+    this.shopImageBytes,
+    this.idImageBytes,
+    this.storageAreaImageBytes,
+    this.shelvesImageBytes,
+    this.shopImageFileName,
+    this.idImageFileName,
+    this.storageAreaImageFileName,
+    this.shelvesImageFileName,
   }) : assert(
          mode != AuthFlowMode.driverSignup || vehicleType != null,
          'Driver signup requires a selected vehicle type.',
@@ -77,7 +130,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             widget.companyName != null &&
             widget.companyName!.trim().isNotEmpty &&
             widget.location != null &&
-            widget.location!.trim().isNotEmpty;
+            widget.location!.trim().isNotEmpty &&
+            widget.companyLat != null &&
+            widget.companyLng != null;
       case AuthFlowMode.customerSignup:
         return widget.fullName != null &&
             widget.fullName!.trim().isNotEmpty &&
@@ -90,6 +145,31 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             widget.phone!.trim().isNotEmpty &&
             widget.businessName != null &&
             widget.businessName!.trim().isNotEmpty;
+      case AuthFlowMode.pickupPointSignup:
+        return widget.fullName != null &&
+            widget.fullName!.trim().isNotEmpty &&
+            widget.phone != null &&
+            widget.phone!.trim().isNotEmpty &&
+            widget.city != null &&
+            widget.city!.trim().isNotEmpty &&
+            widget.pickupPointName != null &&
+            widget.pickupPointName!.trim().isNotEmpty &&
+            widget.addressText != null &&
+            widget.addressText!.trim().isNotEmpty &&
+            widget.confirmAddressText != null &&
+            widget.confirmAddressText!.trim().isNotEmpty &&
+            widget.area != null &&
+            widget.area!.trim().isNotEmpty &&
+            widget.opensAt != null &&
+            widget.opensAt!.trim().isNotEmpty &&
+            widget.closesAt != null &&
+            widget.closesAt!.trim().isNotEmpty &&
+            widget.preferredPaymentMethod != null &&
+            widget.preferredPaymentMethod!.trim().isNotEmpty &&
+            widget.shopImageBytes != null &&
+            widget.idImageBytes != null &&
+            widget.storageAreaImageBytes != null &&
+            widget.shelvesImageBytes != null;
       case AuthFlowMode.login:
         return true;
     }
@@ -110,6 +190,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       case AuthFlowMode.companySignup:
       case AuthFlowMode.customerSignup:
       case AuthFlowMode.merchantSignup:
+      case AuthFlowMode.pickupPointSignup:
         return 6;
     }
   }
@@ -148,6 +229,38 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     });
   }
 
+  String _required(String? value, String fieldName) {
+    final text = value?.trim();
+    if (text == null || text.isEmpty) {
+      throw Exception('$fieldName is required');
+    }
+    return text;
+  }
+
+  Uint8List _requiredBytes(Uint8List? value, String fieldName) {
+    if (value == null || value.isEmpty) {
+      throw Exception('$fieldName is required');
+    }
+    return value;
+  }
+
+  String _fileExtension(String? fileName) {
+    if (fileName == null || !fileName.contains('.')) {
+      return 'jpg';
+    }
+    final ext = fileName.split('.').last.trim().toLowerCase();
+    return ext.isEmpty ? 'jpg' : ext;
+  }
+
+  String _safeEmail() {
+    return widget.email.replaceAll(RegExp(r'[^a-zA-Z0-9]'), '_');
+  }
+
+  void _goTo(String routeName) {
+    if (!mounted) return;
+    Navigator.pushNamedAndRemoveUntil(context, routeName, (route) => false);
+  }
+
   Future<void> _resendOtp() async {
     if (!_hasValidSignupContext) {
       setState(() => _errorText = _invalidSessionMessage);
@@ -159,6 +272,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         _isLoading = true;
         _errorText = null;
       });
+
       if (widget.mode == AuthFlowMode.login) {
         await _authService.requestLoginOtp(email: widget.email);
       } else if (widget.mode == AuthFlowMode.driverSignup) {
@@ -166,12 +280,13 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       } else {
         await _authService.resendSignupOtp(email: widget.email);
       }
+
       _startTimer();
-    } catch (e, st) {
-      AuthErrorMapper.log('otp_resend', e, st);
+    } catch (error, stackTrace) {
+      AuthErrorMapper.log('otp_resend', error, stackTrace);
       setState(
         () => _errorText = AuthErrorMapper.map(
-          e,
+          error,
           context: AuthErrorContext.otpRequest,
         ),
       );
@@ -208,6 +323,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           setState(() => _errorText = 'Verification failed. Please try again.');
           return;
         }
+
         await _authService.completeDriverSignup(
           password: widget.signupPassword!,
           fullName: widget.fullName ?? '',
@@ -216,12 +332,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           vehicleType: widget.vehicleType!,
           userId: userId,
         );
-        if (!mounted) return;
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          '/waiting-approval',
-          (_) => false,
-        );
+
+        _goTo('/waiting-approval');
         return;
       }
 
@@ -243,36 +355,25 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           throw StateError(
             'Driver signup should complete before reaching the shared verification switch.',
           );
-
         case AuthFlowMode.companySignup:
           await _authService.createCompanyProfile(
             userId: userId,
             adminName: widget.fullName ?? '',
             companyName: widget.companyName ?? '',
-            location: widget.location ?? '',
+            addressText: widget.location ?? '',
+            lat: widget.companyLat!,
+            lng: widget.companyLng!,
           );
-          if (!mounted) return;
-          Navigator.pushNamedAndRemoveUntil(
-            context,
-            '/company-dashboard',
-            (_) => false,
-          );
-          break;
-
+          _goTo('/company-dashboard');
+          return;
         case AuthFlowMode.customerSignup:
           await _authService.createCustomerProfile(
             userId: userId,
             fullName: widget.fullName ?? '',
             phone: widget.phone ?? '',
           );
-          if (!mounted) return;
-          Navigator.pushNamedAndRemoveUntil(
-            context,
-            '/customer-dashboard',
-            (_) => false,
-          );
-          break;
-
+          _goTo('/customer-dashboard');
+          return;
         case AuthFlowMode.merchantSignup:
           await _authService.createMerchantProfile(
             userId: userId,
@@ -280,20 +381,92 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             phone: widget.phone ?? '',
             businessName: widget.businessName ?? '',
           );
-          if (!mounted) return;
-          Navigator.pushNamedAndRemoveUntil(
-            context,
-            '/merchant-dashboard',
-            (_) => false,
-          );
-          break;
+          _goTo('/merchant-dashboard');
+          return;
+        case AuthFlowMode.pickupPointSignup:
+          final timestamp = DateTime.now().millisecondsSinceEpoch;
+          final safeEmail = _safeEmail();
 
+          final shopFileName =
+              '${safeEmail}_shop_$timestamp.${_fileExtension(widget.shopImageFileName)}';
+          final idFileName =
+              '${safeEmail}_id_$timestamp.${_fileExtension(widget.idImageFileName)}';
+          final storageAreaFileName =
+              '${safeEmail}_storage_$timestamp.${_fileExtension(widget.storageAreaImageFileName)}';
+          final shelvesFileName =
+              '${safeEmail}_shelves_$timestamp.${_fileExtension(widget.shelvesImageFileName)}';
+
+          final shopUrl = await _authService.uploadPickupPointShopImage(
+            fileName: shopFileName,
+            bytes: _requiredBytes(widget.shopImageBytes, 'Shop image'),
+          );
+          final idUrl = await _authService.uploadPickupPointIdImage(
+            fileName: idFileName,
+            bytes: _requiredBytes(widget.idImageBytes, 'ID image'),
+          );
+          final storageAreaUrl = await _authService
+              .uploadPickupPointStorageAreaImage(
+                fileName: storageAreaFileName,
+                bytes: _requiredBytes(
+                  widget.storageAreaImageBytes,
+                  'Storage area image',
+                ),
+              );
+          final shelvesUrl = await _authService.uploadPickupPointShelvesImage(
+            fileName: shelvesFileName,
+            bytes: _requiredBytes(widget.shelvesImageBytes, 'Shelves image'),
+          );
+
+          if (shopUrl == null ||
+              idUrl == null ||
+              storageAreaUrl == null ||
+              shelvesUrl == null) {
+            throw Exception('Failed to upload pickup point images');
+          }
+
+          await _authService.createPickupPointApplication(
+            userId: userId,
+            ownerName: _required(widget.fullName, 'Owner name'),
+            phone: _required(widget.phone, 'Phone'),
+            email: widget.email,
+            pickupPointName: _required(
+              widget.pickupPointName,
+              'Pickup point name',
+            ),
+            addressText: _required(widget.addressText, 'Address'),
+            confirmAddressText: _required(
+              widget.confirmAddressText,
+              'Confirm address',
+            ),
+            city: _required(widget.city, 'City'),
+            area: _required(widget.area, 'Area'),
+            maxOrdersPerDay: widget.maxOrdersPerDay,
+            workingDays: widget.workingDays,
+            opensAt: _required(widget.opensAt, 'Opening time'),
+            closesAt: _required(widget.closesAt, 'Closing time'),
+            commissionType: widget.commissionType ?? 'custom',
+            commissionValue: widget.commissionValue,
+            commissionPlan: widget.commissionPlan,
+            preferredPaymentMethod: _required(
+              widget.preferredPaymentMethod,
+              'Preferred payment method',
+            ),
+            paymentHandlingMethod: widget.paymentHandlingMethod,
+            storageTier: widget.storageTier,
+            estimatedStorageSqm: widget.estimatedStorageSqm,
+            hasShelves: widget.hasShelves ?? false,
+            estimatedCapacityUnits: widget.estimatedCapacityUnits,
+            shopImageUrl: shopUrl,
+            idImageUrl: idUrl,
+            storageAreaImageUrl: storageAreaUrl,
+            shelvesImageUrl: shelvesUrl,
+          );
+          _goTo('/pickup-application-pending');
+          return;
         case AuthFlowMode.login:
-          if (!mounted) return;
           final route = await _authService.resolveInitialRoute();
-          if (!mounted) return;
-          Navigator.pushNamedAndRemoveUntil(context, route, (_) => false);
-          break;
+          _goTo(route);
+          return;
       }
     } catch (error, stackTrace) {
       AuthErrorMapper.log('otp_verify', error, stackTrace);
@@ -357,12 +530,19 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             textAlign: TextAlign.center,
             enableSuggestions: false,
             autocorrect: false,
-            style: AppTextStyles.heading2,
-            decoration: const InputDecoration(
+            style: AppTextStyles.display.copyWith(
+              fontSize: 26,
+              fontWeight: FontWeight.w600,
+              letterSpacing: 4,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+            decoration: InputDecoration(
               labelText: 'Verification Code',
-              hintText: 'Enter code',
               counterText: '',
-              prefixIcon: Icon(Icons.lock_outline_rounded),
+              labelStyle: AppTextStyles.label.copyWith(
+                color: AppColors.primary,
+              ),
+              prefixIcon: const Icon(Icons.lock_outline_rounded),
             ),
             onSubmitted: (_) => _verifyOtp(),
           ),

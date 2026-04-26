@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models/delivery_timeline_event.dart';
@@ -20,6 +22,7 @@ class DriverDeliveriesRepository {
     'delivered',
     'failed',
     'rescheduled',
+    'pending_pickup_point_delivery',
     'dropped_at_pickup_point',
     'returning_to_store',
     'returned_to_store',
@@ -32,6 +35,7 @@ class DriverDeliveriesRepository {
     'in_transit',
     'failed',
     'rescheduled',
+    'pending_pickup_point_delivery',
     'returning_to_store',
   ];
 
@@ -58,6 +62,7 @@ class DriverDeliveriesRepository {
     'in_transit': 'in_transit',
     'delivered': 'delivered',
     'failed': 'delivery_failed',
+    'pending_pickup_point_delivery': 'note_added',
     'rescheduled': 'note_added',
     'dropped_at_pickup_point': 'dropped_at_pickup_point',
     'returning_to_store': 'returning_to_store',
@@ -82,6 +87,7 @@ class DriverDeliveriesRepository {
       'returning_to_store',
     ],
     'rescheduled': ['pending_driver_receipt', 'assigned'],
+    'pending_pickup_point_delivery': ['dropped_at_pickup_point'],
     'returning_to_store': ['returned_to_store'],
     'dropped_at_pickup_point': [],
     'delivered': [],
@@ -93,9 +99,10 @@ class DriverDeliveriesRepository {
     'assigned': ['pending_driver_receipt'],
     'pending_driver_receipt': ['driver_received_order'],
     'driver_received_order': ['in_transit'],
-    'in_transit': ['delivered', 'failed'],
+    'in_transit': ['delivered', 'customer_not_available', 'failed'],
     'failed': ['rescheduled', 'dropped_at_pickup_point', 'returning_to_store'],
     'rescheduled': [],
+    'pending_pickup_point_delivery': ['dropped_at_pickup_point'],
     'returning_to_store': ['returned_to_store'],
     'delivered': [],
     'dropped_at_pickup_point': [],
@@ -357,53 +364,176 @@ class DriverDeliveriesRepository {
     return List<Map<String, dynamic>>.from(rows);
   }
 
-  Future<void> confirmPickupWithPoint({
+  Future<void> confirmPickup({
     required String orderId,
-    required String pickupPointId,
-    String? pickupPointName,
+    String? pickupLabel,
   }) async {
-    final note = (pickupPointName == null || pickupPointName.trim().isEmpty)
+    final trimmedLabel = pickupLabel?.trim();
+    final note = trimmedLabel == null || trimmedLabel.isEmpty
         ? null
-        : 'Picked up from $pickupPointName';
+        : 'Picked up from $trimmedLabel';
 
-    // Use the same strict transition gate used by all status updates.
     await updateOrderStatus(
       orderId: orderId,
       newStatus: 'picked_up',
       note: note,
     );
-
-    // Optional enrichment only: do not fail pickup confirmation if this column is policy-restricted.
-    try {
-      await _client
-          .from('orders')
-          .update({'pickup_point_id': pickupPointId})
-          .eq('id', orderId);
-    } catch (_) {}
   }
 
-  Future<void> confirmDropoffAtPickupPoint({
-    required String orderId,
-    required String pickupPointId,
-    String? pickupPointName,
-  }) async {
-    final note = (pickupPointName == null || pickupPointName.trim().isEmpty)
+  Future<void> confirmDropoffAtPickupPoint({required String orderId}) async {
+    final order = await _loadOrderWithAddress(orderId);
+    if (order == null) {
+      throw Exception('Order not found');
+    }
+
+    final pickupPointId = order['order']['pickup_point_id']?.toString();
+    if (pickupPointId == null || pickupPointId.isEmpty) {
+      throw Exception('No pickup point is assigned for this order.');
+    }
+
+    final pickupPoint = await _client
+        .from('pickup_points')
+        .select('name, address_text')
+        .eq('id', pickupPointId)
+        .maybeSingle();
+
+    final pickupPointName = _firstNonEmpty([
+      pickupPoint?['name'],
+      order['order']['dropoff_name'],
+    ]);
+    final pickupPointAddress = _firstNonEmpty([
+      pickupPoint?['address_text'],
+      order['address']?['dropoff_address_text'],
+      order['order']['dropoff_address_text'],
+    ]);
+    final note = pickupPointName == null
         ? 'Dropped at pickup point'
-        : 'Dropped at pickup point: $pickupPointName';
+        : 'Dropped at pickup point: $pickupPointName'
+              '${pickupPointAddress == null ? '' : ' ($pickupPointAddress)'}';
 
     await updateOrderStatus(
       orderId: orderId,
       newStatus: 'dropped_at_pickup_point',
       note: note,
     );
+  }
 
-    // Optional enrichment only: do not fail status transition if this update is restricted.
+  Future<void> redirectHomeDeliveryToNearestPickupPoint({
+    required String orderId,
+  }) async {
+    final driverId = await _resolveCurrentDriverId();
+    final orderWithAddress = await _loadOrderWithAddress(orderId);
+    if (orderWithAddress == null) {
+      throw Exception('Order not found');
+    }
+
+    final order = orderWithAddress['order']!;
+    final address = orderWithAddress['address'];
+    final currentStatus = (order['status']?.toString() ?? 'created')
+        .toLowerCase();
+    if (workflowStatusFromOrderStatus(currentStatus) != 'in_transit') {
+      throw Exception(
+        'Customer unavailable fallback is only allowed while the order is in transit.',
+      );
+    }
+
+    if (_isPickupPointDropoff(order)) {
+      throw Exception(
+        'This order is already assigned to a pickup-point dropoff.',
+      );
+    }
+
+    final companyId = _firstNonEmpty([
+      order['delivery_company_id'],
+      order['company_id'],
+      await _loadAssignmentCompanyId(orderId: orderId, driverId: driverId),
+    ]);
+    if (companyId == null) {
+      throw Exception('Order is missing a delivery company.');
+    }
+
+    final customerLat =
+        _toDouble(address?['dropoff_lat']) ?? _toDouble(order['dropoff_lat']);
+    final customerLng =
+        _toDouble(address?['dropoff_lng']) ?? _toDouble(order['dropoff_lng']);
+    final customerAddress = _firstNonEmpty([
+      address?['dropoff_address_text'],
+      address?['dropoff_address'],
+      order['customer_address_text'],
+      order['dropoff_address_text'],
+      order['dropoff_address'],
+    ]);
+
+    if (customerLat == null || customerLng == null) {
+      throw Exception(
+        'Customer dropoff coordinates are missing, so the nearest pickup point cannot be determined.',
+      );
+    }
+
+    final nearestPickupPoint = await _findNearestCompanyPickupPoint(
+      companyId: companyId,
+      lat: customerLat,
+      lng: customerLng,
+    );
+    if (nearestPickupPoint == null) {
+      throw Exception(
+        'No active pickup point with valid coordinates is configured for this delivery company.',
+      );
+    }
+
+    final pickupPointId = nearestPickupPoint['id'].toString();
+    final pickupPointName =
+        nearestPickupPoint['name']?.toString() ?? 'Pickup point';
+    final pickupPointAddress = nearestPickupPoint['address_text']?.toString();
+    final now = DateTime.now().toUtc().toIso8601String();
+
+    await _client
+        .from('orders')
+        .update({
+          'status': 'pending_pickup_point_delivery',
+          'dropoff_type': 'pickup_point',
+          'pickup_point_id': pickupPointId,
+          'updated_at': now,
+        })
+        .eq('id', orderId)
+        .eq('status', currentStatus);
+
+    final latestRows = await _client
+        .from('orders')
+        .select('status')
+        .eq('id', orderId)
+        .limit(1);
+    final latestList = List<Map<String, dynamic>>.from(latestRows);
+    final latestStatus = latestList.isEmpty
+        ? ''
+        : (latestList.first['status']?.toString() ?? '').toLowerCase();
+    if (latestStatus != 'pending_pickup_point_delivery') {
+      throw Exception(
+        'Order status changed to "$latestStatus". Refresh the order before retrying.',
+      );
+    }
+
+    final note =
+        'Customer not available at '
+        '${customerAddress ?? '${customerLat.toStringAsFixed(6)}, ${customerLng.toStringAsFixed(6)}'}. '
+        'Order redirected automatically to pickup point $pickupPointName'
+        '${pickupPointAddress == null ? '' : ' ($pickupPointAddress)'}';
+
     try {
-      await _client
-          .from('orders')
-          .update({'pickup_point_id': pickupPointId})
-          .eq('id', orderId);
+      await _client.from('order_events').insert({
+        'order_id': orderId,
+        'event_type': 'note_added',
+        'created_by': currentUser?.id,
+        'note': note,
+      });
     } catch (_) {}
+
+    await _retargetPendingDropoffRouteStop(
+      orderId: orderId,
+      driverId: driverId,
+      companyId: companyId,
+      pickupPoint: nearestPickupPoint,
+    );
   }
 
   Future<void> updateOrderStatus({
@@ -616,6 +746,140 @@ class DriverDeliveriesRepository {
       // Route tables are optional until the automated-assignment migration is applied.
     }
   }
+
+  Future<Map<String, dynamic>?> _loadOrderWithAddress(String orderId) async {
+    final orderRows = await _client
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .limit(1);
+    final orderList = List<Map<String, dynamic>>.from(orderRows);
+    if (orderList.isEmpty) return null;
+
+    final addressRows = await _client
+        .from('order_addresses')
+        .select('*')
+        .eq('order_id', orderId)
+        .limit(1);
+    final addressList = List<Map<String, dynamic>>.from(addressRows);
+
+    return {
+      'order': orderList.first,
+      'address': addressList.isEmpty ? null : addressList.first,
+    };
+  }
+
+  Future<String?> _loadAssignmentCompanyId({
+    required String orderId,
+    required String driverId,
+  }) async {
+    final rows = await _client
+        .from('assignments')
+        .select('company_id')
+        .eq('order_id', orderId)
+        .eq('driver_id', driverId)
+        .limit(1);
+    final list = List<Map<String, dynamic>>.from(rows);
+    if (list.isEmpty) return null;
+    return list.first['company_id']?.toString();
+  }
+
+  Future<Map<String, dynamic>?> _findNearestCompanyPickupPoint({
+    required String companyId,
+    required double lat,
+    required double lng,
+  }) async {
+    final rows = await _client
+        .from('pickup_points')
+        .select('id, company_id, name, address_text, lat, lng, is_active')
+        .eq('company_id', companyId)
+        .eq('is_active', true);
+    final points = List<Map<String, dynamic>>.from(rows)
+        .where(
+          (point) =>
+              _toDouble(point['lat']) != null &&
+              _toDouble(point['lng']) != null,
+        )
+        .toList();
+    if (points.isEmpty) return null;
+
+    Map<String, dynamic>? bestPoint;
+    double? bestDistance;
+    for (final point in points) {
+      final pointLat = _toDouble(point['lat']);
+      final pointLng = _toDouble(point['lng']);
+      if (pointLat == null || pointLng == null) continue;
+
+      final distance = _distanceMeters(
+        startLat: lat,
+        startLng: lng,
+        endLat: pointLat,
+        endLng: pointLng,
+      );
+      if (bestDistance == null || distance < bestDistance) {
+        bestDistance = distance;
+        bestPoint = point;
+      }
+    }
+
+    return bestPoint;
+  }
+
+  Future<void> _retargetPendingDropoffRouteStop({
+    required String orderId,
+    required String driverId,
+    required String companyId,
+    required Map<String, dynamic> pickupPoint,
+  }) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    try {
+      await _client
+          .from('driver_route_stops')
+          .update({
+            'location_name': pickupPoint['name']?.toString() ?? 'Pickup point',
+            'location_address': pickupPoint['address_text']?.toString(),
+            'lat': _toDouble(pickupPoint['lat']),
+            'lng': _toDouble(pickupPoint['lng']),
+            'service_seconds': 4 * 60,
+            'updated_at': now,
+          })
+          .eq('order_id', orderId)
+          .eq('driver_id', driverId)
+          .eq('company_id', companyId)
+          .eq('stop_type', 'dropoff')
+          .isFilter('completed_at', null);
+
+      await _client
+          .from('driver_routes')
+          .update({'updated_at': now})
+          .eq('driver_id', driverId)
+          .eq('company_id', companyId)
+          .eq('status', 'active');
+    } catch (_) {
+      // Route persistence is best-effort until every environment has route tables.
+    }
+  }
+
+  double _distanceMeters({
+    required double startLat,
+    required double startLng,
+    required double endLat,
+    required double endLng,
+  }) {
+    const earthRadiusMeters = 6371000.0;
+    final dLat = _degreesToRadians(endLat - startLat);
+    final dLng = _degreesToRadians(endLng - startLng);
+    final a =
+        math.sin(dLat / 2) * math.sin(dLat / 2) +
+        math.cos(_degreesToRadians(startLat)) *
+            math.cos(_degreesToRadians(endLat)) *
+            math.sin(dLng / 2) *
+            math.sin(dLng / 2);
+    final c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a));
+    return earthRadiusMeters * c;
+  }
+
+  double _degreesToRadians(double degrees) => degrees * (math.pi / 180.0);
 
   Future<String> _resolveCurrentDriverId() async {
     final user = currentUser;
@@ -916,6 +1180,8 @@ class DriverDeliveriesRepository {
           pickupAddress: pickupAddress,
           pickupLat: pickupLat,
           pickupLng: pickupLng,
+          pickupPointId: order['pickup_point_id']?.toString(),
+          dropoffType: order['dropoff_type']?.toString(),
           dropoffName: dropoffName,
           dropoffAddress: dropoffAddress,
           dropoffLat: dropoffLat,

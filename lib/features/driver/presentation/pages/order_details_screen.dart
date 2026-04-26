@@ -142,6 +142,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       return;
     }
 
+    if (action == 'customer_not_available') {
+      await _redirectCustomerNotAvailableFlow();
+      return;
+    }
+
     if (action == 'dropped_at_pickup_point') {
       await _confirmDropoffAtPickupPointFlow();
       return;
@@ -229,95 +234,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     );
   }
 
-  Future<Map<String, dynamic>?> _selectPickupPoint({
-    required String title,
-    required String subtitle,
-    required String confirmLabel,
-  }) async {
-    List<Map<String, dynamic>> points = [];
-    try {
-      points = await _repository.getAvailablePickupPoints();
-    } catch (_) {
-      points = [];
-    }
-
-    if (!mounted) return null;
-    if (points.isEmpty) return null;
-
-    String selectedId = points.first['id'].toString();
-    final confirm = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            final selectedPoint = points.firstWhere(
-              (point) => point['id'].toString() == selectedId,
-              orElse: () => points.first,
-            );
-            return Padding(
-              padding: EdgeInsets.only(
-                left: AppSpacing.xl,
-                right: AppSpacing.xl,
-                top: AppSpacing.xl,
-                bottom:
-                    MediaQuery.of(context).viewInsets.bottom + AppSpacing.xl,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text(title, style: AppTextStyles.heading2),
-                  const SizedBox(height: AppSpacing.xs),
-                  Text(subtitle, style: AppTextStyles.bodyMuted),
-                  const SizedBox(height: AppSpacing.md),
-                  DropdownButtonFormField<String>(
-                    initialValue: selectedId,
-                    decoration: const InputDecoration(
-                      labelText: 'Pickup Point',
-                      prefixIcon: Icon(Icons.storefront_outlined),
-                    ),
-                    items: points.map((point) {
-                      final id = point['id'].toString();
-                      final name = point['name']?.toString() ?? 'Pickup point';
-                      return DropdownMenuItem<String>(
-                        value: id,
-                        child: Text(name),
-                      );
-                    }).toList(),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setModalState(() {
-                        selectedId = value;
-                      });
-                    },
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  Text(
-                    selectedPoint['address_text']?.toString() ?? '-',
-                    style: AppTextStyles.bodyMuted,
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  PrimaryButton(
-                    label: confirmLabel,
-                    icon: Icons.check_circle_outline,
-                    onPressed: () => Navigator.pop(context, true),
-                  ),
-                ],
-              ),
-            );
-          },
-        );
-      },
-    );
-
-    if (confirm != true) return null;
-    return points.firstWhere(
-      (point) => point['id'].toString() == selectedId,
-      orElse: () => points.first,
-    );
-  }
-
   Future<void> _confirmPickupFlow() async {
     if (details == null ||
         isConfirmingPickup ||
@@ -328,43 +244,31 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     try {
       setState(() => isConfirmingPickup = true);
-      final selectedPoint = await _selectPickupPoint(
-        title: 'Confirm Pickup',
-        subtitle: 'Select pickup point then confirm order handover.',
-        confirmLabel: 'Confirm Pickup',
-      );
-      if (!mounted) return;
-
-      if (selectedPoint == null) {
-        final fallbackConfirm = await showDialog<bool>(
-          context: context,
-          builder: (_) => AlertDialog(
-            title: const Text('Confirm Pickup'),
-            content: const Text('Confirm that you received the order?'),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Cancel'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Confirm'),
-              ),
-            ],
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Confirm Pickup'),
+          content: Text(
+            'Confirm that you received the order from the assigned pickup location:\n\n'
+            '${details!.delivery.pickupPointName}\n${details!.delivery.pickupAddress}',
           ),
-        );
-        if (fallbackConfirm != true) return;
-        await _updateStatus(
-          'picked_up',
-          successLabel: _statusLabel('driver_received_order'),
-        );
-        return;
-      }
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Confirm'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true) return;
 
-      await _repository.confirmPickupWithPoint(
+      await _repository.confirmPickup(
         orderId: widget.orderId,
-        pickupPointId: selectedPoint['id'].toString(),
-        pickupPointName: selectedPoint['name']?.toString(),
+        pickupLabel: details!.delivery.pickupPointName,
       );
 
       if (!mounted) return;
@@ -394,27 +298,30 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
 
     try {
       setState(() => isConfirmingDropoffAtPickup = true);
-      final selectedPoint = await _selectPickupPoint(
-        title: 'Delivered To Pickup Point',
-        subtitle: 'Choose the pickup point where the order was dropped.',
-        confirmLabel: 'Confirm Dropoff',
-      );
-      if (!mounted) return;
-
-      if (selectedPoint == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Pickup point is required for this action.'),
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (_) => AlertDialog(
+          title: const Text('Confirm Pickup-Point Dropoff'),
+          content: Text(
+            'Confirm that you dropped the order at:\n\n'
+            '${details!.delivery.dropoffName ?? 'Pickup point'}\n'
+            '${details!.dropoffAddress ?? details!.delivery.dropoffAddress ?? 'Not provided'}',
           ),
-        );
-        return;
-      }
-
-      await _repository.confirmDropoffAtPickupPoint(
-        orderId: widget.orderId,
-        pickupPointId: selectedPoint['id'].toString(),
-        pickupPointName: selectedPoint['name']?.toString(),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancel'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Confirm'),
+            ),
+          ],
+        ),
       );
+      if (confirmed != true) return;
+
+      await _repository.confirmDropoffAtPickupPoint(orderId: widget.orderId);
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -429,6 +336,57 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     } finally {
       if (mounted) {
         setState(() => isConfirmingDropoffAtPickup = false);
+      }
+    }
+  }
+
+  Future<void> _redirectCustomerNotAvailableFlow() async {
+    if (details == null || _isBusy) return;
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Customer Not Available'),
+        content: const Text(
+          'The system will automatically redirect this home delivery to the nearest pickup point for the same delivery company.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Redirect Order'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
+    try {
+      setState(() => isUpdating = true);
+      await _repository.redirectHomeDeliveryToNearestPickupPoint(
+        orderId: widget.orderId,
+      );
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text(
+            'Customer unavailable. Order redirected to the nearest pickup point.',
+          ),
+        ),
+      );
+      await _loadDetails();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Failed to redirect order: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => isUpdating = false);
       }
     }
   }
@@ -459,9 +417,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final workflowStatus = _repository.workflowStatusFromOrderStatus(
       delivery.status,
     );
-    final allowedWorkflowActions = _repository.getAllowedWorkflowActions(
-      delivery.status,
-    );
+    final isPickupPointDropoff =
+        (delivery.dropoffType ?? '').trim().toLowerCase() == 'pickup_point' ||
+        (delivery.pickupPointId ?? '').trim().isNotEmpty;
+    final allowedWorkflowActions = _repository
+        .getAllowedWorkflowActions(delivery.status)
+        .where(
+          (action) =>
+              action != 'customer_not_available' || !isPickupPointDropoff,
+        )
+        .toList();
     final actionLayout = _resolveActionLayout(
       workflowStatus: workflowStatus,
       allowedActions: allowedWorkflowActions,
@@ -737,10 +702,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         return 'Driver Received Order';
       case 'in_transit':
         return 'In Transit';
+      case 'pending_pickup_point_delivery':
+        return 'Pending Pickup Point Delivery';
       case 'delivered':
         return 'Delivered';
       case 'dropped_at_pickup_point':
         return 'Drop At Pickup Point';
+      case 'customer_not_available':
+        return 'Customer Not Available';
       case 'failed':
         return 'Delivery Failed';
       case 'rescheduled':
@@ -769,8 +738,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         return Icons.local_shipping_outlined;
       case 'delivered':
         return Icons.check_circle_outline;
+      case 'customer_not_available':
+        return Icons.person_off_outlined;
       case 'failed':
         return Icons.error_outline_rounded;
+      case 'pending_pickup_point_delivery':
+        return Icons.store_mall_directory_outlined;
       case 'rescheduled':
         return Icons.event_repeat_outlined;
       case 'dropped_at_pickup_point':
@@ -790,6 +763,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       case 'dropped_at_pickup_point':
       case 'returned_to_store':
         return _ActionTone.success;
+      case 'customer_not_available':
+        return _ActionTone.danger;
       case 'failed':
         return _ActionTone.danger;
       default:

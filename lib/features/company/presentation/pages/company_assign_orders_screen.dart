@@ -97,7 +97,7 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('Assign Driver', style: AppTextStyles.heading2),
+                  Text('Manual Fallback Assign', style: AppTextStyles.heading2),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     order['tracking_code']?.toString() ??
@@ -266,8 +266,20 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
       return _reassignableStatuses.contains(status) && !isLocked(order);
     }
 
+    bool isAutoFallbackEligible(Map<String, dynamic> order) {
+      return order['auto_assignment_failed'] == true;
+    }
+
     final unassignedOrders = orders.where((order) {
-      return !hasDriver(order) && canReassign(order);
+      return !hasDriver(order) &&
+          canReassign(order) &&
+          isAutoFallbackEligible(order);
+    }).toList();
+
+    final reviewOrders = orders.where((order) {
+      return !hasDriver(order) &&
+          canReassign(order) &&
+          !isAutoFallbackEligible(order);
     }).toList();
 
     final assignedOrders = orders.where((order) {
@@ -279,7 +291,7 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
     }).toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Assign Orders')),
+      appBar: AppBar(title: const Text('Manual Fallback Assign')),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorText != null
@@ -307,13 +319,14 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                 children: [
                   const SectionHeader(
                     title: 'Not Assigned Yet',
-                    subtitle: 'Assign these orders to a delivery driver',
+                    subtitle:
+                        'Only orders that still need fallback driver assignment appear here',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (unassignedOrders.isEmpty)
                     const InfoCard(
                       child: Text(
-                        'All current orders already have assigned drivers.',
+                        'No automatic-assignment fallbacks are waiting right now.',
                         style: AppTextStyles.bodyMuted,
                       ),
                     )
@@ -331,8 +344,34 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                     }),
                   const SizedBox(height: AppSpacing.lg),
                   const SectionHeader(
+                    title: 'Needs Manual Review',
+                    subtitle:
+                        'Older or unattempted orders with no recorded auto-assignment result',
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  if (reviewOrders.isEmpty)
+                    const InfoCard(
+                      child: Text(
+                        'No legacy or unattempted unassigned orders found.',
+                        style: AppTextStyles.bodyMuted,
+                      ),
+                    )
+                  else
+                    ...reviewOrders.map((order) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                        child: _OrderCard(
+                          order: order,
+                          onAssignTap: () => _openAssignSheet(order),
+                          onUnassignTap: null,
+                          assignEnabled: true,
+                        ),
+                      );
+                    }),
+                  const SizedBox(height: AppSpacing.lg),
+                  const SectionHeader(
                     title: 'Already Assigned',
-                    subtitle: 'Reassign if needed',
+                    subtitle: 'Manual reassignment only when needed',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (assignedOrders.isEmpty)
@@ -357,7 +396,8 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                   const SizedBox(height: AppSpacing.lg),
                   const SectionHeader(
                     title: 'Locked (In Progress / Closed)',
-                    subtitle: 'These orders cannot be assigned anymore',
+                    subtitle:
+                        'These orders are no longer part of fallback assignment',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (lockedOrders.isEmpty)
@@ -438,10 +478,24 @@ class _OrderCard extends StatelessWidget {
             'Customer: ${order['customer_name'] ?? 'Customer'}',
             style: AppTextStyles.bodyMuted,
           ),
+          if ((order['auto_assignment_reason']?.toString().trim().isNotEmpty ??
+              false)) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Auto-assign fallback reason: ${order['auto_assignment_reason']}',
+              style: AppTextStyles.bodyMuted,
+            ),
+          ] else if (!hasDriver) ...[
+            const SizedBox(height: AppSpacing.xs),
+            const Text(
+              'Auto-assign fallback reason: No automatic assignment result recorded yet.',
+              style: AppTextStyles.bodyMuted,
+            ),
+          ],
           const SizedBox(height: AppSpacing.md),
           PrimaryButton(
             label: assignEnabled
-                ? (hasDriver ? 'Reassign Driver' : 'Assign Driver')
+                ? (hasDriver ? 'Manual Reassign' : 'Manual Fallback Assign')
                 : 'Order Locked',
             icon: assignEnabled
                 ? Icons.person_add_alt_1_rounded

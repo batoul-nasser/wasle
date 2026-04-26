@@ -3,6 +3,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/services/payment_service.dart';
 import 'package:wasle/features/payment/data/payment_model.dart';
 import 'package:wasle/features/payment/presentation/widgets/payment_method_selector.dart';
+import 'package:wasle/features/orders/data/order_assignment_service.dart';
 
 class MerchantCreateOrderScreen extends StatefulWidget {
   const MerchantCreateOrderScreen({super.key});
@@ -15,6 +16,8 @@ class MerchantCreateOrderScreen extends StatefulWidget {
 class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   final SupabaseClient _client = Supabase.instance.client;
   final PaymentService _paymentService = PaymentService();
+  final OrderAssignmentService _orderAssignmentService =
+      OrderAssignmentService();
   final _formKey = GlobalKey<FormState>();
 
   final _customerNameCtrl = TextEditingController();
@@ -272,6 +275,16 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         deliveryCompanyId: _selectedDeliveryCompanyId,
         notes: _mergedNotes(),
       );
+
+      try {
+        await _orderAssignmentService.autoAssignOrderFromCreationResponse(
+          result,
+          merchantId: merchantId,
+          companyIdHint: _selectedDeliveryCompanyId,
+        );
+      } catch (_) {
+        // Order creation should still succeed even if automatic assignment falls back.
+      }
 
       if (!mounted) return;
       setState(() => _submitting = false);
