@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/services/payment_service.dart';
+import 'package:wasle/features/auth/data/auth_service.dart';
 import 'package:wasle/features/payment/data/payment_model.dart';
 import 'package:wasle/features/payment/presentation/widgets/payment_method_selector.dart';
 
@@ -20,6 +21,7 @@ class MerchantCreateOrderScreen extends StatefulWidget {
 class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   final SupabaseClient _client = Supabase.instance.client;
   final PaymentService _paymentService = PaymentService();
+  final AuthService _authService = AuthService();
   final _formKey = GlobalKey<FormState>();
 
   final _customerNameCtrl = TextEditingController();
@@ -28,6 +30,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   final _addressCtrl = TextEditingController();
   final _timeWindowCtrl = TextEditingController();
   final _notesCtrl = TextEditingController();
+  final _pickupPointSearchCtrl = TextEditingController();
 
   final _parcelDescriptionCtrl = TextEditingController();
   final _itemCountCtrl = TextEditingController(text: '1');
@@ -92,6 +95,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       _addressCtrl,
       _timeWindowCtrl,
       _notesCtrl,
+      _pickupPointSearchCtrl,
       _parcelDescriptionCtrl,
       _itemCountCtrl,
       _estimatedWeightCtrl,
@@ -223,7 +227,27 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           .inFilter('status', ['approved', 'active'])
           .order('name');
 
+      final orderRows = await _client
+          .from('orders')
+          .select('pickup_point_id')
+          .not('pickup_point_id', 'is', null);
+
       final raw = List<Map<String, dynamic>>.from(rows);
+      final pickupPointIds = raw
+          .map((row) => row['id']?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty)
+          .toList();
+      final ratingSummaries = await _authService.getPickupPointRatingSummaries(
+        pickupPointIds,
+      );
+      final usageByPickupPointId = <String, int>{};
+      for (final row in List<Map<String, dynamic>>.from(orderRows)) {
+        final pickupPointId = row['pickup_point_id']?.toString();
+        if (pickupPointId == null || pickupPointId.isEmpty) continue;
+        usageByPickupPointId[pickupPointId] =
+            (usageByPickupPointId[pickupPointId] ?? 0) + 1;
+      }
 
       final options = raw
           .map((row) {
@@ -260,6 +284,18 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
               lng: lng,
               city: city,
               area: area,
+              usageCount:
+                  usageByPickupPointId[row['id']?.toString() ?? ''] ?? 0,
+              averageRating:
+                  (ratingSummaries[row['id']?.toString() ?? '']?['average']
+                          as num?)
+                      ?.toDouble() ??
+                  0.0,
+              reviewCount:
+                  (ratingSummaries[row['id']?.toString() ?? '']?['count']
+                          as num?)
+                      ?.toInt() ??
+                  0,
             );
           })
           .where(
@@ -271,10 +307,17 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           )
           .toList();
 
-      options.sort(
-        (a, b) =>
-            a.displayName.toLowerCase().compareTo(b.displayName.toLowerCase()),
-      );
+      options.sort((a, b) {
+        final ratingCompare = b.averageRating.compareTo(a.averageRating);
+        if (ratingCompare != 0) return ratingCompare;
+        final reviewCompare = b.reviewCount.compareTo(a.reviewCount);
+        if (reviewCompare != 0) return reviewCompare;
+        final usageCompare = b.usageCount.compareTo(a.usageCount);
+        if (usageCompare != 0) return usageCompare;
+        return a.displayName.toLowerCase().compareTo(
+          b.displayName.toLowerCase(),
+        );
+      });
 
       return options;
     } catch (_) {
@@ -1415,6 +1458,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     _addressCtrl.clear();
     _timeWindowCtrl.clear();
     _notesCtrl.clear();
+    _pickupPointSearchCtrl.clear();
     _parcelDescriptionCtrl.clear();
     _itemCountCtrl.text = '1';
     _estimatedWeightCtrl.clear();
@@ -1497,6 +1541,37 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
 
     return null;
+  }
+
+  List<_PickupPointOption> get _filteredPickupPoints {
+    final query = _pickupPointSearchCtrl.text.trim().toLowerCase();
+    if (query.isEmpty) return _sourcePickupPoints;
+
+    final filtered = _sourcePickupPoints.where((point) {
+      final haystack =
+          '${point.name} ${point.subtitle ?? ''} ${point.city} ${point.area}'
+              .toLowerCase();
+      return haystack.contains(query);
+    }).toList();
+
+    filtered.sort((a, b) {
+      final aCityMatch = a.city.toLowerCase().contains(query) ? 1 : 0;
+      final bCityMatch = b.city.toLowerCase().contains(query) ? 1 : 0;
+      if (aCityMatch != bCityMatch) return bCityMatch.compareTo(aCityMatch);
+
+      final ratingCompare = b.averageRating.compareTo(a.averageRating);
+      if (ratingCompare != 0) return ratingCompare;
+
+      final reviewCompare = b.reviewCount.compareTo(a.reviewCount);
+      if (reviewCompare != 0) return reviewCompare;
+
+      final usageCompare = b.usageCount.compareTo(a.usageCount);
+      if (usageCompare != 0) return usageCompare;
+
+      return a.name.toLowerCase().compareTo(b.name.toLowerCase());
+    });
+
+    return filtered;
   }
 
   String get _summaryCustomer => _customerNameCtrl.text.trim().isEmpty
@@ -1613,6 +1688,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       _addressCtrl,
       _timeWindowCtrl,
       _notesCtrl,
+      _pickupPointSearchCtrl,
       _parcelDescriptionCtrl,
       _itemCountCtrl,
       _estimatedWeightCtrl,
@@ -1790,45 +1866,118 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       if (_sourcePickupPoints.isEmpty)
                         const _InfoBox(
                           icon: Icons.info_outline,
-                          text:
-                              'No approved pickup points found in the system.',
+                          text: 'No active pickup points found on Wasle.',
                           color: _W.amber,
                           background: _W.amberLt,
                         )
-                      else
-                        DropdownButtonFormField<String>(
-                          key: ValueKey(
-                            'source-pickup-${_selectedSourcePickupPointId ?? 'none'}',
-                          ),
-                          initialValue: _selectedSourcePickupPointId,
-                          isExpanded: true,
+                      else ...[
+                        TextFormField(
+                          controller: _pickupPointSearchCtrl,
                           decoration: _inputDecor(
-                            label: 'Source Pickup Point',
-                            hint: 'Choose source pickup point',
-                            icon: Icons.store_mall_directory_outlined,
+                            label: 'Search Pickup Point',
+                            hint: 'Search by name, address, city, or area',
+                            icon: Icons.search,
                           ),
-                          items: _sourcePickupPoints
-                              .map(
-                                (point) => DropdownMenuItem<String>(
-                                  value: point.id,
-                                  child: Text(
-                                    point.displayName,
-                                    overflow: TextOverflow.ellipsis,
-                                    maxLines: 2,
-                                    style: _t(14, FontWeight.w500),
-                                  ),
-                                ),
-                              )
-                              .toList(),
-                          validator: (value) =>
-                              _pickupSourceType == _pickupFromPickupPoint &&
-                                  value == null
-                              ? 'Please select a source pickup point'
-                              : null,
-                          onChanged: _loadingFormData
-                              ? null
-                              : _onSourcePickupChanged,
                         ),
+                        const SizedBox(height: 12),
+                        if (_filteredPickupPoints.isEmpty)
+                          const _InfoBox(
+                            icon: Icons.search_off_outlined,
+                            text: 'No pickup points match this search.',
+                            color: _W.amber,
+                            background: _W.amberLt,
+                          )
+                        else
+                          DropdownButtonFormField<String>(
+                            key: ValueKey(
+                              'source-pickup-${_selectedSourcePickupPointId ?? 'none'}-${_filteredPickupPoints.length}',
+                            ),
+                            initialValue:
+                                _filteredPickupPoints.any(
+                                  (point) =>
+                                      point.id == _selectedSourcePickupPointId,
+                                )
+                                ? _selectedSourcePickupPointId
+                                : null,
+                            isExpanded: true,
+                            decoration: _inputDecor(
+                              label: 'Source Pickup Point',
+                              hint: 'Choose source pickup point',
+                              icon: Icons.store_mall_directory_outlined,
+                            ),
+                            items: _filteredPickupPoints
+                                .map(
+                                  (point) => DropdownMenuItem<String>(
+                                    value: point.id,
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              Text(
+                                                point.name,
+                                                overflow: TextOverflow.ellipsis,
+                                                style: _t(14, FontWeight.w700),
+                                              ),
+                                              if ((point.subtitle ?? '')
+                                                  .isNotEmpty)
+                                                Text(
+                                                  point.subtitle!,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: _t(
+                                                    11.5,
+                                                    FontWeight.w500,
+                                                    color: _W.gray,
+                                                  ),
+                                                ),
+                                            ],
+                                          ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        Container(
+                                          padding: const EdgeInsets.symmetric(
+                                            horizontal: 8,
+                                            vertical: 4,
+                                          ),
+                                          decoration: BoxDecoration(
+                                            color: _W.amberLt,
+                                            borderRadius: BorderRadius.circular(
+                                              999,
+                                            ),
+                                            border: Border.all(
+                                              color: _W.amber.withValues(
+                                                alpha: 0.18,
+                                              ),
+                                            ),
+                                          ),
+                                          child: Text(
+                                            '★ ${point.starsLabel}',
+                                            style: _t(
+                                              11,
+                                              FontWeight.w800,
+                                              color: _W.amber,
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            validator: (value) =>
+                                _pickupSourceType == _pickupFromPickupPoint &&
+                                    value == null
+                                ? 'Please select a source pickup point'
+                                : null,
+                            onChanged: _loadingFormData
+                                ? null
+                                : _onSourcePickupChanged,
+                          ),
+                      ],
                     ],
                     const SizedBox(height: 18),
                     const _FieldLabel('DROPOFF DESTINATION'),
@@ -2382,6 +2531,9 @@ class _PickupPointOption {
   final double? lng;
   final String city;
   final String area;
+  final int usageCount;
+  final double averageRating;
+  final int reviewCount;
 
   const _PickupPointOption({
     required this.id,
@@ -2392,6 +2544,9 @@ class _PickupPointOption {
     required this.lng,
     required this.city,
     required this.area,
+    this.usageCount = 0,
+    this.averageRating = 0,
+    this.reviewCount = 0,
   });
 
   String get displayName {
@@ -2399,6 +2554,9 @@ class _PickupPointOption {
     if (detail == null || detail.isEmpty) return name;
     return '$name - $detail';
   }
+
+  String get starsLabel =>
+      reviewCount <= 0 ? 'New' : averageRating.toStringAsFixed(1);
 }
 
 class _LatLngOption {

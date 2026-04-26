@@ -48,13 +48,31 @@ class PickupPointRepository {
     final rows = await _client
         .from('pickup_points')
         .select(
-          'id, name, owner_name, address_text, city, area, image_url, '
+          'id, name, owner_name, address_text, city, area, phone, image_url, '
           'opening_hours, working_days, max_orders_per_day, '
           'preferred_payment_method, payment_handling_method, status',
         )
+        .eq('is_active', true)
         .order('name');
 
     return List<Map<String, dynamic>>.from(rows);
+  }
+
+  Future<Map<String, int>> getPickupPointUsageCounts(List<String> pickupPointIds) async {
+    if (pickupPointIds.isEmpty) return {};
+
+    final rows = await _client
+        .from('orders')
+        .select('pickup_point_id')
+        .inFilter('pickup_point_id', pickupPointIds);
+
+    final counts = <String, int>{};
+    for (final row in List<Map<String, dynamic>>.from(rows)) {
+      final pickupPointId = row['pickup_point_id']?.toString();
+      if (pickupPointId == null || pickupPointId.isEmpty) continue;
+      counts[pickupPointId] = (counts[pickupPointId] ?? 0) + 1;
+    }
+    return counts;
   }
 
   Future<List<Map<String, dynamic>>> getPickupPointParcels({

@@ -1,13 +1,45 @@
 import 'package:flutter/material.dart';
-import 'track_my_order_page.dart';
-import 'payment_method_page.dart';
-import 'pickup_point_page.dart';
-import 'package:wasle/features/payment/presentation/widgets/payment_status_card.dart';
-import 'package:wasle/core/services/payment_service.dart';
+import 'package:wasle/features/auth/data/auth_service.dart';
+import 'package:wasle/features/customer/presentation/pages/payment_method_page.dart';
+import 'package:wasle/features/customer/presentation/pages/pickup_point_page.dart';
+import 'package:wasle/features/customer/presentation/pages/track_my_order_page.dart';
 
-
-class CustomerDashboardScreen extends StatelessWidget {
+class CustomerDashboardScreen extends StatefulWidget {
   const CustomerDashboardScreen({super.key});
+
+  @override
+  State<CustomerDashboardScreen> createState() =>
+      _CustomerDashboardScreenState();
+}
+
+class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
+  final AuthService _authService = AuthService();
+
+  bool _loading = true;
+  List<Map<String, dynamic>> _recentPickupPoints = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final pickupPoints = await _authService.getCustomerRecentPickupPoints(
+        limit: 3,
+      );
+      if (!mounted) return;
+      setState(() {
+        _recentPickupPoints = pickupPoints;
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _loading = false);
+    }
+  }
 
   Widget _buildCard({
     required IconData icon,
@@ -140,215 +172,173 @@ class CustomerDashboardScreen extends StatelessWidget {
     );
   }
 
-  Color _statusColor(String status) {
-    switch (status) {
-      case 'Arrived at Pickup Point':
-        return Colors.green;
-      case 'In Transit':
-        return Colors.orange;
-      case 'Pending':
-        return Colors.blueGrey;
-      default:
-        return Colors.blue;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    const orderId = 'ORD-1024';
-    const orderStatus = 'Arrived at Pickup Point';
-    const eta = 'Ready for pickup';
-    const paymentMethod = 'Cash at Pickup Point';
-    const paymentStatus = 'Unpaid';
-    const pickupPointName = 'Wasle Pickup Point - Beirut';
-    const pickupPointPhone = '+961 70 123 456';
-    const pickupPointAddress = 'Hamra Main Street, Beirut';
-
     return Scaffold(
       backgroundColor: const Color(0xFFF5F7FB),
       appBar: AppBar(
         title: const Text('Customer Dashboard'),
         centerTitle: true,
       ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-              ),
-              borderRadius: BorderRadius.circular(24),
-            ),
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'CUSTOMER PORTAL',
-                  style: TextStyle(
-                    color: Colors.white70,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 1,
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : RefreshIndicator(
+              onRefresh: _load,
+              child: ListView(
+                padding: const EdgeInsets.all(20),
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(20),
+                    decoration: BoxDecoration(
+                      gradient: const LinearGradient(
+                        colors: [Color(0xFF2563EB), Color(0xFF1D4ED8)],
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                      borderRadius: BorderRadius.circular(24),
+                    ),
+                    child: const Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'CUSTOMER PORTAL',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontWeight: FontWeight.w600,
+                            letterSpacing: 1,
+                          ),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'Welcome back!',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontSize: 24,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'See your recent pickup points and order tools.',
+                          style: TextStyle(color: Colors.white70),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'Welcome back!',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 24,
-                    fontWeight: FontWeight.bold,
+                  const SizedBox(height: 24),
+                  Row(
+                    children: [
+                      _buildCard(
+                        icon: Icons.store_mall_directory_outlined,
+                        title: 'Recent Pickup Points',
+                        value: '${_recentPickupPoints.length}',
+                      ),
+                      const SizedBox(width: 12),
+                      _buildCard(
+                        icon: Icons.history_outlined,
+                        title: 'Saved History',
+                        value: _recentPickupPoints.isEmpty ? 'No' : 'Yes',
+                      ),
+                    ],
                   ),
-                ),
-                SizedBox(height: 8),
-                Text(
-                  'Track your order, payment, and pickup point details.',
-                  style: TextStyle(color: Colors.white70),
-                ),
-              ],
+                  const SizedBox(height: 24),
+                  _buildInfoSection(
+                    title: 'Recently Used Pickup Points',
+                    children: _recentPickupPoints.isEmpty
+                        ? const [
+                            Text(
+                              'No pickup points used yet.',
+                              style: TextStyle(color: Colors.black54),
+                            ),
+                          ]
+                        : _recentPickupPoints.map((point) {
+                            final addressParts =
+                                [
+                                      point['address_text']?.toString().trim(),
+                                      point['city']?.toString().trim(),
+                                      point['area']?.toString().trim(),
+                                    ]
+                                    .whereType<String>()
+                                    .where((part) => part.isNotEmpty)
+                                    .toList();
+
+                            return Column(
+                              children: [
+                                _buildInfoRow(
+                                  icon: Icons.store_outlined,
+                                  label: 'Pickup Point',
+                                  value:
+                                      point['name']?.toString() ??
+                                      'Pickup Point',
+                                ),
+                                _buildInfoRow(
+                                  icon: Icons.location_on_outlined,
+                                  label: 'Address',
+                                  value: addressParts.isEmpty
+                                      ? '-'
+                                      : addressParts.join(', '),
+                                ),
+                                _buildInfoRow(
+                                  icon: Icons.phone_outlined,
+                                  label: 'Phone',
+                                  value: point['phone']?.toString() ?? '-',
+                                ),
+                                if (point != _recentPickupPoints.last)
+                                  const Divider(height: 24),
+                              ],
+                            );
+                          }).toList(),
+                  ),
+                  const SizedBox(height: 24),
+                  const Text(
+                    'Quick Actions',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                  ),
+                  const SizedBox(height: 12),
+                  _buildActionButton(
+                    context: context,
+                    icon: Icons.location_searching_outlined,
+                    label: 'Track My Order',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const TrackMyOrderPage(),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _buildActionButton(
+                    context: context,
+                    icon: Icons.payments_outlined,
+                    label: 'Payment Method',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const PaymentMethodPage(),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  _buildActionButton(
+                    context: context,
+                    icon: Icons.store_outlined,
+                    label: 'Pickup Point History',
+                    onPressed: () {
+                      Navigator.push(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const PickupPointPage(),
+                        ),
+                      );
+                    },
+                  ),
+                ],
+              ),
             ),
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            'Order Summary',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _buildCard(
-                icon: Icons.inventory_2_outlined,
-                title: 'Active Order',
-                value: orderId,
-              ),
-              const SizedBox(width: 12),
-              _buildCard(icon: Icons.schedule, title: 'ETA', value: eta),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              _buildCard(
-                icon: Icons.payments_outlined,
-                title: 'Payment',
-                value: paymentStatus,
-              ),
-              const SizedBox(width: 12),
-              _buildCard(
-                icon: Icons.local_shipping_outlined,
-                title: 'Status',
-                value: 'Ready',
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          _buildInfoSection(
-            title: 'Current Order',
-            children: [
-              _buildInfoRow(
-                icon: Icons.confirmation_number_outlined,
-                label: 'Order ID',
-                value: orderId,
-              ),
-              _buildInfoRow(
-                icon: Icons.local_shipping_outlined,
-                label: 'Order Status',
-                value: orderStatus,
-                valueColor: _statusColor(orderStatus),
-              ),
-              _buildInfoRow(
-                icon: Icons.timer_outlined,
-                label: 'Estimated Arrival',
-                value: eta,
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          _buildInfoSection(
-            title: 'Payment Details',
-            children: [
-              _buildInfoRow(
-                icon: Icons.credit_card_outlined,
-                label: 'Payment Method',
-                value: paymentMethod,
-              ),
-              _buildInfoRow(
-                icon: Icons.info_outline,
-                label: 'Payment Status',
-                value: paymentStatus,
-                valueColor: paymentStatus == 'Paid'
-                    ? Colors.green
-                    : Colors.orange,
-              ),
-            ],
-          ),
-          const SizedBox(height: 18),
-          _buildInfoSection(
-            title: 'Pickup Point Details',
-            children: [
-              _buildInfoRow(
-                icon: Icons.store_mall_directory_outlined,
-                label: 'Pickup Point',
-                value: pickupPointName,
-              ),
-              _buildInfoRow(
-                icon: Icons.phone_outlined,
-                label: 'Phone',
-                value: pickupPointPhone,
-              ),
-              _buildInfoRow(
-                icon: Icons.location_on_outlined,
-                label: 'Address',
-                value: pickupPointAddress,
-              ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          const Text(
-            'Quick Actions',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 12),
-          _buildActionButton(
-            context: context,
-            icon: Icons.location_searching_outlined,
-            label: 'Track My Order',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const TrackMyOrderPage()),
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          _buildActionButton(
-            context: context,
-            icon: Icons.payments_outlined,
-            label: 'Payment Method',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const PaymentMethodPage()),
-              );
-            },
-          ),
-          const SizedBox(height: 12),
-          _buildActionButton(
-            context: context,
-            icon: Icons.store_outlined,
-            label: 'Pickup Point Details',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(builder: (_) => const PickupPointPage()),
-              );
-            },
-          ),
-        ],
-      ),
     );
   }
 }
