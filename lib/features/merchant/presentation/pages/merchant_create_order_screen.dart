@@ -606,7 +606,13 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
 
     if (_dropoffType == _dropoffHome) {
-      if (!_containsPickup(nextDestinationPickupPoints, nextDestinationPickupId)) {
+      final hasCustomerLocation =
+          _selectedCustomerLat != null && _selectedCustomerLng != null;
+
+      if (!hasCustomerLocation) {
+        nextDestinationPickupId = null;
+      } else if (
+          !_containsPickup(nextDestinationPickupPoints, nextDestinationPickupId)) {
         nextDestinationPickupId = nextDestinationPickupPoints.isNotEmpty
             ? nextDestinationPickupPoints.first.id
             : null;
@@ -651,10 +657,13 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         destinationCandidates: nextDestinationPickupPoints,
       );
 
+      final hasCustomerLocation =
+          _selectedCustomerLat != null && _selectedCustomerLng != null;
+
       info =
           'Companies are fixed from the 3 nearest linked companies to the merchant location, then ranked by capacity. '
           '${_pickupSourceType == _pickupFromPickupPoint && nextSourcePickupPoints.isNotEmpty ? 'Recommended source pickup: ${nextSourcePickupPoints.first.displayName}. ' : ''}'
-          '${_dropoffType == _dropoffHome && nextDestinationPickupPoints.isNotEmpty ? 'Backup pickup priority is based on the customer location. ' : _dropoffType == _dropoffPickupSpecific ? 'Specific pickup is selected manually from all pickup points. ' : ''}'
+          '${_dropoffType == _dropoffHome ? (hasCustomerLocation ? 'Backup pickup priority is based on the customer location. ' : 'Select the customer location on the map to enable backup pickup recommendation. ') : _dropoffType == _dropoffPickupSpecific ? 'Specific pickup is selected manually from all pickup points. ' : ''}'
           'Current route: $sourceLabel → $destinationLabel.';
     } else {
       info =
@@ -1924,7 +1933,9 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       _InfoBox(
                         icon: Icons.pin_drop_outlined,
                         text:
-                            'Backup Pickup Point if Customer is Unavailable. All pickup points are shown, and the closest one to the customer is recommended first.',
+                            _selectedCustomerLat != null && _selectedCustomerLng != null
+                                ? 'Backup Pickup Point if Customer is Unavailable. All pickup points are shown, and the closest one to the customer is recommended first.'
+                                : 'Backup Pickup Point if Customer is Unavailable. All pickup points are shown. Select the customer location on the map first to get the nearest recommendation.',
                         color: _W.blue,
                         background: _W.blueLt,
                       ),
@@ -1937,14 +1948,19 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                           background: _W.amberLt,
                         )
                       else ...[
-                        if (backupPickup != null)
+                        if (_selectedCustomerLat != null &&
+                            _selectedCustomerLng != null &&
+                            backupPickup != null)
                           _InfoBox(
                             icon: Icons.auto_awesome_outlined,
                             text: 'Recommended backup pickup: ${backupPickup.displayName}',
                             color: _W.green,
                             background: _W.greenLt,
                           ),
-                        const SizedBox(height: 10),
+                        if (_selectedCustomerLat != null &&
+                            _selectedCustomerLng != null &&
+                            backupPickup != null)
+                          const SizedBox(height: 10),
                         DropdownButtonFormField<String>(
                           key: ValueKey(
                             'backup-pickup-${_selectedDestinationPickupPointId ?? 'none'}',
@@ -1961,11 +1977,13 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                                 (point) => DropdownMenuItem<String>(
                                   value: point.id,
                                   child: Text(
-                                    point.id == _destinationPickupPoints.first.id
+                                    (_selectedCustomerLat != null &&
+                                            _selectedCustomerLng != null &&
+                                            point.id == _destinationPickupPoints.first.id)
                                         ? 'Recommended • ${point.displayName}'
                                         : point.displayName,
                                     overflow: TextOverflow.ellipsis,
-                                    maxLines: 2,
+                                    maxLines: 1,
                                     style: _t(14, FontWeight.w500),
                                   ),
                                 ),
@@ -2010,7 +2028,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                                   child: Text(
                                     point.displayName,
                                     overflow: TextOverflow.ellipsis,
-                                    maxLines: 2,
+                                    maxLines: 1,
                                     style: _t(14, FontWeight.w500),
                                   ),
                                 ),

@@ -223,6 +223,16 @@ class _MerchantOrderDetailsScreenState
     return value;
   }
 
+  String? _extractAnyNoteField(List<String> labels) {
+    for (final label in labels) {
+      final value = _extractNoteField(label);
+      if (value != null && value.trim().isNotEmpty) {
+        return value;
+      }
+    }
+    return null;
+  }
+
   _MapCoords? _parseCoordsText(String? value) {
     if (value == null || value.trim().isEmpty) return null;
 
@@ -463,6 +473,55 @@ class _MerchantOrderDetailsScreenState
     return _safe(
       _order['customer_address_text'],
       fallback: 'No address provided',
+    );
+  }
+
+
+  String get _backupPickupTitleDisplay {
+    final fromNotes = _extractAnyNoteField([
+      'Backup pickup point',
+      'Backup pickup',
+      'Option 2 — Pickup Point if Customer is Unavailable',
+      'If customer is not at home, send order to this pickup point',
+    ]);
+    if (fromNotes != null) return fromNotes;
+    return '-';
+  }
+
+  String get _backupPickupAddressDisplay {
+    final fromNotes = _extractAnyNoteField([
+      'Option 2 pickup point address',
+      'Option 2 address',
+      'Backup pickup point address',
+      'Backup pickup address',
+    ]);
+    if (fromNotes != null) return fromNotes;
+    return '-';
+  }
+
+  String get _backupPickupCoordinatesDisplay {
+    final fromNotes = _extractAnyNoteField([
+      'Option 2 pickup point coordinates',
+      'Option 2 coordinates',
+      'Backup pickup point coordinates',
+      'Backup pickup coordinates',
+    ]);
+    if (fromNotes != null) return fromNotes;
+    return '-';
+  }
+
+  bool get _hasBackupPickup {
+    return _backupPickupTitleDisplay != '-' ||
+        _backupPickupAddressDisplay != '-' ||
+        _backupPickupCoordinatesDisplay != '-';
+  }
+
+  Future<void> _openBackupPickupInMaps() async {
+    await _openLocationInMaps(
+      coordinatesText: _backupPickupCoordinatesDisplay,
+      address: _backupPickupAddressDisplay != '-'
+          ? _backupPickupAddressDisplay
+          : (_backupPickupTitleDisplay != '-' ? _backupPickupTitleDisplay : null),
     );
   }
 
@@ -973,6 +1032,7 @@ class _MerchantOrderDetailsScreenState
                     iconBg: _W.amberLt,
                     title: 'Delivery Information',
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         _InfoRow(
                           label: 'Pickup Source Type',
@@ -1008,19 +1068,19 @@ class _MerchantOrderDetailsScreenState
                         const Divider(height: 1, color: _W.border),
                         const SizedBox(height: 10),
                         _InfoRow(
-                          label: 'Dropoff Type',
+                          label: 'Option 1 Type',
                           value: _dropoffTypeDisplay,
                         ),
                         _InfoRow(
-                          label: 'Dropoff Destination',
+                          label: 'Option 1 Destination',
                           value: _dropoffDestinationDisplay,
                         ),
                         _InfoRow(
-                          label: 'Dropoff Address',
+                          label: 'Option 1 Address',
                           value: _dropoffAddressDisplay,
                         ),
                         _InfoRow(
-                          label: 'Dropoff Coordinates',
+                          label: 'Option 1 Coordinates',
                           value: _dropoffCoordinatesDisplay,
                           valueColor: _dropoffCoordinatesDisplay != '-'
                               ? _W.blue
@@ -1033,14 +1093,90 @@ class _MerchantOrderDetailsScreenState
                             child: OutlinedButton.icon(
                               onPressed: _openDestinationInMaps,
                               icon: const Icon(Icons.map_outlined),
-                              label: const Text('Open Dropoff in Maps'),
+                              label: const Text('Open Option 1 in Maps'),
+                            ),
+                          ),
+                        ],
+                        if (_hasBackupPickup) ...[
+                          const SizedBox(height: 10),
+                          const Divider(height: 1, color: _W.border),
+                          const SizedBox(height: 10),
+                          Container(
+                            padding: const EdgeInsets.all(12),
+                            decoration: BoxDecoration(
+                              color: _W.blueLt,
+                              borderRadius: BorderRadius.circular(14),
+                              border: Border.all(
+                                color: _W.blue.withOpacity(0.14),
+                                width: 1.4,
+                              ),
+                            ),
+                            child: Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: _W.white,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: const Icon(
+                                    Icons.local_shipping_outlined,
+                                    size: 18,
+                                    color: _W.blue,
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Option 2 — Pickup Point if Customer is Unavailable',
+                                        style: _t(13, FontWeight.w800, color: _W.blue),
+                                      ),
+                                      const SizedBox(height: 4),
+                                      Text(
+                                        'This is the second delivery option saved for the order in case home delivery cannot be completed.',
+                                        style: _t(12, FontWeight.w500, color: _W.blue, height: 1.4),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const SizedBox(height: 10),
+                          _InfoRow(
+                            label: 'Option 2 Pickup Point',
+                            value: _backupPickupTitleDisplay,
+                          ),
+                          _InfoRow(
+                            label: 'Option 2 Address',
+                            value: _backupPickupAddressDisplay,
+                          ),
+                          _InfoRow(
+                            label: 'Option 2 Coordinates',
+                            value: _backupPickupCoordinatesDisplay,
+                            valueColor: _backupPickupCoordinatesDisplay != '-'
+                                ? _W.blue
+                                : null,
+                          ),
+                          const SizedBox(height: 8),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: OutlinedButton.icon(
+                              onPressed: _openBackupPickupInMaps,
+                              icon: const Icon(Icons.map_outlined),
+                              label: const Text('Open Option 2 Pickup in Maps'),
                             ),
                           ),
                         ],
                         if (_hasPinnedLocation) ...[
                           const SizedBox(height: 10),
                           _InfoRow(
-                            label: 'Customer Requested Map',
+                            label: 'Customer Map Pin',
                             value: _mapCoordinatesDisplay,
                             valueColor: _W.blue,
                           ),
