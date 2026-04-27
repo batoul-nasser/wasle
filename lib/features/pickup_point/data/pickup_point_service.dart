@@ -295,14 +295,19 @@ class PickupPointService {
     String? note,
   }) async {
     try {
-      await _db
-          .from('payments')
-          .update({
-            'status': 'paid',
-            'transaction_ref':
-                'PICKUP-AGENT-$orderId-${DateTime.now().millisecondsSinceEpoch}',
-          })
-          .eq('id', paymentId);
+      final token =
+          Supabase.instance.client.auth.currentSession?.accessToken ?? '';
+      final response = await Supabase.instance.client.functions.invoke(
+        'mark_cash_paid',
+        headers: {'Authorization': 'Bearer $token'},
+        body: {'order_id': orderId},
+      );
+
+      if (response.status != 200) {
+        throw Exception(
+          response.data['error'] ?? 'Failed to mark payment as paid',
+        );
+      }
 
       await _db.from('order_events').insert({
         'order_id': orderId,
@@ -329,6 +334,21 @@ class PickupPointService {
       final pp = await getMyPickupPoint();
       if (pp == null) throw Exception('Pickup point not found');
 
+      // Call Edge Function instead of writing directly to payments
+      final token =
+          Supabase.instance.client.auth.currentSession?.accessToken ?? '';
+      final response = await Supabase.instance.client.functions.invoke(
+        'mark_cash_paid',
+        headers: {'Authorization': 'Bearer $token'},
+        body: {'order_id': orderId},
+      );
+
+      if (response.status != 200) {
+        throw Exception(
+          response.data['error'] ?? 'Failed to mark payment as paid',
+        );
+      }
+
       await _db.from('pickup_point_remittances').insert({
         'pickup_point_id': pp['id'].toString(),
         'order_id': orderId,
@@ -339,8 +359,6 @@ class PickupPointService {
         'sent_at': DateTime.now().toUtc().toIso8601String(),
         'created_by': _uid,
       });
-
-      await _db.from('payments').update({'status': 'paid'}).eq('id', paymentId);
 
       await _db.from('order_events').insert({
         'order_id': orderId,

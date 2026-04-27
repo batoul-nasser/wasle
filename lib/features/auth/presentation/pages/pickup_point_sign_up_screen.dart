@@ -299,6 +299,7 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
       await _authService.sendOtp(
         email: email,
         shouldCreateUser: true,
+        data: {'role': 'pickup_point_applicant', 'full_name': ownerName},
       );
 
       if (!mounted) return;

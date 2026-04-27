@@ -49,6 +49,7 @@ class AuthService {
     required String email,
     required bool shouldCreateUser,
     String? emailRedirectTo,
+    Map<String, dynamic>? data,
   }) async {
     if (shouldCreateUser && _client.auth.currentUser != null) {
       await _client.auth.signOut();
@@ -58,6 +59,7 @@ class AuthService {
       email: email,
       shouldCreateUser: shouldCreateUser,
       emailRedirectTo: emailRedirectTo,
+      data: data,
     );
   }
 
