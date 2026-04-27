@@ -11,7 +11,8 @@ class PickupPointSignUpScreen extends StatefulWidget {
   const PickupPointSignUpScreen({super.key});
 
   @override
-  State<PickupPointSignUpScreen> createState() => _PickupPointSignUpScreenState();
+  State<PickupPointSignUpScreen> createState() =>
+      _PickupPointSignUpScreenState();
 }
 
 class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
@@ -31,17 +32,22 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
   static final RegExp _emailRegex = RegExp(r'^[^@]+@[^@]+\.[^@]+');
 
   final TextEditingController ownerNameController = TextEditingController();
-  final TextEditingController pickupPointNameController = TextEditingController();
+  final TextEditingController pickupPointNameController =
+      TextEditingController();
   final TextEditingController phoneController = TextEditingController();
   final TextEditingController emailController = TextEditingController();
   final TextEditingController addressController = TextEditingController();
-  final TextEditingController confirmAddressController = TextEditingController();
+  final TextEditingController confirmAddressController =
+      TextEditingController();
   final TextEditingController cityController = TextEditingController();
   final TextEditingController areaController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
-  final TextEditingController confirmPasswordController = TextEditingController();
-  final TextEditingController commissionValueController = TextEditingController();
-  final TextEditingController maxOrdersPerDayController = TextEditingController();
+  final TextEditingController confirmPasswordController =
+      TextEditingController();
+  final TextEditingController commissionValueController =
+      TextEditingController();
+  final TextEditingController maxOrdersPerDayController =
+      TextEditingController();
   final TextEditingController estimatedStorageSqmController =
       TextEditingController();
   final TextEditingController estimatedCapacityUnitsController =
@@ -50,8 +56,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
   TimeOfDay? opensAt;
   TimeOfDay? closesAt;
 
-  String preferredPaymentMethod = 'customer_pays_at_pickup';
-  String paymentHandlingMethod = 'customer_pays_at_pickup';
+  String preferredPaymentMethod = 'wish_money';
+  String paymentHandlingMethod = 'wish_money';
   String commissionType = 'custom';
   String storageTier = 'medium';
   bool hasShelves = false;
@@ -251,7 +257,9 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
     }
 
     if (estimatedStorageSqm != null && estimatedStorageSqm <= 0) {
-      setState(() => errorText = 'Estimated storage space must be greater than 0.');
+      setState(() {
+        errorText = 'Estimated storage space must be greater than 0.';
+      });
       return;
     }
 
@@ -263,7 +271,9 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
     }
 
     if (commissionType == 'custom') {
-      if (commissionValue == null || commissionValue < 0 || commissionValue > 100) {
+      if (commissionValue == null ||
+          commissionValue < 0 ||
+          commissionValue > 100) {
         setState(() => errorText = 'Commission value must be between 0 and 100.');
         return;
       }
@@ -286,7 +296,9 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
     }
 
     if (password != confirmPassword) {
-      setState(() => errorText = 'Password and confirm password do not match.');
+      setState(
+        () => errorText = 'Password and confirm password do not match.',
+      );
       return;
     }
 
@@ -422,7 +434,9 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
                       children: [
                         Text(
                           'Create your pickup point application',
-                          style: AppTextStyles.heading2.copyWith(color: Colors.white),
+                          style: AppTextStyles.heading2.copyWith(
+                            color: Colors.white,
+                          ),
                         ),
                         const SizedBox(height: AppSpacing.xxs),
                         Text(
@@ -548,27 +562,36 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
                   ),
                   const SizedBox(height: AppSpacing.md),
                   DropdownButtonFormField<String>(
-                    initialValue: storageTier,
+                    initialValue: paymentHandlingMethod,
                     decoration: const InputDecoration(
-                      labelText: 'Storage Size',
-                      prefixIcon: Icon(Icons.warehouse_outlined),
+                      labelText:
+                          'How will this pickup point send money to Wasle?',
+                      prefixIcon: Icon(Icons.payments_outlined),
                     ),
                     items: const [
-                      DropdownMenuItem(value: 'small', child: Text('Small')),
-                      DropdownMenuItem(value: 'medium', child: Text('Medium')),
-                      DropdownMenuItem(value: 'large', child: Text('Large')),
+                      DropdownMenuItem<String>(
+                        value: 'wish_money',
+                        child: Text('Pickup Point Sends by Whish'),
+                      ),
+                      DropdownMenuItem<String>(
+                        value: 'agent_collection',
+                        child: Text('Wasle Agent Collects from Pickup Point'),
+                      ),
                     ],
                     onChanged: (value) {
                       if (value == null) return;
                       setState(() {
-                        storageTier = value;
+                        paymentHandlingMethod = value;
+                        preferredPaymentMethod = value;
                       });
                     },
                   ),
                   const SizedBox(height: AppSpacing.md),
                   TextField(
                     controller: estimatedStorageSqmController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(
                       labelText: 'Estimated Storage Space (sqm)',
                       prefixIcon: Icon(Icons.square_foot_outlined),
@@ -602,9 +625,18 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
                       prefixIcon: Icon(Icons.percent_rounded),
                     ),
                     items: const [
-                      DropdownMenuItem(value: 'custom', child: Text('Custom')),
-                      DropdownMenuItem(value: 'plan', child: Text('Plan Based')),
-                      DropdownMenuItem(value: 'negotiated', child: Text('Negotiated')),
+                      DropdownMenuItem(
+                        value: 'custom',
+                        child: Text('Custom'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'plan',
+                        child: Text('Plan Based'),
+                      ),
+                      DropdownMenuItem(
+                        value: 'negotiated',
+                        child: Text('Negotiated'),
+                      ),
                     ],
                     onChanged: (value) {
                       if (value == null) return;
@@ -616,40 +648,13 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
                   const SizedBox(height: AppSpacing.md),
                   TextField(
                     controller: commissionValueController,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
                     decoration: const InputDecoration(
                       labelText: 'Commission Value (%)',
                       prefixIcon: Icon(Icons.request_quote_outlined),
                     ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  DropdownButtonFormField<String>(
-                    initialValue: paymentHandlingMethod,
-                    decoration: const InputDecoration(
-                      labelText: 'Payment Handling Method',
-                      prefixIcon: Icon(Icons.payments_outlined),
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'customer_pays_at_pickup',
-                        child: Text('Customer Pays At Pickup'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'customer_pays_online',
-                        child: Text('Customer Pays Online (Whish)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'hybrid',
-                        child: Text('Hybrid'),
-                      ),
-                    ],
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setState(() {
-                        paymentHandlingMethod = value;
-                        preferredPaymentMethod = value;
-                      });
-                    },
                   ),
                   const SizedBox(height: AppSpacing.md),
                   ListTile(
@@ -683,7 +688,9 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
                   OutlinedButton.icon(
                     onPressed: _pickIdImage,
                     icon: const Icon(Icons.badge_outlined),
-                    label: Text(idImageName ?? 'Upload ID Verification Image'),
+                    label: Text(
+                      idImageName ?? 'Upload ID Verification Image',
+                    ),
                   ),
                   _buildImagePreview(idImageBytes),
                   const SizedBox(height: AppSpacing.sm),

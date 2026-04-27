@@ -1,0 +1,213 @@
+{\rtf1\ansi\deff0
+{\fonttbl{\f0 Calibri;}}
+\fs24
+\b WASLE Revised Report Sections\b0\par
+\par
+\b Abstract\b0\par
+Last-mile delivery is one of the most complex and costly segments of modern logistics, accounting for a significant share of total supply chain costs worldwide. In Lebanon, this challenge is further intensified by fragmented infrastructure, the absence of formal addressing systems, a largely cash-based economy, and the lack of integrated platforms capable of coordinating the multiple actors involved in delivery operations.\par
+\par
+This project presents WASLE, a smart pickup-point delivery coordination platform designed to address these challenges by supporting five key user roles: customers, merchants, drivers, delivery companies, and pickup point operators within a unified digital platform. The objective is to provide a secure, scalable, and efficient alternative to traditional home delivery models while improving logistics coordination in underserved areas.\par
+\par
+The system was developed using Flutter for the cross-platform frontend and Supabase for the backend, integrating database management, OTP-based authentication, real-time synchronization, and server-side business logic through Edge Functions. In addition to role-based access control and backend constraints, the platform implements a smart automated order assignment system that assigns orders to eligible drivers based on delivery company affiliation, vehicle capacity constraints, and estimated route cost.\par
+\par
+To support accurate and reliable assignment decisions, the routing subsystem was implemented using a Supabase Edge Function integrated with the Google Distance Matrix API to estimate travel duration and distance. A database-backed caching mechanism was introduced to reduce redundant API calls and improve performance, while a Haversine-based fallback strategy ensures service continuity when external routing services are unavailable.\par
+\par
+The platform was validated through both functional and performance-oriented testing. The evaluation confirmed correct same-company filtering, capacity-aware driver selection, route-based optimization, fallback behavior, and reliable route persistence. Iterative refinements also addressed reliability and efficiency issues encountered during development, including query behavior and upload-related bottlenecks.\par
+\par
+The final system is production-ready and demonstrates strong potential to reduce delivery costs, improve assignment efficiency, and enhance the scalability of last-mile logistics operations. More broadly, WASLE highlights how well-designed digital platforms can address complex delivery challenges while creating meaningful economic and societal impact.\par
+\par
+\b Acknowledgements\b0\par
+We would like to express our sincere gratitude to our supervisor, Eng. Youssef Tohme, for his continuous guidance, constructive feedback, and valuable support throughout the development of this project. His insights and vision regarding application ideas and overall concept development played a crucial role in shaping the direction and quality of this work. His continuous follow-up, detailed notes, and feedback helped us better understand the application, identify missing aspects, and improve our work in the best possible way.\par
+\par
+We would also like to extend our sincere appreciation to Eng. Marc Al Aaraj for his valuable support on the business side of the project, particularly in guiding us through the design of the payment system and helping us understand how payment operations should be structured from a real-world business perspective.\par
+\par
+In addition, we would like to thank Eng. Rawad for his technical support and readiness to assist us in resolving various technical challenges encountered during the development process. His input was highly appreciated whenever we faced implementation difficulties.\par
+\par
+We also extend our appreciation to the faculty and staff of the Ecole Superieure d'Ingenieurs de Beyrouth (ESIB) at Universite Saint-Joseph de Beyrouth for providing the academic environment and resources necessary to successfully complete this project. Despite the challenging circumstances faced during this period, their continuous support and commitment allowed us to pursue our work and complete this project effectively.\par
+\par
+This work would not have been possible without the contributions of the open-source communities behind Flutter, Supabase, and the Dart ecosystem, whose tools and documentation significantly facilitated the development process.\par
+\par
+Finally, we would like to thank our families for their patience, encouragement, and continuous support throughout the semester.\par
+\par
+\b List of Abbreviations\b0\par
+API\tab Application Programming Interface\par
+COD\tab Cash on Delivery\par
+DB\tab Database\par
+HTTP\tab Hypertext Transfer Protocol\par
+HTTPS\tab Hypertext Transfer Protocol Secure\par
+JSON\tab JavaScript Object Notation\par
+JWT\tab JSON Web Token\par
+OTP\tab One-Time Password\par
+REST\tab Representational State Transfer\par
+RLS\tab Row-Level Security\par
+SQL\tab Structured Query Language\par
+UI\tab User Interface\par
+URL\tab Uniform Resource Locator\par
+UUID\tab Universally Unique Identifier\par
+\par
+\b 1 Introduction\b0\par
+Last-mile delivery, the final segment of the supply chain connecting a distribution hub to the end customer, is widely recognized as one of the most operationally complex and costly phases of the logistics process. This complexity arises from several factors, including the high variability of delivery destinations, the difficulty of coordinating multiple independent actors, frequent failed delivery attempts that require re-delivery, and the absence of integrated digital platforms capable of managing stakeholder interactions within a unified workflow.\par
+\par
+In Lebanon, these global challenges are further intensified by country-specific structural constraints. These include fragmented road infrastructure, the absence of a formal national addressing system, a predominantly cash-based economy, and a logistics ecosystem composed largely of small, independent delivery companies operating without formal dispatch systems. As a result, the rapid growth of e-commerce continues to outpace the development of reliable delivery infrastructure, creating major operational inefficiencies for merchants, particularly small and medium-sized businesses.\par
+\par
+The complexity of the problem is further amplified by the involvement of multiple stakeholders in a typical delivery transaction. These include the merchant who creates the order, the delivery company responsible for dispatch, the driver executing the delivery, the customer expecting order visibility, and the pickup point operator acting as an intermediate collection node. In addition to physical delivery coordination, the process also involves payment handling and financial remittance, especially in cash-on-delivery scenarios. Coordinating these roles and workflows within a secure and consistent digital platform represents a complex engineering challenge with no single obvious solution.\par
+\par
+Beyond coordination alone, effective last-mile delivery also requires intelligent operational decision-making. Assigning the right order to the right driver depends not only on availability, but also on company affiliation, vehicle capacity, and route efficiency. This transforms the problem from a simple communication issue into a constrained logistics optimization problem involving multiple technical and business constraints.\par
+\par
+\b 1.1 Problem Identification\b0\par
+Traditional logistics coordination in Lebanon relies on fragmented communication channels, primarily WhatsApp groups and phone calls, between merchants, dispatch centers, and drivers. This approach is error-prone, lacks traceability, and does not scale effectively. The absence of structured driver assignment workflows, route-aware dispatching, capacity-aware delivery validation, clear order lifecycle management, standardized pickup point procedures, and integrated payment reconciliation results in inefficient and opaque operations.\par
+\par
+Furthermore, cash-on-delivery transactions, which represent a major share of payments, are often handled manually, leading to financial inconsistencies and reconciliation issues. When pickup points are involved, the problem extends beyond parcel handover to include the secure transfer of collected funds back to the platform or merchant ecosystem. Without a formal remittance workflow, these transactions remain difficult to track, verify, and audit.\par
+\par
+These characteristics confirm that the WASLE problem is a complex engineering problem: it involves multiple interdependent stakeholders with partially conflicting requirements, lacks a straightforward solution, requires the integration of software engineering, logistics coordination, routing intelligence, and secure financial workflow design, and has significant economic, social, and operational consequences.\par
+\par
+\b 1.2 Project Objectives and Outcomes\b0\par
+The main objective of the WASLE project is to design and implement a secure, scalable, and multi-role delivery coordination platform based on a pickup-point model.\par
+\par
+The specific objectives are as follows:\par
+Develop a unified delivery coordination platform with interfaces for customers, merchants, drivers, delivery companies, and pickup point operators.\par
+Implement a secure OTP-based authentication system with role-based access control and protected backend data access.\par
+Design and deploy a smart automated order assignment system that enforces same-company assignment, vehicle-capacity constraints, and route-based driver selection.\par
+Develop a structured pickup point workflow for parcel handling, cash collection, and remittance tracking.\par
+Support both digital and cash-based payment flows, including online payment initiation, cash confirmation, and fallback collection mechanisms where digital remittance is unavailable.\par
+Implement a routing subsystem capable of estimating travel duration and distance while maintaining reliability through caching and fallback estimation.\par
+Validate system behavior through functional testing and performance-oriented evaluation.\par
+\par
+The expected outcomes include a fully functional prototype, secure data access mechanisms, efficient order lifecycle management, improved coordination between all stakeholders, more reliable and cost-efficient driver assignment decisions, and more transparent financial handling of cash-on-delivery transactions.\par
+\par
+\b 1.3 Report Outline\b0\par
+This report is organized as follows. Section 2 presents the functional requirements and constraints of the system. Section 3 reviews existing solutions and related work. Section 4 describes the proposed solution design, including alternative comparisons and system modeling. Section 5 outlines project management and planning. Section 6 details system implementation, testing, and iterative improvements. Section 7 evaluates the impact of the proposed solution. Finally, Section 8 concludes the report and discusses future work.\par
+\par
+\b 2 Problem Requirements and Constraints\b0\par
+\b 2.1 Functional Requirements\b0\par
+The functional requirements of the WASLE platform define the core system behaviors necessary to satisfy the needs of its five primary user roles: customers, merchants, drivers, delivery companies, and pickup point operators. These requirements were identified through stakeholder analysis and system use-case modeling. To ensure clarity and prioritization, the MoSCoW method was applied.\par
+\par
+The requirements are organized around key system functionalities, including authentication, order lifecycle management, payment handling, real-time communication, remittance workflows, administrative control, and automated delivery assignment. Each requirement contributes to ensuring system reliability, security, and scalability within a multi-role distributed environment.\par
+\par
+ID\tab Requirement\tab Description\tab Priority\par
+FR-01\tab Multi-role registration\tab The system shall support separate registration flows for customers, merchants, drivers, delivery companies, and pickup point applicants, each capturing role-specific profile data.\tab Must Have\par
+FR-02\tab OTP email authentication\tab All self-registered users shall authenticate using an 8-digit OTP sent to a verified email address; password-based authentication is not supported for standard user flows.\tab Must Have\par
+FR-03\tab Role-based dashboard routing\tab Upon authentication, the system shall route each user to a role-specific dashboard exposing only the functions applicable to that role.\tab Must Have\par
+FR-04\tab Merchant order creation\tab Merchants shall create delivery orders specifying customer details, delivery address, COD amount, delivery company, and optionally a pickup point destination.\tab Must Have\par
+FR-05\tab Linked payment creation\tab The system shall create a corresponding payment record whenever a new order is created, ensuring that order and payment data remain synchronized.\tab Must Have\par
+FR-06\tab Automated driver assignment\tab The system shall automatically assign orders to eligible approved drivers while enforcing same-company ownership, order-state constraints, vehicle-capacity compatibility, and route-based selection.\tab Must Have\par
+FR-07\tab Driver verification workflow\tab New drivers shall require approval by a delivery company administrator before accessing operational features.\tab Must Have\par
+FR-08\tab Real-time order status updates\tab Authorized stakeholders shall receive real-time updates as the order progresses through its lifecycle states.\tab Must Have\par
+FR-09\tab Customer order tracking\tab Customers shall be able to track active orders by viewing their current delivery status and related order information.\tab Must Have\par
+FR-10\tab Pickup point application workflow\tab Applicants shall submit a structured pickup point application with verification photographs; the application shall enter a pending, approved, or rejected administrative workflow.\tab Must Have\par
+FR-11\tab Online payment initiation\tab The system shall support secure initialization of online customer payments through an external payment provider.\tab Should Have\par
+FR-12\tab Real-time payment status updates\tab Customers and authorized operators shall receive updated payment status information without requiring manual page refresh.\tab Should Have\par
+FR-13\tab Cash remittance management\tab Pickup point operators shall record and confirm cash-on-delivery payment transmission to the platform through the supported remittance workflow.\tab Must Have\par
+FR-14\tab Field-agent fallback collection\tab The system shall support a fallback process in which an authorized field agent confirms physical collection of cash when a pickup point cannot remit digitally.\tab Should Have\par
+FR-15\tab Driver location updates\tab The system shall allow active drivers to update their GPS coordinates through the platform for location-aware operations.\tab Should Have\par
+FR-16\tab Order and payment audit log\tab The system shall maintain a complete and chronological record of relevant order and payment state transitions accessible to authorized users.\tab Must Have\par
+FR-17\tab Order cancellation\tab Merchants shall be able to request cancellation of undelivered orders with a mandatory reason field.\tab Should Have\par
+FR-18\tab Driver company request\tab Registered drivers shall submit join requests to delivery companies, and companies shall approve or reject these requests.\tab Must Have\par
+FR-19\tab Company driver management\tab Delivery company administrators shall view, approve, and manage their approved driver fleet.\tab Must Have\par
+FR-20\tab Agent administration\tab Platform administrators shall be able to create and manage field agent accounts used for fallback cash collection operations.\tab Should Have\par
+FR-21\tab Vehicle capacity assignment\tab The system shall assign predefined capacity limits to each driver based on the selected vehicle type, including weight, volume, and item-count constraints.\tab Must Have\par
+FR-22\tab Route estimation and fallback\tab The system shall estimate travel duration and distance for assignment decisions using an external routing service, reuse cached route results when available, and apply fallback estimation when the routing service is unavailable.\tab Must Have\par
+\par
+\b 2.2 Constraints\b0\par
+\b 2.2.1 Technical Constraints\b0\par
+The technical constraints define the measurable system limitations and implementation requirements necessary for the WASLE platform to operate efficiently, securely, and reliably within a multi-role distributed environment.\par
+\par
+Performance: The platform shall provide responsive API and database interactions under normal mobile network conditions, with particular attention to reducing latency in common operations such as order retrieval, authentication, automated assignment, route estimation, and payment-status updates.\par
+\par
+Operational Reliability: The automated order assignment workflow shall always return a valid system outcome, such as successful assignment, rejection due to business rules, or a descriptive failure message when assignment cannot be completed. Routing operations shall also return a valid result through either live API estimation, cached results, or fallback estimation.\par
+\par
+Security: Sensitive backend credentials, including privileged Supabase keys, Google Maps API credentials, and external payment-provider credentials, shall never be exposed to the client application. Privileged operations shall be restricted to trusted backend services and Edge Functions.\par
+\par
+Payment Integrity: Payment state transitions shall not be performed directly from the Flutter client. Instead, they shall be routed through controlled backend functions to preserve financial consistency and auditability.\par
+\par
+Authentication: JWT session tokens shall expire within 3,600 seconds (1 hour), with refresh token rotation enabled to reduce the risk of session hijacking.\par
+\par
+Compatibility: The Flutter application shall target commonly used Android and iOS mobile devices supported by the project configuration and Flutter toolchain.\par
+\par
+Database Integrity: Order lifecycle transitions, automated assignment decisions, route persistence, and payment-related state changes shall be validated against predefined business rules to ensure consistency and prevent invalid operations.\par
+\par
+Image Handling: Verification images submitted during pickup point application shall be uploaded in a format suitable for mobile networks and backend storage, while maintaining sufficient quality for administrative review.\par
+\par
+Capacity Enforcement: Automated assignment shall enforce vehicle-capacity constraints such that the current assigned load plus the new order demand does not exceed the driver's capacity limits in terms of weight, volume, and item count.\par
+\par
+Routing Cost Control: The routing subsystem shall minimize unnecessary external API calls by reusing cached route estimates whenever possible in order to control operational cost and improve scalability.\par
+\par
+\b 2.2.2 Non-technical Constraints\b0\par
+In addition to technical limitations, the WASLE platform must satisfy several non-technical constraints related to usability, legal compliance, and operational feasibility.\par
+\par
+Accessibility and Usability: The user interface shall be intuitive and accessible to users with limited technical knowledge, following Material Design principles and mobile usability best practices.\par
+\par
+Legal Considerations: The system shall adopt GDPR principles as best practice, including data minimization and the ability for users to request deletion of their personal data.\par
+\par
+Safety and Trust: Drivers and pickup point applicants shall undergo verification or approval procedures before receiving access to operational platform features.\par
+\par
+Economic Accessibility: The platform shall require no specialized hardware and shall operate on standard consumer smartphones.\par
+\par
+Schedule: The Minimum Viable Product shall be designed, implemented, and tested within the academic semester timeline.\par
+\par
+Sustainability: Real-time updates shall rely primarily on event-driven synchronization mechanisms rather than continuous polling, reducing unnecessary network and energy consumption. In addition, route caching contributes to reduced external API usage and lower computational overhead.\par
+\par
+Maintainability: The codebase shall follow a modular, feature-based architecture with clear separation between data, business logic, and presentation layers.\par
+\par
+Constructability and physical safety constraints: These are not applicable, as the project is purely software-based.\par
+\par
+\b 2.2.3 Standards / Codes / Regulations / Policies\b0\par
+The WASLE platform is designed in alignment with recognized standards and best practices intended to improve security, reliability, and usability.\par
+\par
+OWASP Mobile Security Testing Guide (MSTG): The project follows secure mobile development practices such as protecting secrets, avoiding insecure local storage of sensitive credentials, and using secure network communication.\par
+\par
+ISO/IEC 27001:2022: The system's authentication and access-control approach is conceptually aligned with information security management principles related to access restriction and secure handling of data.\par
+\par
+OAuth 2.0 / token-based authentication practices: Supabase authentication relies on token-based session management using JWTs, supporting secure authentication workflows.\par
+\par
+GDPR: The platform adopts GDPR-inspired principles such as data minimization and user-data protection as best practice.\par
+\par
+Material Design 3: The frontend follows Material-based design principles for usability, consistency, and accessibility.\par
+\par
+PostgreSQL access-control mechanisms: The backend design incorporates database-side access restrictions, validation mechanisms, and controlled workflow enforcement to support data isolation and secure coordination between system roles.\par
+\par
+\b 3.1 Background\b0\par
+The challenge of last-mile logistics has been a subject of academic and industrial research for more than two decades. Early work by Punakivi, Yrjola, and Holmstrom (2001) showed that unattended delivery reception solutions can significantly reduce last-mile delivery costs, in some scenarios by up to 60% compared with traditional home delivery, mainly by reducing failed delivery attempts and enabling route consolidation [5]. This foundational insight supports the core logic behind the pickup-point model adopted in WASLE.\par
+\par
+The emergence of gig-economy delivery platforms during the 2010s demonstrated the practical feasibility of coordinating multiple stakeholders through mobile applications, connecting merchants, couriers, and customers through unified digital workflows. However, these platforms were largely designed for dense urban environments with mature mapping infrastructure and often rely on commission models or service structures that are not necessarily suitable for low-margin merchants in semi-urban or infrastructure-constrained contexts [6].\par
+\par
+More recent research has examined the environmental implications of last-mile delivery models. Several studies suggest that pickup points and parcel lockers can reduce transport inefficiencies and lower emissions compared with repeated home-delivery attempts, particularly when delivery routes are consolidated and consumer travel to collection points remains limited [7]. This body of research is directly relevant to the environmental rationale of the WASLE platform.\par
+\par
+Recent logistics research also emphasizes the importance of intelligent dispatching, routing optimization, and resource-aware assignment in improving delivery efficiency. In practical systems, assignment quality depends not only on driver availability, but also on route cost, operational constraints, and delivery capacity. This perspective is directly reflected in WASLE through its automated assignment logic, which combines business constraints with route-based decision-making.\par
+\par
+In the Lebanese context, parcel collection through neighborhood shops or informal local businesses is already practiced in an unstructured manner. WASLE builds on this existing social and logistical behavior by formalizing it within a digital platform that introduces traceability, coordination, payment accountability, auditable remittance workflows, and automated order-assignment support.\par
+\par
+\b 3.2 Local Market Solutions (Toters)\b0\par
+Toters is a prominent Lebanese on-demand delivery platform offering mobile-first coordination for food, grocery, and other local store deliveries, with real-time order tracking and driver visibility features [8]. It demonstrates the viability of app-based delivery coordination in the Lebanese market. However, its operating model is primarily oriented toward on-demand consumer delivery rather than structured e-commerce parcel fulfillment. In addition, it does not provide an open coordination platform for independent delivery companies, nor does it formalize community businesses as pickup points with dedicated cash remittance workflows.\par
+\par
+From an operational perspective, Toters is also centered on platform-managed delivery execution rather than a configurable multi-stakeholder assignment environment. It does not expose a capacity-aware and company-constrained automated assignment model tailored to independent delivery networks.\par
+\par
+\b 3.3 Logistics Providers (Aramex Lebanon)\b0\par
+Aramex Lebanon represents the local presence of a regional logistics provider offering parcel shipping, courier services, and shipment tracking capabilities [9]. Aramex provides a professional logistics service with established operational processes and reliable tracking infrastructure. However, its model is closer to that of a conventional logistics operator than an open digital coordination platform. It does not provide a multi-stakeholder environment in which independent delivery companies, pickup point operators, merchants, and drivers can collaborate through a shared workflow, and it does not include a localized pickup point enrollment mechanism or payment-remittance model tailored to neighborhood-scale logistics.\par
+\par
+Moreover, its service model does not focus on automated driver assignment under localized business constraints such as same-company matching, vehicle-capacity filtering, and lightweight route optimization within a shared platform ecosystem.\par
+\par
+\b 3.4 Global Pickup-Point Networks\b0\par
+Mature pickup-point implementations such as DHL Packstation in Germany and Amazon Locker in the United States illustrate the scalability and user acceptance of the pickup-point model in advanced logistics markets [10], [11]. These systems demonstrate that redirecting deliveries to collection nodes can improve convenience and reduce failed home delivery attempts. However, they are generally proprietary and depend on dedicated physical infrastructure, specialized lockers, and large-scale capital investment. They also do not address the specific operational requirement of community-level cash remittance handling in a cash-dominant environment.\par
+\par
+WASLE adapts the same underlying concept to the Lebanese context by relying on existing community businesses as pickup points, thereby reducing infrastructure costs and making deployment more feasible in a resource-constrained environment. In addition, unlike static pickup-point networks, WASLE integrates routing-aware and capacity-aware automated assignment logic to improve operational efficiency within a distributed local delivery ecosystem.\par
+\par
+\b 3.5 Critical Comparison of Existing Solutions\b0\par
+The following table summarizes the comparative evaluation of existing solutions against the WASLE platform based on key operational and functional criteria.\par
+\par
+Criterion\tab DHL / FedEx\tab Glovo / Rappi\tab Toters LB\tab Aramex LB\tab WASLE\par
+Multi-role coordination\tab Partial\tab Partial\tab Partial\tab Partial\tab Full\par
+Open pickup-point network\tab No\tab No\tab No\tab No\tab Yes\par
+Cash remittance tracking\tab No\tab No\tab No\tab No\tab Yes\par
+Driver verification flow\tab Internal\tab Internal\tab Internal / limited public visibility\tab Internal\tab Yes\par
+Support for semi-urban / underserved areas\tab Limited\tab Limited\tab Limited\tab Partial\tab Designed for this context\par
+Accessibility for SMEs / small merchants\tab Limited\tab Partial\tab Partial\tab Partial\tab High\par
+Specialized infrastructure required\tab Yes\tab No\tab No\tab No\tab No\par
+Automated driver assignment\tab Internal\tab Platform-managed\tab Partial / opaque\tab Limited public evidence\tab Yes\par
+Capacity-aware assignment constraints\tab Internal\tab Limited public evidence\tab Limited public evidence\tab Limited public evidence\tab Yes\par
+Route-aware assignment logic\tab Internal\tab Platform-managed\tab Partial / opaque\tab Limited public evidence\tab Yes\par
+\par
+The comparative analysis demonstrates that existing solutions address only isolated aspects of the WASLE problem space. None provides an integrated platform that combines multi-role coordination, open pickup-point enrollment, formalized cash remittance management, and accessibility for semi-urban environments. In addition, the automated assignment capabilities of most existing solutions are either internal, opaque, or not adapted to the operational realities of independent delivery networks.\par
+\par
+The main innovation of WASLE lies in the formalization of community businesses as active, digitally managed, and financially accountable logistics nodes, thereby enabling a scalable and cost-efficient alternative to traditional last-mile delivery models. This innovation is further strengthened by the integration of automated driver assignment based on company constraints, vehicle capacity, and route estimation, making the platform both operationally practical and technically intelligent.\par
+}

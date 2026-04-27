@@ -138,30 +138,33 @@ class AgentService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getCollectionHistory({String? agentId}) async {
-    try {
-      var query = _db.from('agent_collections').select(
-          'id, agent_id, order_id, amount, status, note, collected_at, '
-          'profiles!agent_collections_agent_id_fkey(full_name, phone), '
-          'pickup_points(name, address_text)');
+Future<List<Map<String, dynamic>>> getCollectionHistory({String? agentId}) async {
+  try {
+    var query = _db.from('agent_collections').select(
+      'id, agent_id, order_id, amount, status, note, collected_at, '
+      'profiles!agent_collections_agent_id_fkey(full_name, phone), '
+      'pickup_points(name, address_text), '
+      'orders(tracking_code, customer_name, customer_phone, status)',
+    );
 
-      if (agentId != null) {
-        query = query.eq('agent_id', agentId);
-      }
-
-      final rows = await query.order('collected_at', ascending: false);
-      return List<Map<String, dynamic>>.from(rows);
-    } catch (e) {
-      debugPrint('[AgentService] getCollectionHistory: $e');
-      return [];
+    if (agentId != null) {
+      query = query.eq('agent_id', agentId);
     }
-  }
 
-  Future<List<Map<String, dynamic>>> getMyCollections() async {
-    final uid = _uid;
-    if (uid == null) return [];
-    return getCollectionHistory(agentId: uid);
+    final rows = await query.order('collected_at', ascending: false);
+    return List<Map<String, dynamic>>.from(rows);
+  } catch (e) {
+    debugPrint('[AgentService] getCollectionHistory: $e');
+    return [];
   }
+}
+
+
+Future<List<Map<String, dynamic>>> getMyCollections() async {
+  final uid = _uid;
+  if (uid == null) return [];
+  return getCollectionHistory(agentId: uid);
+}
 
   Future<double> getTotalPendingAgentCash() async {
     try {

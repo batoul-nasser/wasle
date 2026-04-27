@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/ui/ui.dart';
+import 'package:wasle/features/auth/data/auth_service.dart';
 import 'package:wasle/features/pickup_point/data/pickup_point_repository.dart';
 import 'package:wasle/features/pickup_point/presentation/pages/pickup_point_dashboard_screen.dart';
 
@@ -17,6 +18,7 @@ class PickupDashboardScreen extends StatefulWidget {
 
 class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
   final PickupPointRepository _repository = PickupPointRepository();
+  final AuthService _authService = AuthService();
   final TextEditingController searchController = TextEditingController();
   final ImagePicker _imagePicker = ImagePicker();
 
@@ -29,6 +31,10 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
   String selectedFilter = 'all';
   String? selectedPickupPointId;
   StreamSubscription<List<Map<String, dynamic>>>? _ordersSubscription;
+
+  double _averageRating = 0.0;
+  int _reviewCount = 0;
+  List<Map<String, dynamic>> _pickupPointReviews = [];
 
   bool get _isDemoMode => selectedPickupPointId == 'demo-pickup-point';
 
@@ -44,8 +50,9 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
 
   IconData _vehicleIcon(String? value) {
     final text = value?.trim().toLowerCase() ?? '';
-    if (text.contains('moto') || text.contains('bike'))
+    if (text.contains('moto') || text.contains('bike')) {
       return Icons.two_wheeler_rounded;
+    }
     return Icons.directions_car_filled_rounded;
   }
 
@@ -62,27 +69,57 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
     super.dispose();
   }
 
+  Future<void> _loadPickupPointRatingAndFeedback() async {
+    final pickupPointId = pickupPointData?['id']?.toString();
+    if (pickupPointId == null || pickupPointId.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _averageRating = 0.0;
+        _reviewCount = 0;
+        _pickupPointReviews = [];
+      });
+      return;
+    }
+
+    final summaries = await _authService.getPickupPointRatingSummaries([
+      pickupPointId,
+    ]);
+    final reviews = await _authService.getPickupPointReviews(pickupPointId);
+    final summary = summaries[pickupPointId] ?? const <String, dynamic>{};
+
+    if (!mounted) return;
+    setState(() {
+      _averageRating = (summary['average'] as num?)?.toDouble() ?? 0.0;
+      _reviewCount = (summary['count'] as int?) ?? 0;
+      _pickupPointReviews = reviews;
+    });
+  }
+
   Future<void> _loadDashboard() async {
     try {
       setState(() {
         isLoading = true;
         errorText = null;
       });
+
       final pickupPoint = await _repository.getMyPickupPoint();
       if (pickupPoint == null) {
         if (!mounted) return;
         _loadDemoData(message: 'No pickup point linked. Showing demo data.');
         return;
       }
+
       final pickupPointId = pickupPoint['id']?.toString();
       if (pickupPointId == null || pickupPointId.isEmpty) {
         if (!mounted) return;
         _loadDemoData(message: 'Pickup point ID missing. Showing demo data.');
         return;
       }
+
       final parcelRows = await _repository.getPickupPointParcels(
         pickupPointId: pickupPointId,
       );
+
       if (!mounted) return;
       setState(() {
         selectedPickupPointId = pickupPointId;
@@ -91,6 +128,8 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
         isLoading = false;
         errorText = null;
       });
+
+      await _loadPickupPointRatingAndFeedback();
       _subscribeToRealtime(pickupPointId);
     } catch (e) {
       if (!mounted) return;
@@ -104,8 +143,12 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
       pickupPointData = {
         'id': 'demo-pickup-point',
         'name': 'Hamra Pickup Point',
+        'owner_name': 'Owner',
         'address_text': 'Beirut, Hamra Main Street',
+        'phone': '+961 70 000 000',
         'status': 'active',
+        'preferred_payment_method': 'wish_money',
+        'payment_handling_method': 'wish_money',
       };
       parcels = [
         {
@@ -121,7 +164,7 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
         },
         {
           'order_id': 'ORD-1002',
-          'status': 'received_at_pickup_point',
+          'status': 'dropped_at_pickup_point',
           'customer_name': 'Sara',
           'customer_phone': '+961 70 222 222',
           'delivery_company_name': 'Quick Express',
@@ -153,6 +196,20 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
           'delivery_assigned_at': DateTime.now().toIso8601String(),
         },
       ];
+      _averageRating = 4.5;
+      _reviewCount = 12;
+      _pickupPointReviews = [
+        {
+          'customer_name': 'Ahmad',
+          'rating': 5,
+          'comment': 'Very helpful and fast.',
+        },
+        {
+          'customer_name': 'Sara',
+          'rating': 4,
+          'comment': 'Good service and easy pickup.',
+        },
+      ];
       isLoading = false;
       errorText = message;
     });
@@ -163,19 +220,20 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
     _ordersSubscription = _repository
         .watchPickupPointOrders(pickupPointId)
         .listen((_) async {
-          final refreshed = await _repository.getPickupPointParcels(
-            pickupPointId: pickupPointId,
-          );
-          if (!mounted) return;
-          setState(() {
-            parcels = refreshed;
-          });
-        });
+      final refreshed = await _repository.getPickupPointParcels(
+        pickupPointId: pickupPointId,
+      );
+      if (!mounted) return;
+      setState(() {
+        parcels = refreshed;
+      });
+    });
   }
 
   Future<void> _refreshParcels() async {
     final pickupPointId = selectedPickupPointId;
     if (pickupPointId == null || pickupPointId.isEmpty) return;
+
     final refreshed = await _repository.getPickupPointParcels(
       pickupPointId: pickupPointId,
     );
@@ -196,6 +254,7 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
       ).showSnackBar(const SnackBar(content: Text('Demo mode only.')));
       return;
     }
+
     try {
       setState(() => isSubmitting = true);
       await _repository.updateParcelStatus(
@@ -224,8 +283,10 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
       ).showSnackBar(const SnackBar(content: Text('Demo mode only.')));
       return;
     }
+
     final pickupPointId = selectedPickupPointId;
     if (pickupPointId == null) return;
+
     final descriptionController = TextEditingController();
     String issueType = 'damaged';
     Uint8List? selectedImageBytes;
@@ -278,8 +339,9 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
                       DropdownMenuItem(value: 'other', child: Text('Other')),
                     ],
                     onChanged: (value) {
-                      if (value != null)
+                      if (value != null) {
                         setDialogState(() => issueType = value);
+                      }
                     },
                   ),
                   const SizedBox(height: 12),
@@ -356,6 +418,7 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
         },
       ),
     );
+
     descriptionController.dispose();
   }
 
@@ -411,18 +474,15 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
   List<Map<String, dynamic>> _filteredParcels() {
     final query = searchController.text.trim().toLowerCase();
     final normalizedQuery = _normalizePhone(searchController.text.trim());
+
     return parcels.where((parcel) {
       final matchesSearch =
           query.isEmpty ||
-          (parcel['order_id']?.toString().toLowerCase() ?? '').contains(
-            query,
-          ) ||
-          (parcel['customer_name']?.toString().toLowerCase() ?? '').contains(
-            query,
-          ) ||
-          (parcel['customer_phone']?.toString().toLowerCase() ?? '').contains(
-            query,
-          ) ||
+          (parcel['order_id']?.toString().toLowerCase() ?? '').contains(query) ||
+          (parcel['customer_name']?.toString().toLowerCase() ?? '')
+              .contains(query) ||
+          (parcel['customer_phone']?.toString().toLowerCase() ?? '')
+              .contains(query) ||
           (parcel['delivery_company_name']?.toString().toLowerCase() ?? '')
               .contains(query) ||
           (parcel['delivery_driver_name']?.toString().toLowerCase() ?? '')
@@ -431,9 +491,11 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
               _normalizePhone(
                 parcel['customer_phone']?.toString() ?? '',
               ).contains(normalizedQuery));
+
       final matchesFilter =
           selectedFilter == 'all' ||
           parcel['status']?.toString() == selectedFilter;
+
       return matchesSearch && matchesFilter;
     }).toList();
   }
@@ -450,61 +512,49 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
       .toList();
 
   Widget _buildFilterChip(String value, String label) => ChoiceChip(
-    label: Text(label),
-    selected: selectedFilter == value,
-    onSelected: (_) => setState(() => selectedFilter = value),
-  );
+        label: Text(label),
+        selected: selectedFilter == value,
+        onSelected: (_) => setState(() => selectedFilter = value),
+      );
 
   List<Widget> _buildParcelActions(Map<String, dynamic> parcel) {
     final status = parcel['status']?.toString() ?? '';
     final orderId = parcel['order_id']?.toString() ?? '';
     final actions = <Widget>[];
+
     if (status == 'dropped_at_pickup_point') {
       actions.add(
         OutlinedButton.icon(
           onPressed: isSubmitting
               ? null
               : () => _updateStatus(
-                  orderId: orderId,
-                  newStatus: 'received_at_pickup_point',
-                  successMessage: '$orderId marked as received',
-                ),
-          icon: const Icon(Icons.move_to_inbox_outlined),
-          label: const Text('Mark Received'),
-        ),
-      );
-    }
-    if (status == 'received_at_pickup_point' ||
-        status == 'dropped_at_pickup_point') {
-      actions.add(
-        OutlinedButton.icon(
-          onPressed: isSubmitting
-              ? null
-              : () => _updateStatus(
-                  orderId: orderId,
-                  newStatus: 'ready_for_customer_pickup',
-                  successMessage: '$orderId marked ready',
-                ),
+                    orderId: orderId,
+                    newStatus: 'ready_for_customer_pickup',
+                    successMessage: '$orderId marked ready',
+                  ),
           icon: const Icon(Icons.inventory_2_outlined),
           label: const Text('Mark Ready'),
         ),
       );
     }
+
     if (status == 'ready_for_customer_pickup') {
       actions.add(
         OutlinedButton.icon(
           onPressed: isSubmitting
               ? null
               : () => _updateStatus(
-                  orderId: orderId,
-                  newStatus: 'picked_up',
-                  successMessage: '$orderId marked as handed to the customer',
-                ),
+                    orderId: orderId,
+                    newStatus: 'picked_up',
+                    successMessage:
+                        '$orderId marked as handed to the customer',
+                  ),
           icon: const Icon(Icons.check_circle_outline),
           label: const Text('Handed to Customer'),
         ),
       );
     }
+
     if (status != 'picked_up') {
       actions.add(
         OutlinedButton.icon(
@@ -514,6 +564,7 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
         ),
       );
     }
+
     return actions;
   }
 
@@ -526,6 +577,8 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
         return 'Customer Pays At Pickup';
       case 'wish_money':
         return 'Wish Money';
+      case 'agent_collection':
+        return 'Agent Collection';
       case 'hybrid':
         return 'Hybrid';
       case '':
@@ -572,23 +625,23 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
   }
 
   Widget _buildCustomerInfo(Map<String, dynamic> parcel) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
-    children: [
-      Text('Customer Info', style: AppTextStyles.title),
-      const SizedBox(height: AppSpacing.sm),
-      _buildInfoTile(
-        icon: Icons.person_outline,
-        label: 'Customer Name',
-        value: parcel['customer_name']?.toString() ?? 'Customer',
-      ),
-      const SizedBox(height: AppSpacing.xs),
-      _buildInfoTile(
-        icon: Icons.phone_outlined,
-        label: 'Customer Phone',
-        value: parcel['customer_phone']?.toString() ?? '-',
-      ),
-    ],
-  );
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Customer Info', style: AppTextStyles.title),
+          const SizedBox(height: AppSpacing.sm),
+          _buildInfoTile(
+            icon: Icons.person_outline,
+            label: 'Customer Name',
+            value: parcel['customer_name']?.toString() ?? 'Customer',
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          _buildInfoTile(
+            icon: Icons.phone_outlined,
+            label: 'Customer Phone',
+            value: parcel['customer_phone']?.toString() ?? '-',
+          ),
+        ],
+      );
 
   Widget _buildDeliveryInfo(Map<String, dynamic> parcel) {
     final assignedAt = parcel['delivery_assigned_at']?.toString();
@@ -666,17 +719,14 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
         pickupPointData?['max_orders_per_day']?.toString() ?? '-';
     final workingDays =
         (pickupPointData?['working_days'] as List?)
-            ?.map((day) => day?.toString() ?? '')
-            .where((day) => day.trim().isNotEmpty)
-            .join(', ') ??
-        '-';
+                ?.map((day) => day?.toString() ?? '')
+                .where((day) => day.trim().isNotEmpty)
+                .join(', ') ??
+            '-';
 
     final totalCount = parcels.length;
     final arrivedCount = parcels
         .where((p) => p['status'] == 'dropped_at_pickup_point')
-        .length;
-    final receivedCount = parcels
-        .where((p) => p['status'] == 'received_at_pickup_point')
         .length;
     final readyCount = parcels
         .where((p) => p['status'] == 'ready_for_customer_pickup')
@@ -704,7 +754,6 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
             ),
             const SizedBox(height: AppSpacing.lg),
           ],
-          // Hero card
           Container(
             padding: const EdgeInsets.all(AppSpacing.lg),
             decoration: BoxDecoration(
@@ -807,6 +856,30 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
                     _HeroChip(label: paymentHandling),
                   ],
                 ),
+                const SizedBox(height: AppSpacing.md),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildInfoTile(
+                        icon: Icons.star_outline,
+                        label: 'Rating',
+                        value: _reviewCount == 0
+                            ? 'New'
+                            : _averageRating.toStringAsFixed(1),
+                        color: AppColors.warning,
+                      ),
+                    ),
+                    const SizedBox(width: AppSpacing.sm),
+                    Expanded(
+                      child: _buildInfoTile(
+                        icon: Icons.rate_review_outlined,
+                        label: 'Reviews',
+                        value: '$_reviewCount',
+                        color: AppColors.primary,
+                      ),
+                    ),
+                  ],
+                ),
               ],
             ),
           ),
@@ -887,7 +960,72 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
               ],
             ),
           ),
-          // Stats grid
+          const SizedBox(height: AppSpacing.lg),
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.lg),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(24),
+              boxShadow: const [
+                BoxShadow(
+                  color: Color(0x14000000),
+                  blurRadius: 12,
+                  offset: Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Customer Feedback', style: AppTextStyles.heading3),
+                const SizedBox(height: AppSpacing.md),
+                if (_pickupPointReviews.isEmpty)
+                  Text(
+                    'No feedback yet for this pickup point.',
+                    style: AppTextStyles.bodyMuted,
+                  )
+                else
+                  ..._pickupPointReviews.map((review) {
+                    final rating = (review['rating'] as num?)?.toInt() ?? 0;
+                    final customerName =
+                        review['customer_name']?.toString() ?? 'Customer';
+                    final comment =
+                        review['comment']?.toString().trim() ?? '';
+
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+                      padding: const EdgeInsets.all(AppSpacing.md),
+                      decoration: BoxDecoration(
+                        color: AppColors.surface,
+                        borderRadius: BorderRadius.circular(16),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            customerName,
+                            style: AppTextStyles.body.copyWith(
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(height: AppSpacing.xxs),
+                          Text(
+                            List.generate(rating, (_) => '★').join(),
+                            style: AppTextStyles.body.copyWith(
+                              color: AppColors.warning,
+                            ),
+                          ),
+                          if (comment.isNotEmpty) ...[
+                            const SizedBox(height: AppSpacing.xxs),
+                            Text(comment, style: AppTextStyles.bodyMuted),
+                          ],
+                        ],
+                      ),
+                    );
+                  }),
+              ],
+            ),
+          ),
           const SizedBox(height: AppSpacing.xl),
           const SectionHeader(
             title: 'Parcel Overview',
@@ -915,13 +1053,6 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
                 accentSoftColor: AppColors.warningSoft,
               ),
               DashboardStatCard(
-                icon: Icons.inventory_outlined,
-                value: '$receivedCount',
-                label: 'Received',
-                accentColor: AppColors.info,
-                accentSoftColor: AppColors.infoSoft,
-              ),
-              DashboardStatCard(
                 icon: Icons.local_shipping_outlined,
                 value: '$readyCount',
                 label: 'Ready Pickup',
@@ -944,7 +1075,6 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
               ),
             ],
           ),
-          // Search
           const SizedBox(height: AppSpacing.xl),
           TextField(
             controller: searchController,
@@ -975,7 +1105,6 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
             children: [
               _buildFilterChip('all', 'All'),
               _buildFilterChip('dropped_at_pickup_point', 'Arrived'),
-              _buildFilterChip('received_at_pickup_point', 'Received'),
               _buildFilterChip('ready_for_customer_pickup', 'Ready'),
               _buildFilterChip('picked_up', 'Handed Over'),
               _buildFilterChip('issue_reported', 'Issues'),
@@ -1041,7 +1170,6 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
               ),
             ),
           ],
-          // Parcels list
           const SizedBox(height: AppSpacing.xl),
           const SectionHeader(
             title: 'Recent Parcels',
@@ -1081,7 +1209,7 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
                                 ),
                                 const SizedBox(height: AppSpacing.xxs),
                                 Text(
-                                  '${parcel['customer_name'] ?? 'Customer'} \u2022 ${parcel['customer_phone'] ?? '-'}',
+                                  '${parcel['customer_name'] ?? 'Customer'} • ${parcel['customer_phone'] ?? '-'}',
                                   style: AppTextStyles.bodyMuted,
                                 ),
                               ],
@@ -1102,7 +1230,7 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
                       LayoutBuilder(
                         builder: (context, constraints) {
                           final isSmall = constraints.maxWidth < 700;
-                          if (isSmall)
+                          if (isSmall) {
                             return Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
@@ -1111,6 +1239,7 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
                                 _buildDeliveryInfo(parcel),
                               ],
                             );
+                          }
                           return Row(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -1186,6 +1315,7 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
 
 class _HeroChip extends StatelessWidget {
   final String label;
+
   const _HeroChip({required this.label});
 
   @override

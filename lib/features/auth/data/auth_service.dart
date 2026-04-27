@@ -236,17 +236,22 @@ class AuthService {
         .maybeSingle();
   }
 
-  Future<List<Map<String, dynamic>>> getPickupPointApplications({
-    String status = 'pending',
-  }) async {
-    final rows = await _client
-        .from('pickup_point_applications')
-        .select()
-        .eq('verification_status', status)
-        .order('submitted_at', ascending: false);
+Future<List<Map<String, dynamic>>> getPickupPointApplications({
+  String status = 'pending',
+}) async {
+  final normalizedStatus = status.trim().toLowerCase();
 
-    return List<Map<String, dynamic>>.from(rows);
-  }
+  final rows = normalizedStatus == 'pending'
+      ? await _client.rpc('get_pending_pickup_point_applications')
+      : await _client
+          .from('pickup_point_applications')
+          .select()
+          .eq('verification_status', normalizedStatus)
+          .order('submitted_at', ascending: false);
+
+  return List<Map<String, dynamic>>.from(rows);
+}
+
 
   Future<List<Map<String, dynamic>>> getCustomerRecentPickupPoints({
     int limit = 10,

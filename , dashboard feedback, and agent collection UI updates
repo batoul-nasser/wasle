@@ -1,0 +1,2007 @@
+[1mdiff --git a/lib/features/admin/presentation/pages/admin_home_screen.dart b/lib/features/admin/presentation/pages/admin_home_screen.dart[m
+[1mindex 5b73959..5a4d785 100644[m
+[1m--- a/lib/features/admin/presentation/pages/admin_home_screen.dart[m
+[1m+++ b/lib/features/admin/presentation/pages/admin_home_screen.dart[m
+[36m@@ -630,6 +630,16 @@[m [mclass _AdminHomeScreenState extends State<AdminHomeScreen>[m
+            'Pickup Point';[m
+        final note = item['note']?.toString() ?? '';[m
+        final collectedAt = item['collected_at']?.toString() ?? '';[m
+        [32m{+final order = item['orders'] as Map?;+}[m
+[32m{+        final tracking =+}[m
+[32m{+            order?['tracking_code']?.toString() ??+}[m
+[32m{+            item['order_id']?.toString() ??+}[m
+[32m{+            '-';+}[m
+[32m{+        final customerName =+}[m
+[32m{+            order?['customer_name']?.toString() ?? 'Customer';+}[m
+[32m{+        final customerPhone =+}[m
+[32m{+            order?['customer_phone']?.toString() ?? '-';+}[m
+
+
+        DateTime? dt;[m
+        try {[m
+[36m@@ -667,16 +677,27 @@[m [mclass _AdminHomeScreenState extends State<AdminHomeScreen>[m
+                      crossAxisAlignment: CrossAxisAlignment.start,[m
+                      children: [[m
+                        Text([m
+                        [31m[-ppName,-][m[32m{+tracking,+}[m
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      [32m{+),+}[m
+[32m{+                      Text(+}[m
+[32m{+                        '$ppName - by $agentName',+}[m
+[32m{+                        style: const TextStyle(+}[m
+[32m{+                          color: Colors.grey,+}[m
+[32m{+                          fontSize: 13,+}[m
+                        ),[m
+                      [32m{+),+}[m
+                      Text(
+                        [31m[-'by $agentName',-][m[32m{+'$customerName - $customerPhone',+}[m
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: [31m[-13,-][m
+[31m[-                          ),-][m[32m{+12,+}[m
+                        ),[m
+                      [32m{+),+}[m
+                      
+
+
+                       
+                      ],[m
+                    ),[m
+                  ),[m
+[1mdiff --git a/lib/features/agent/data/agent_service.dart b/lib/features/agent/data/agent_service.dart[m
+[1mindex 8e59bcc..9d90545 100644[m
+[1m--- a/lib/features/agent/data/agent_service.dart[m
+[1m+++ b/lib/features/agent/data/agent_service.dart[m
+[36m@@ -138,30 +138,33 @@[m [mclass AgentService {[m
+    }[m
+  }[m
+
+Future<List<Map<String, dynamic>>> getCollectionHistory({String? agentId}) async {
+  try {
+    var query = _db.from('agent_collections').select(
+      'id, agent_id, order_id, amount, status, note, collected_at, '
+      'profiles!agent_collections_agent_id_fkey(full_name, phone), '
+      'pickup_points(name, [31m[-address_text)');-][m[32m{+address_text), '+}[m
+[32m{+      'orders(tracking_code, customer_name, customer_phone, status)',+}[m
+[32m{+    );+}[m
+
+    if (agentId != null) {
+      query = query.eq('agent_id', agentId);[31m[-}-][m
+
+[31m[-      final rows = await query.order('collected_at', ascending: false);-][m
+[31m[-      return List<Map<String, dynamic>>.from(rows);-][m
+[31m[-    } catch (e) {-][m
+[31m[-      debugPrint('[AgentService] getCollectionHistory: $e');-][m
+[31m[-      return [];-][m
+    }[m
+[31m[-  }-][m
+
+[31m[-Future<List<Map<String, dynamic>>> getMyCollections() async {-][m    final [31m[-uid-][m[32m{+rows+}[m = [31m[-_uid;-][m
+[31m[-    if (uid == null)-][m[32m{+await query.order('collected_at', ascending: false);+}[m
+    return [31m[-[];-][m[32m{+List<Map<String, dynamic>>.from(rows);+}[m
+[32m{+  } catch (e) {+}[m
+[32m{+    debugPrint('[AgentService] getCollectionHistory: $e');+}[m
+    return [31m[-getCollectionHistory(agentId: uid);-][m[32m{+[];+}[m
+  }[m
+[32m{+}+}[m
+
+
+[32m{+Future<List<Map<String, dynamic>>> getMyCollections() async {+}[m
+[32m{+  final uid = _uid;+}[m
+[32m{+  if (uid == null) return [];+}[m
+[32m{+  return getCollectionHistory(agentId: uid);+}[m
+[32m{+}+}[m
+
+  Future<double> getTotalPendingAgentCash() async {[m
+    try {[m
+[1mdiff --git a/lib/features/auth/data/auth_service.dart b/lib/features/auth/data/auth_service.dart[m
+[1mindex abba316..0c4b73d 100644[m
+[1m--- a/lib/features/auth/data/auth_service.dart[m
+[1m+++ b/lib/features/auth/data/auth_service.dart[m
+[36m@@ -236,17 +236,22 @@[m [mclass AuthService {[m
+        .maybeSingle();[m
+  }[m
+
+Future<List<Map<String, dynamic>>> getPickupPointApplications({
+  String status = 'pending',
+}) async {
+  final [32m{+normalizedStatus = status.trim().toLowerCase();+}[m
+
+[32m{+  final+}[m rows = [32m{+normalizedStatus == 'pending'+}[m
+[32m{+      ? await _client.rpc('get_pending_pickup_point_applications')+}[m
+[32m{+      :+}[m await _client
+          .from('pickup_point_applications')
+          .select()
+          .eq('verification_status', [31m[-status)-][m[32m{+normalizedStatus)+}[m
+          .order('submitted_at', ascending: false);
+
+  [32m{+return List<Map<String, dynamic>>.from(rows);+}[m
+[32m{+}+}[m
+
+[31m[-    return List<Map<String, dynamic>>.from(rows);-][m
+[31m[-  }-][m
+
+  Future<List<Map<String, dynamic>>> getCustomerRecentPickupPoints({[m
+    int limit = 10,[m
+[1mdiff --git a/lib/features/auth/presentation/pages/pickup_point_sign_up_screen.dart b/lib/features/auth/presentation/pages/pickup_point_sign_up_screen.dart[m
+[1mindex 343a674..f7614ef 100644[m
+[1m--- a/lib/features/auth/presentation/pages/pickup_point_sign_up_screen.dart[m
+[1m+++ b/lib/features/auth/presentation/pages/pickup_point_sign_up_screen.dart[m
+[36m@@ -11,7 +11,8 @@[m [mclass PickupPointSignUpScreen extends StatefulWidget {[m
+  const PickupPointSignUpScreen({super.key});[m
+
+  @override[m
+  State<PickupPointSignUpScreen> createState() =>
+      _PickupPointSignUpScreenState();
+}[m
+
+class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+[36m@@ -31,17 +32,22 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+  static final RegExp _emailRegex = RegExp(r'^[^@]+@[^@]+\.[^@]+');[m
+
+  final TextEditingController ownerNameController = TextEditingController();[m
+  final TextEditingController pickupPointNameController =
+      TextEditingController();
+  final TextEditingController phoneController = TextEditingController();[m
+  final TextEditingController emailController = TextEditingController();[m
+  final TextEditingController addressController = TextEditingController();[m
+  final TextEditingController confirmAddressController =
+      TextEditingController();
+  final TextEditingController cityController = TextEditingController();[m
+  final TextEditingController areaController = TextEditingController();[m
+  final TextEditingController passwordController = TextEditingController();[m
+  final TextEditingController confirmPasswordController =
+      TextEditingController();
+  final TextEditingController commissionValueController =
+      TextEditingController();
+  final TextEditingController maxOrdersPerDayController =
+      TextEditingController();
+  final TextEditingController estimatedStorageSqmController =[m
+      TextEditingController();[m
+  final TextEditingController estimatedCapacityUnitsController =[m
+[36m@@ -50,8 +56,8 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+  TimeOfDay? opensAt;[m
+  TimeOfDay? closesAt;[m
+
+  String preferredPaymentMethod = [31m[-'customer_pays_at_pickup';-][m[32m{+'wish_money';+}[m
+  String paymentHandlingMethod = [31m[-'customer_pays_at_pickup';-][m[32m{+'wish_money';+}[m
+  String commissionType = 'custom';[m
+  String storageTier = 'medium';[m
+  bool hasShelves = false;[m
+[36m@@ -251,7 +257,9 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+    }[m
+
+    if (estimatedStorageSqm != null && estimatedStorageSqm <= 0) {[m
+      setState(() [31m[-=>-][m[32m{+{+}[m
+        errorText = 'Estimated storage space must be greater than [31m[-0.');-][m[32m{+0.';+}[m
+[32m{+      });+}[m
+      return;[m
+    }[m
+
+[36m@@ -263,7 +271,9 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+    }[m
+
+    if (commissionType == 'custom') {[m
+      if (commissionValue == null ||
+          commissionValue < 0 ||
+          commissionValue > 100) {
+        setState(() => errorText = 'Commission value must be between 0 and 100.');[m
+        return;[m
+      }[m
+[36m@@ -286,7 +296,9 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+    }[m
+
+    if (password != confirmPassword) {[m
+      [31m[-setState(()-][m[32m{+setState(+}[m
+[32m{+        ()+}[m => errorText = 'Password and confirm password do not [31m[-match.');-][m[32m{+match.',+}[m
+[32m{+      );+}[m
+      return;[m
+    }[m
+
+[36m@@ -422,7 +434,9 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+                      children: [[m
+                        Text([m
+                          'Create your pickup point application',[m
+                          style: [31m[-AppTextStyles.heading2.copyWith(color: Colors.white),-][m[32m{+AppTextStyles.heading2.copyWith(+}[m
+[32m{+                            color: Colors.white,+}[m
+[32m{+                          ),+}[m
+                        ),[m
+                        const SizedBox(height: AppSpacing.xxs),[m
+                        Text([m
+[36m@@ -548,27 +562,36 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+                  ),[m
+                  const SizedBox(height: AppSpacing.md),[m
+                  DropdownButtonFormField<String>([m
+                    initialValue: [31m[-storageTier,-][m[32m{+paymentHandlingMethod,+}[m
+                    decoration: const InputDecoration([m
+                      labelText:
+                          [31m[-'Storage Size',-][m[32m{+'How will this pickup point send money to Wasle?',+}[m
+                      prefixIcon: [31m[-Icon(Icons.warehouse_outlined),-][m[32m{+Icon(Icons.payments_outlined),+}[m
+                    ),[m
+                    items: const [[m
+                      [31m[-DropdownMenuItem(value: 'small',-][m[32m{+DropdownMenuItem<String>(+}[m
+[32m{+                        value: 'wish_money',+}[m
+                        child: [31m[-Text('Small')),-][m
+[31m[-                      DropdownMenuItem(value: 'medium',-][m[32m{+Text('Pickup Point Sends by Whish'),+}[m
+[32m{+                      ),+}[m
+[32m{+                      DropdownMenuItem<String>(+}[m
+[32m{+                        value: 'agent_collection',+}[m
+                        child: [31m[-Text('Medium')),-][m
+[31m[-                      DropdownMenuItem(value: 'large', child: Text('Large')),-][m[32m{+Text('Wasle Agent Collects from Pickup Point'),+}[m
+[32m{+                      ),+}[m
+                    ],[m
+                    onChanged: (value) {[m
+                      if (value == null) return;[m
+                      setState(() {[m
+                        [31m[-storageTier-][m[32m{+paymentHandlingMethod = value;+}[m
+[32m{+                        preferredPaymentMethod+}[m = value;
+                      });[m
+                    },[m
+                  ),[m
+                  const SizedBox(height: AppSpacing.md),[m
+                  TextField([m
+                    controller: estimatedStorageSqmController,[m
+                    keyboardType: const [31m[-TextInputType.numberWithOptions(decimal: true),-][m[32m{+TextInputType.numberWithOptions(+}[m
+[32m{+                      decimal: true,+}[m
+[32m{+                    ),+}[m
+                    decoration: const InputDecoration([m
+                      labelText: 'Estimated Storage Space (sqm)',[m
+                      prefixIcon: Icon(Icons.square_foot_outlined),[m
+[36m@@ -602,9 +625,18 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+                      prefixIcon: Icon(Icons.percent_rounded),[m
+                    ),[m
+                    items: const [[m
+                      [31m[-DropdownMenuItem(value:-][m[32m{+DropdownMenuItem(+}[m
+[32m{+                        value:+}[m 'custom',
+                        child: [31m[-Text('Custom')),-][m
+[31m[-                      DropdownMenuItem(value:-][m[32m{+Text('Custom'),+}[m
+[32m{+                      ),+}[m
+[32m{+                      DropdownMenuItem(+}[m
+[32m{+                        value:+}[m 'plan',
+                        child: Text('Plan [31m[-Based')),-][m
+[31m[-                      DropdownMenuItem(value:-][m[32m{+Based'),+}[m
+[32m{+                      ),+}[m
+[32m{+                      DropdownMenuItem(+}[m
+[32m{+                        value:+}[m 'negotiated',
+                        child: [31m[-Text('Negotiated')),-][m[32m{+Text('Negotiated'),+}[m
+[32m{+                      ),+}[m
+                    ],[m
+                    onChanged: (value) {[m
+                      if (value == null) return;[m
+[36m@@ -616,42 +648,15 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+                  const SizedBox(height: AppSpacing.md),[m
+                  TextField([m
+                    controller: commissionValueController,[m
+                    keyboardType: const [31m[-TextInputType.numberWithOptions(decimal: true),-][m[32m{+TextInputType.numberWithOptions(+}[m
+[32m{+                      decimal: true,+}[m
+[32m{+                    ),+}[m
+                    decoration: const InputDecoration([m
+                      labelText: 'Commission Value (%)',[m
+                      prefixIcon: Icon(Icons.request_quote_outlined),[m
+                    ),[m
+                  ),[m
+                  const SizedBox(height: AppSpacing.md),[m
+[31m[-                  DropdownButtonFormField<String>(-][m
+[31m[-                    initialValue: paymentHandlingMethod,-][m
+[31m[-                    decoration: const InputDecoration(-][m
+[31m[-                      labelText: 'Payment Handling Method',-][m
+[31m[-                      prefixIcon: Icon(Icons.payments_outlined),-][m
+[31m[-                    ),-][m
+[31m[-                    items: const [-][m
+[31m[-                      DropdownMenuItem(-][m
+[31m[-                        value: 'customer_pays_at_pickup',-][m
+[31m[-                        child: Text('Customer Pays At Pickup'),-][m
+[31m[-                      ),-][m
+[31m[-                      DropdownMenuItem(-][m
+[31m[-                        value: 'customer_pays_online',-][m
+[31m[-                        child: Text('Customer Pays Online (Whish)'),-][m
+[31m[-                      ),-][m
+[31m[-                      DropdownMenuItem(-][m
+[31m[-                        value: 'hybrid',-][m
+[31m[-                        child: Text('Hybrid'),-][m
+[31m[-                      ),-][m
+[31m[-                    ],-][m
+[31m[-                    onChanged: (value) {-][m
+[31m[-                      if (value == null) return;-][m
+[31m[-                      setState(() {-][m
+[31m[-                        paymentHandlingMethod = value;-][m
+[31m[-                        preferredPaymentMethod = value;-][m
+[31m[-                      });-][m
+[31m[-                    },-][m
+[31m[-                  ),-][m
+[31m[-                  const SizedBox(height: AppSpacing.md),-][m
+                  ListTile([m
+                    contentPadding: EdgeInsets.zero,[m
+                    leading: const Icon(Icons.schedule_outlined),[m
+[36m@@ -683,7 +688,9 @@[m [mclass _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {[m
+                  OutlinedButton.icon([m
+                    onPressed: _pickIdImage,[m
+                    icon: const Icon(Icons.badge_outlined),[m
+                    label: [31m[-Text(idImageName-][m[32m{+Text(+}[m
+[32m{+                      idImageName+}[m ?? 'Upload ID Verification [31m[-Image'),-][m[32m{+Image',+}[m
+[32m{+                    ),+}[m
+                  ),[m
+                  _buildImagePreview(idImageBytes),[m
+                  const SizedBox(height: AppSpacing.sm),[m
+[1mdiff --git a/lib/features/customer/presentation/pages/pickup_point_page.dart b/lib/features/customer/presentation/pages/pickup_point_page.dart[m
+[1mdeleted file mode 100644[m
+[1mindex c654e5f..0000000[m
+[1m--- a/lib/features/customer/presentation/pages/pickup_point_page.dart[m
+[1m+++ /dev/null[m
+[36m@@ -1,847 +0,0 @@[m
+[31m[-import 'package:flutter/material.dart';-][m
+[31m[-import 'package:wasle/features/auth/data/auth_service.dart';-][m
+[31m[-import 'package:wasle/features/pickup_point/data/pickup_point_repository.dart';-][m
+
+[31m[-class PickupPointPage extends StatefulWidget {-][m
+[31m[-  const PickupPointPage({super.key});-][m
+
+[31m[-  @override-][m
+[31m[-  State<PickupPointPage> createState() => _PickupPointPageState();-][m
+[31m[-}-][m
+
+[31m[-class _PickupPointPageState extends State<PickupPointPage> {-][m
+[31m[-  final AuthService _authService = AuthService();-][m
+[31m[-  final PickupPointRepository _repository = PickupPointRepository();-][m
+[31m[-  final TextEditingController _searchCtrl = TextEditingController();-][m
+
+[31m[-  bool _loading = true;-][m
+[31m[-  List<Map<String, dynamic>> _allPickupPoints = [];-][m
+[31m[-  List<Map<String, dynamic>> _recentPickupPoints = [];-][m
+
+[31m[-  @override-][m
+[31m[-  void initState() {-][m
+[31m[-    super.initState();-][m
+[31m[-    _searchCtrl.addListener(_refresh);-][m
+[31m[-    _load();-][m
+[31m[-  }-][m
+
+[31m[-  @override-][m
+[31m[-  void dispose() {-][m
+[31m[-    _searchCtrl.removeListener(_refresh);-][m
+[31m[-    _searchCtrl.dispose();-][m
+[31m[-    super.dispose();-][m
+[31m[-  }-][m
+
+[31m[-  void _refresh() {-][m
+[31m[-    if (mounted) setState(() {});-][m
+[31m[-  }-][m
+
+[31m[-  Future<void> _load() async {-][m
+[31m[-    setState(() => _loading = true);-][m
+[31m[-    try {-][m
+[31m[-      final results = await Future.wait([-][m
+[31m[-        _repository.getPickupPointsForSearch(),-][m
+[31m[-        _authService.getCustomerRecentPickupPoints(),-][m
+[31m[-      ]);-][m
+
+[31m[-      final allPoints = List<Map<String, dynamic>>.from(results[0] as List);-][m
+[31m[-      final recentPoints = List<Map<String, dynamic>>.from(results[1] as List);-][m
+[31m[-      final pickupIds = allPoints-][m
+[31m[-          .map((point) => point['id']?.toString())-][m
+[31m[-          .whereType<String>()-][m
+[31m[-          .where((id) => id.isNotEmpty)-][m
+[31m[-          .toList();-][m
+
+[31m[-      final usageById = await _repository.getPickupPointUsageCounts(pickupIds);-][m
+[31m[-      final ratingSummaries = await _authService.getPickupPointRatingSummaries(-][m
+[31m[-        pickupIds,-][m
+[31m[-      );-][m
+
+[31m[-      final enriched = allPoints.map((point) {-][m
+[31m[-        final id = point['id']?.toString() ?? '';-][m
+[31m[-        final summary = ratingSummaries[id] ?? const <String, dynamic>{};-][m
+[31m[-        return {-][m
+[31m[-          ...point,-][m
+[31m[-          'usage_count': usageById[id] ?? 0,-][m
+[31m[-          'rating_average': (summary['average'] as num?)?.toDouble() ?? 0.0,-][m
+[31m[-          'rating_count': (summary['count'] as int?) ?? 0,-][m
+[31m[-        };-][m
+[31m[-      }).toList();-][m
+
+[31m[-      if (!mounted) return;-][m
+[31m[-      setState(() {-][m
+[31m[-        _allPickupPoints = enriched;-][m
+[31m[-        _recentPickupPoints = recentPoints;-][m
+[31m[-        _loading = false;-][m
+[31m[-      });-][m
+[31m[-    } catch (_) {-][m
+[31m[-      if (!mounted) return;-][m
+[31m[-      setState(() => _loading = false);-][m
+[31m[-    }-][m
+[31m[-  }-][m
+
+[31m[-  List<Map<String, dynamic>> get _filteredPickupPoints {-][m
+[31m[-    final query = _searchCtrl.text.trim().toLowerCase();-][m
+[31m[-    final filtered = _allPickupPoints.where((point) {-][m
+[31m[-      if (query.isEmpty) return true;-][m
+[31m[-      final haystack = [-][m
+[31m[-        point['name'],-][m
+[31m[-        point['address_text'],-][m
+[31m[-        point['city'],-][m
+[31m[-        point['area'],-][m
+[31m[-      ].join(' ').toLowerCase();-][m
+[31m[-      return haystack.contains(query);-][m
+[31m[-    }).toList();-][m
+
+[31m[-    filtered.sort((a, b) {-][m
+[31m[-      final aCityMatch =-][m
+[31m[-          (a['city']?.toString().toLowerCase() ?? '').contains(query) ? 1 : 0;-][m
+[31m[-      final bCityMatch =-][m
+[31m[-          (b['city']?.toString().toLowerCase() ?? '').contains(query) ? 1 : 0;-][m
+[31m[-      if (aCityMatch != bCityMatch) {-][m
+[31m[-        return bCityMatch.compareTo(aCityMatch);-][m
+[31m[-      }-][m
+
+[31m[-      final aUsage = (a['usage_count'] as int?) ?? 0;-][m
+[31m[-      final bUsage = (b['usage_count'] as int?) ?? 0;-][m
+[31m[-      if (aUsage != bUsage) return bUsage.compareTo(aUsage);-][m
+
+[31m[-      final aRating = (a['rating_average'] as num?)?.toDouble() ?? 0.0;-][m
+[31m[-      final bRating = (b['rating_average'] as num?)?.toDouble() ?? 0.0;-][m
+[31m[-      if (aRating != bRating) return bRating.compareTo(aRating);-][m
+
+[31m[-      return (a['name']?.toString() ?? '').toLowerCase().compareTo(-][m
+[31m[-        (b['name']?.toString() ?? '').toLowerCase(),-][m
+[31m[-      );-][m
+[31m[-    });-][m
+
+[31m[-    return filtered;-][m
+[31m[-  }-][m
+
+[31m[-  bool _isTopUsedInCity(Map<String, dynamic> point) {-][m
+[31m[-    final city = point['city']?.toString().trim().toLowerCase() ?? '';-][m
+[31m[-    if (city.isEmpty) return false;-][m
+
+[31m[-    final usage = (point['usage_count'] as int?) ?? 0;-][m
+[31m[-    final topUsage = _allPickupPoints-][m
+[31m[-        .where(-][m
+[31m[-          (item) =>-][m
+[31m[-              (item['city']?.toString().trim().toLowerCase() ?? '') == city,-][m
+[31m[-        )-][m
+[31m[-        .fold<int>(0, (max, item) {-][m
+[31m[-          final count = (item['usage_count'] as int?) ?? 0;-][m
+[31m[-          return count > max ? count : max;-][m
+[31m[-        });-][m
+
+[31m[-    return usage > 0 && usage == topUsage;-][m
+[31m[-  }-][m
+
+[31m[-  String _ratingLabel(Map<String, dynamic> point) {-][m
+[31m[-    final rating = (point['rating_average'] as num?)?.toDouble() ?? 0.0;-][m
+[31m[-    final count = (point['rating_count'] as int?) ?? 0;-][m
+[31m[-    if (count == 0) return 'New';-][m
+[31m[-    return '${rating.toStringAsFixed(1)} ($count)';-][m
+[31m[-  }-][m
+
+[31m[-  Widget _buildRecentSection() {-][m
+[31m[-    if (_recentPickupPoints.isEmpty) {-][m
+[31m[-      return const SizedBox.shrink();-][m
+[31m[-    }-][m
+
+[31m[-    return Column(-][m
+[31m[-      crossAxisAlignment: CrossAxisAlignment.start,-][m
+[31m[-      children: [-][m
+[31m[-        const Text(-][m
+[31m[-          'Previously Used',-][m
+[31m[-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),-][m
+[31m[-        ),-][m
+[31m[-        const SizedBox(height: 12),-][m
+[31m[-        ..._recentPickupPoints-][m
+[31m[-            .take(3)-][m
+[31m[-            .map(-][m
+[31m[-              (point) => Container(-][m
+[31m[-                margin: const EdgeInsets.only(bottom: 10),-][m
+[31m[-                padding: const EdgeInsets.all(14),-][m
+[31m[-                decoration: BoxDecoration(-][m
+[31m[-                  color: Colors.white,-][m
+[31m[-                  borderRadius: BorderRadius.circular(16),-][m
+[31m[-                  border: Border.all(color: Colors.blue.shade50),-][m
+[31m[-                ),-][m
+[31m[-                child: Row(-][m
+[31m[-                  children: [-][m
+[31m[-                    Container(-][m
+[31m[-                      width: 40,-][m
+[31m[-                      height: 40,-][m
+[31m[-                      decoration: BoxDecoration(-][m
+[31m[-                        color: Colors.blue.shade50,-][m
+[31m[-                        borderRadius: BorderRadius.circular(12),-][m
+[31m[-                      ),-][m
+[31m[-                      child: const Icon(Icons.history, color: Colors.blue),-][m
+[31m[-                    ),-][m
+[31m[-                    const SizedBox(width: 12),-][m
+[31m[-                    Expanded(-][m
+[31m[-                      child: Column(-][m
+[31m[-                        crossAxisAlignment: CrossAxisAlignment.start,-][m
+[31m[-                        children: [-][m
+[31m[-                          Text(-][m
+[31m[-                            point['name']?.toString() ?? 'Pickup Point',-][m
+[31m[-                            style: const TextStyle(fontWeight: FontWeight.bold),-][m
+[31m[-                          ),-][m
+[31m[-                          const SizedBox(height: 2),-][m
+[31m[-                          Text(-][m
+[31m[-                            [-][m
+[31m[-                                  point['address_text'],-][m
+[31m[-                                  point['city'],-][m
+[31m[-                                  point['area'],-][m
+[31m[-                                ]-][m
+[31m[-                                .whereType<String>()-][m
+[31m[-                                .where((part) => part.trim().isNotEmpty)-][m
+[31m[-                                .join(', '),-][m
+[31m[-                            style: const TextStyle(-][m
+[31m[-                              color: Colors.black54,-][m
+[31m[-                              fontSize: 12,-][m
+[31m[-                            ),-][m
+[31m[-                          ),-][m
+[31m[-                        ],-][m
+[31m[-                      ),-][m
+[31m[-                    ),-][m
+[31m[-                  ],-][m
+[31m[-                ),-][m
+[31m[-              ),-][m
+[31m[-            ),-][m
+[31m[-        const SizedBox(height: 18),-][m
+[31m[-      ],-][m
+[31m[-    );-][m
+[31m[-  }-][m
+
+[31m[-  Widget _buildPickupPointCard(Map<String, dynamic> point) {-][m
+[31m[-    final address = [-][m
+[31m[-      point['address_text']?.toString().trim(),-][m
+[31m[-      point['city']?.toString().trim(),-][m
+[31m[-      point['area']?.toString().trim(),-][m
+[31m[-    ].whereType<String>().where((part) => part.isNotEmpty).join(', ');-][m
+
+[31m[-    return InkWell(-][m
+[31m[-      borderRadius: BorderRadius.circular(18),-][m
+[31m[-      onTap: () => Navigator.push(-][m
+[31m[-        context,-][m
+[31m[-        MaterialPageRoute(-][m
+[31m[-          builder: (_) => PickupPointDetailPage(pickupPoint: point),-][m
+[31m[-        ),-][m
+[31m[-      ).then((_) => _load()),-][m
+[31m[-      child: Container(-][m
+[31m[-        margin: const EdgeInsets.only(bottom: 12),-][m
+[31m[-        padding: const EdgeInsets.all(16),-][m
+[31m[-        decoration: BoxDecoration(-][m
+[31m[-          color: Colors.white,-][m
+[31m[-          borderRadius: BorderRadius.circular(18),-][m
+[31m[-          boxShadow: const [-][m
+[31m[-            BoxShadow(-][m
+[31m[-              color: Color(0x14000000),-][m
+[31m[-              blurRadius: 10,-][m
+[31m[-              offset: Offset(0, 4),-][m
+[31m[-            ),-][m
+[31m[-          ],-][m
+[31m[-        ),-][m
+[31m[-        child: Row(-][m
+[31m[-          crossAxisAlignment: CrossAxisAlignment.start,-][m
+[31m[-          children: [-][m
+[31m[-            ClipRRect(-][m
+[31m[-              borderRadius: BorderRadius.circular(14),-][m
+[31m[-              child: Container(-][m
+[31m[-                width: 64,-][m
+[31m[-                height: 64,-][m
+[31m[-                color: Colors.blue.shade50,-][m
+[31m[-                child:-][m
+[31m[-                    (point['image_url']?.toString().trim().isNotEmpty ?? false)-][m
+[31m[-                    ? Image.network(-][m
+[31m[-                        point['image_url'].toString(),-][m
+[31m[-                        fit: BoxFit.cover,-][m
+[31m[-                        errorBuilder: (_, __, ___) => const Icon(-][m
+[31m[-                          Icons.store_mall_directory_outlined,-][m
+[31m[-                          color: Colors.blue,-][m
+[31m[-                          size: 28,-][m
+[31m[-                        ),-][m
+[31m[-                      )-][m
+[31m[-                    : const Icon(-][m
+[31m[-                        Icons.store_mall_directory_outlined,-][m
+[31m[-                        color: Colors.blue,-][m
+[31m[-                        size: 28,-][m
+[31m[-                      ),-][m
+[31m[-              ),-][m
+[31m[-            ),-][m
+[31m[-            const SizedBox(width: 14),-][m
+[31m[-            Expanded(-][m
+[31m[-              child: Column(-][m
+[31m[-                crossAxisAlignment: CrossAxisAlignment.start,-][m
+[31m[-                children: [-][m
+[31m[-                  Row(-][m
+[31m[-                    children: [-][m
+[31m[-                      Expanded(-][m
+[31m[-                        child: Text(-][m
+[31m[-                          point['name']?.toString() ?? 'Pickup Point',-][m
+[31m[-                          style: const TextStyle(-][m
+[31m[-                            fontSize: 16,-][m
+[31m[-                            fontWeight: FontWeight.bold,-][m
+[31m[-                          ),-][m
+[31m[-                        ),-][m
+[31m[-                      ),-][m
+[31m[-                      Container(-][m
+[31m[-                        padding: const EdgeInsets.symmetric(-][m
+[31m[-                          horizontal: 8,-][m
+[31m[-                          vertical: 4,-][m
+[31m[-                        ),-][m
+[31m[-                        decoration: BoxDecoration(-][m
+[31m[-                          color: const Color(0xFFFEF4E2),-][m
+[31m[-                          borderRadius: BorderRadius.circular(999),-][m
+[31m[-                        ),-][m
+[31m[-                        child: Text(-][m
+[31m[-                          '★ ${_ratingLabel(point)}',-][m
+[31m[-                          style: const TextStyle(-][m
+[31m[-                            color: Color(0xFFD4800A),-][m
+[31m[-                            fontWeight: FontWeight.w700,-][m
+[31m[-                            fontSize: 11,-][m
+[31m[-                          ),-][m
+[31m[-                        ),-][m
+[31m[-                      ),-][m
+[31m[-                    ],-][m
+[31m[-                  ),-][m
+[31m[-                  const SizedBox(height: 6),-][m
+[31m[-                  Text(-][m
+[31m[-                    address.isEmpty ? '-' : address,-][m
+[31m[-                    style: const TextStyle(color: Colors.black54, height: 1.4),-][m
+[31m[-                  ),-][m
+[31m[-                  const SizedBox(height: 8),-][m
+[31m[-                  Wrap(-][m
+[31m[-                    spacing: 8,-][m
+[31m[-                    runSpacing: 8,-][m
+[31m[-                    children: [-][m
+[31m[-                      if ((point['phone']?.toString().trim().isNotEmpty ??-][m
+[31m[-                          false))-][m
+[31m[-                        _miniChip(-][m
+[31m[-                          Icons.phone_outlined,-][m
+[31m[-                          point['phone'].toString(),-][m
+[31m[-                        ),-][m
+[31m[-                      if (_isTopUsedInCity(point))-][m
+[31m[-                        _miniChip(-][m
+[31m[-                          Icons.local_fire_department_outlined,-][m
+[31m[-                          'Top used in ${point['city'] ?? 'this city'}',-][m
+[31m[-                          fg: Colors.green,-][m
+[31m[-                          bg: Colors.green.shade50,-][m
+[31m[-                        ),-][m
+[31m[-                    ],-][m
+[31m[-                  ),-][m
+[31m[-                ],-][m
+[31m[-              ),-][m
+[31m[-            ),-][m
+[31m[-          ],-][m
+[31m[-        ),-][m
+[31m[-      ),-][m
+[31m[-    );-][m
+[31m[-  }-][m
+
+[31m[-  Widget _miniChip(-][m
+[31m[-    IconData icon,-][m
+[31m[-    String label, {-][m
+[31m[-    Color fg = Colors.blue,-][m
+[31m[-    Color? bg,-][m
+[31m[-  }) {-][m
+[31m[-    return Container(-][m
+[31m[-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),-][m
+[31m[-      decoration: BoxDecoration(-][m
+[31m[-        color: bg ?? Colors.blue.shade50,-][m
+[31m[-        borderRadius: BorderRadius.circular(999),-][m
+[31m[-      ),-][m
+[31m[-      child: Row(-][m
+[31m[-        mainAxisSize: MainAxisSize.min,-][m
+[31m[-        children: [-][m
+[31m[-          Icon(icon, size: 13, color: fg),-][m
+[31m[-          const SizedBox(width: 4),-][m
+[31m[-          Text(-][m
+[31m[-            label,-][m
+[31m[-            style: TextStyle(-][m
+[31m[-              fontSize: 11.5,-][m
+[31m[-              color: fg,-][m
+[31m[-              fontWeight: FontWeight.w600,-][m
+[31m[-            ),-][m
+[31m[-          ),-][m
+[31m[-        ],-][m
+[31m[-      ),-][m
+[31m[-    );-][m
+[31m[-  }-][m
+
+[31m[-  @override-][m
+[31m[-  Widget build(BuildContext context) {-][m
+[31m[-    final filtered = _filteredPickupPoints;-][m
+
+[31m[-    return Scaffold(-][m
+[31m[-      backgroundColor: const Color(0xFFF5F7FB),-][m
+[31m[-      appBar: AppBar(title: const Text('Pickup Points'), centerTitle: true),-][m
+[31m[-      body: _loading-][m
+[31m[-          ? const Center(child: CircularProgressIndicator())-][m
+[31m[-          : RefreshIndicator(-][m
+[31m[-              onRefresh: _load,-][m
+[31m[-              child: ListView(-][m
+[31m[-                padding: const EdgeInsets.all(20),-][m
+[31m[-                children: [-][m
+[31m[-                  TextField(-][m
+[31m[-                    controller: _searchCtrl,-][m
+[31m[-                    decoration: InputDecoration(-][m
+[31m[-                      hintText:-][m
+[31m[-                          'Search by pickup point, city, area, or address',-][m
+[31m[-                      prefixIcon: const Icon(Icons.search),-][m
+[31m[-                      filled: true,-][m
+[31m[-                      fillColor: Colors.white,-][m
+[31m[-                      border: OutlineInputBorder(-][m
+[31m[-                        borderRadius: BorderRadius.circular(16),-][m
+[31m[-                        borderSide: const BorderSide(color: Color(0xFFDDE5F7)),-][m
+[31m[-                      ),-][m
+[31m[-                      enabledBorder: OutlineInputBorder(-][m
+[31m[-                        borderRadius: BorderRadius.circular(16),-][m
+[31m[-                        borderSide: const BorderSide(color: Color(0xFFDDE5F7)),-][m
+[31m[-                      ),-][m
+[31m[-                      focusedBorder: OutlineInputBorder(-][m
+[31m[-                        borderRadius: BorderRadius.circular(16),-][m
+[31m[-                        borderSide: const BorderSide(color: Color(0xFF2563EB)),-][m
+[31m[-                      ),-][m
+[31m[-                    ),-][m
+[31m[-                  ),-][m
+[31m[-                  const SizedBox(height: 20),-][m
+[31m[-                  _buildRecentSection(),-][m
+[31m[-                  const Text(-][m
+[31m[-                    'Search Results',-][m
+[31m[-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),-][m
+[31m[-                  ),-][m
+[31m[-                  const SizedBox(height: 12),-][m
+[31m[-                  if (filtered.isEmpty)-][m
+[31m[-                    const Padding(-][m
+[31m[-                      padding: EdgeInsets.only(top: 40),-][m
+[31m[-                      child: Column(-][m
+[31m[-                        children: [-][m
+[31m[-                          Icon(-][m
+[31m[-                            Icons.search_off_outlined,-][m
+[31m[-                            size: 56,-][m
+[31m[-                            color: Colors.grey,-][m
+[31m[-                          ),-][m
+[31m[-                          SizedBox(height: 12),-][m
+[31m[-                          Text(-][m
+[31m[-                            'No pickup points match this search.',-][m
+[31m[-                            style: TextStyle(-][m
+[31m[-                              fontSize: 16,-][m
+[31m[-                              fontWeight: FontWeight.bold,-][m
+[31m[-                            ),-][m
+[31m[-                          ),-][m
+[31m[-                        ],-][m
+[31m[-                      ),-][m
+[31m[-                    )-][m
+[31m[-                  else-][m
+[31m[-                    ...filtered.map(_buildPickupPointCard),-][m
+[31m[-                ],-][m
+[31m[-              ),-][m
+[31m[-            ),-][m
+[31m[-    );-][m
+[31m[-  }-][m
+[31m[-}-][m
+
+[31m[-class PickupPointDetailPage extends StatefulWidget {-][m
+[31m[-  final Map<String, dynamic> pickupPoint;-][m
+
+[31m[-  const PickupPointDetailPage({super.key, required this.pickupPoint});-][m
+
+[31m[-  @override-][m
+[31m[-  State<PickupPointDetailPage> createState() => _PickupPointDetailPageState();-][m
+[31m[-}-][m
+
+[31m[-class _PickupPointDetailPageState extends State<PickupPointDetailPage> {-][m
+[31m[-  final AuthService _authService = AuthService();-][m
+
+[31m[-  bool _loading = true;-][m
+[31m[-  List<Map<String, dynamic>> _reviews = [];-][m
+[31m[-  double _averageRating = 0.0;-][m
+[31m[-  int _reviewCount = 0;-][m
+
+[31m[-  @override-][m
+[31m[-  void initState() {-][m
+[31m[-    super.initState();-][m
+[31m[-    _load();-][m
+[31m[-  }-][m
+
+[31m[-  Future<void> _load() async {-][m
+[31m[-    setState(() => _loading = true);-][m
+[31m[-    try {-][m
+[31m[-      final pickupPointId = widget.pickupPoint['id']?.toString() ?? '';-][m
+[31m[-      final reviews = await _authService.getPickupPointReviews(pickupPointId);-][m
+[31m[-      final summaries = await _authService.getPickupPointRatingSummaries([-][m
+[31m[-        pickupPointId,-][m
+[31m[-      ]);-][m
+[31m[-      final summary = summaries[pickupPointId] ?? const <String, dynamic>{};-][m
+[31m[-      if (!mounted) return;-][m
+[31m[-      setState(() {-][m
+[31m[-        _reviews = reviews;-][m
+[31m[-        _averageRating = (summary['average'] as num?)?.toDouble() ?? 0.0;-][m
+[31m[-        _reviewCount = (summary['count'] as int?) ?? 0;-][m
+[31m[-        _loading = false;-][m
+[31m[-      });-][m
+[31m[-    } catch (_) {-][m
+[31m[-      if (!mounted) return;-][m
+[31m[-      setState(() => _loading = false);-][m
+[31m[-    }-][m
+[31m[-  }-][m
+
+[31m[-  Future<void> _openReviewDialog() async {-][m
+[31m[-    int rating = 5;-][m
+[31m[-    final commentCtrl = TextEditingController();-][m
+
+[31m[-    await showDialog<void>(-][m
+[31m[-      context: context,-][m
+[31m[-      builder: (dialogContext) => StatefulBuilder(-][m
+[31m[-        builder: (context, setDialogState) => AlertDialog(-][m
+[31m[-          title: const Text('Rate This Pickup Point'),-][m
+[31m[-          content: Column(-][m
+[31m[-            mainAxisSize: MainAxisSize.min,-][m
+[31m[-            crossAxisAlignment: CrossAxisAlignment.start,-][m
+[31m[-            children: [-][m
+[31m[-              Row(-][m
+[31m[-                children: List.generate(5, (index) {-][m
+[31m[-                  final value = index + 1;-][m
+[31m[-                  return IconButton(-][m
+[31m[-                    onPressed: () => setDialogState(() => rating = value),-][m
+[31m[-                    icon: Icon(-][m
+[31m[-                      value <= rating ? Icons.star : Icons.star_border,-][m
+[31m[-                      color: const Color(0xFFD4800A),-][m
+[31m[-                    ),-][m
+[31m[-                  );-][m
+[31m[-                }),-][m
+[31m[-              ),-][m
+[31m[-              TextField(-][m
+[31m[-                controller: commentCtrl,-][m
+[31m[-                maxLines: 4,-][m
+[31m[-                decoration: const InputDecoration(-][m
+[31m[-                  labelText: 'Comment or feedback',-][m
+[31m[-                  hintText: 'How was the service?',-][m
+[31m[-                ),-][m
+[31m[-              ),-][m
+[31m[-            ],-][m
+[31m[-          ),-][m
+[31m[-          actions: [-][m
+[31m[-            TextButton(-][m
+[31m[-              onPressed: () => Navigator.pop(dialogContext),-][m
+[31m[-              child: const Text('Cancel'),-][m
+[31m[-            ),-][m
+[31m[-            ElevatedButton(-][m
+[31m[-              onPressed: () async {-][m
+[31m[-                try {-][m
+[31m[-                  await _authService.submitPickupPointReview(-][m
+[31m[-                    pickupPointId: widget.pickupPoint['id'].toString(),-][m
+[31m[-                    rating: rating,-][m
+[31m[-                    comment: commentCtrl.text,-][m
+[31m[-                  );-][m
+[31m[-                  if (!mounted) return;-][m
+[31m[-                  Navigator.pop(dialogContext);-][m
+[31m[-                  ScaffoldMessenger.of(context).showSnackBar(-][m
+[31m[-                    const SnackBar(content: Text('Feedback submitted.')),-][m
+[31m[-                  );-][m
+[31m[-                  await _load();-][m
+[31m[-                } catch (e) {-][m
+[31m[-                  if (!mounted) return;-][m
+[31m[-                  ScaffoldMessenger.of(context).showSnackBar(-][m
+[31m[-                    SnackBar(-][m
+[31m[-                      content: Text(-][m
+[31m[-                        e.toString().replaceFirst('Exception: ', ''),-][m
+[31m[-                      ),-][m
+[31m[-                    ),-][m
+[31m[-                  );-][m
+[31m[-                }-][m
+[31m[-              },-][m
+[31m[-              child: const Text('Submit'),-][m
+[31m[-            ),-][m
+[31m[-          ],-][m
+[31m[-        ),-][m
+[31m[-      ),-][m
+[31m[-    );-][m
+
+[31m[-    commentCtrl.dispose();-][m
+[31m[-  }-][m
+
+[31m[-  Widget _buildStatChip(String label, String value) {-][m
+[31m[-    return Container(-][m
+[31m[-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),-][m
+[31m[-      decoration: BoxDecoration(-][m
+[31m[-        color: Colors.white,-][m
+[31m[-        borderRadius: BorderRadius.circular(14),-][m
+[31m[-        border: Border.all(color: const Color(0xFFDDE5F7)),-][m
+[31m[-      ),-][m
+[31m[-      child: Column(-][m
+[31m[-        children: [-][m
+[31m[-          Text(-][m
+[31m[-            value,-][m
+[31m[-            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),-][m
+[31m[-          ),-][m
+[31m[-          const SizedBox(height: 2),-][m
+[31m[-          Text(-][m
+[31m[-            label,-][m
+[31m[-            style: const TextStyle(color: Colors.black54, fontSize: 12),-][m
+[31m[-          ),-][m
+[31m[-        ],-][m
+[31m[-      ),-][m
+[31m[-    );-][m
+[31m[-  }-][m
+
+[31m[-  Widget _infoRow(IconData icon, String label, String value) {-][m
+[31m[-    return Padding(-][m
+[31m[-      padding: const EdgeInsets.only(bottom: 12),-][m
+[31m[-      child: Row(-][m
+[31m[-        crossAxisAlignment: CrossAxisAlignment.start,-][m
+[31m[-        children: [-][m
+[31m[-          Icon(icon, color: Colors.blue, size: 20),-][m
+[31m[-          const SizedBox(width: 10),-][m
+[31m[-          Expanded(-][m
+[31m[-            child: Column(-][m
+[31m[-              crossAxisAlignment: CrossAxisAlignment.start,-][m
+[31m[-              children: [-][m
+[31m[-                Text(-][m
+[31m[-                  label,-][m
+[31m[-                  style: const TextStyle(color: Colors.black54, fontSize: 12),-][m
+[31m[-                ),-][m
+[31m[-                const SizedBox(height: 4),-][m
+[31m[-                Text(-][m
+[31m[-                  value,-][m
+[31m[-                  style: const TextStyle(-][m
+[31m[-                    fontSize: 15,-][m
+[31m[-                    fontWeight: FontWeight.w600,-][m
+[31m[-                  ),-][m
+[31m[-                ),-][m
+[31m[-              ],-][m
+[31m[-            ),-][m
+[31m[-          ),-][m
+[31m[-        ],-][m
+[31m[-      ),-][m
+[31m[-    );-][m
+[31m[-  }-][m
+
+[31m[-  String _paymentMethodLabel(String? raw) {-][m
+[31m[-    final value = (raw ?? '').trim().toLowerCase();-][m
+[31m[-    switch (value) {-][m
+[31m[-      case 'customer_pays_online':-][m
+[31m[-        return 'Customer Pays Online';-][m
+[31m[-      case 'customer_pays_at_pickup':-][m
+[31m[-        return 'Customer Pays At Pickup';-][m
+[31m[-      case 'wish_money':-][m
+[31m[-        return 'Wish Money';-][m
+[31m[-      case 'hybrid':-][m
+[31m[-        return 'Hybrid';-][m
+[31m[-      case '':-][m
+[31m[-        return 'Not specified';-][m
+[31m[-      default:-][m
+[31m[-        return value-][m
+[31m[-            .split('_')-][m
+[31m[-            .where((part) => part.isNotEmpty)-][m
+[31m[-            .map((part) => '${part[0].toUpperCase()}${part.substring(1)}')-][m
+[31m[-            .join(' ');-][m
+[31m[-    }-][m
+[31m[-  }-][m
+
+[31m[-  @override-][m
+[31m[-  Widget build(BuildContext context) {-][m
+[31m[-    final point = widget.pickupPoint;-][m
+[31m[-    final imageUrl = point['image_url']?.toString().trim() ?? '';-][m
+[31m[-    final ownerName = point['owner_name']?.toString().trim() ?? '-';-][m
+[31m[-    final paymentMethod = _paymentMethodLabel(-][m
+[31m[-      point['preferred_payment_method']?.toString(),-][m
+[31m[-    );-][m
+[31m[-    final paymentHandling = _paymentMethodLabel(-][m
+[31m[-      point['payment_handling_method']?.toString(),-][m
+[31m[-    );-][m
+[31m[-    final address = [-][m
+[31m[-      point['address_text']?.toString().trim(),-][m
+[31m[-      point['city']?.toString().trim(),-][m
+[31m[-      point['area']?.toString().trim(),-][m
+[31m[-    ].whereType<String>().where((part) => part.isNotEmpty).join(', ');-][m
+
+[31m[-    return Scaffold(-][m
+[31m[-      backgroundColor: const Color(0xFFF5F7FB),-][m
+[31m[-      appBar: AppBar(title: const Text('Pickup Point Details')),-][m
+[31m[-      body: _loading-][m
+[31m[-          ? const Center(child: CircularProgressIndicator())-][m
+[31m[-          : ListView(-][m
+[31m[-              padding: const EdgeInsets.all(20),-][m
+[31m[-              children: [-][m
+[31m[-                ClipRRect(-][m
+[31m[-                  borderRadius: BorderRadius.circular(20),-][m
+[31m[-                  child: Container(-][m
+[31m[-                    height: 200,-][m
+[31m[-                    color: Colors.blue.shade50,-][m
+[31m[-                    child: imageUrl.isNotEmpty-][m
+[31m[-                        ? Image.network(-][m
+[31m[-                            imageUrl,-][m
+[31m[-                            fit: BoxFit.cover,-][m
+[31m[-                            errorBuilder: (_, __, ___) => const Icon(-][m
+[31m[-                              Icons.store_mall_directory_outlined,-][m
+[31m[-                              size: 56,-][m
+[31m[-                              color: Colors.blue,-][m
+[31m[-                            ),-][m
+[31m[-                          )-][m
+[31m[-                        : const Icon(-][m
+[31m[-                            Icons.store_mall_directory_outlined,-][m
+[31m[-                            size: 56,-][m
+[31m[-                            color: Colors.blue,-][m
+[31m[-                          ),-][m
+[31m[-                  ),-][m
+[31m[-                ),-][m
+[31m[-                const SizedBox(height: 18),-][m
+[31m[-                Text(-][m
+[31m[-                  point['name']?.toString() ?? 'Pickup Point',-][m
+[31m[-                  style: const TextStyle(-][m
+[31m[-                    fontSize: 24,-][m
+[31m[-                    fontWeight: FontWeight.bold,-][m
+[31m[-                  ),-][m
+[31m[-                ),-][m
+[31m[-                const SizedBox(height: 6),-][m
+[31m[-                Text(-][m
+[31m[-                  'Owner: $ownerName',-][m
+[31m[-                  style: const TextStyle(-][m
+[31m[-                    color: Colors.black54,-][m
+[31m[-                    fontWeight: FontWeight.w600,-][m
+[31m[-                  ),-][m
+[31m[-                ),-][m
+[31m[-                const SizedBox(height: 12),-][m
+[31m[-                Row(-][m
+[31m[-                  children: [-][m
+[31m[-                    Expanded(-][m
+[31m[-                      child: _buildStatChip(-][m
+[31m[-                        'Rating',-][m
+[31m[-                        _reviewCount == 0-][m
+[31m[-                            ? 'New'-][m
+[31m[-                            : _averageRating.toStringAsFixed(1),-][m
+[31m[-                      ),-][m
+[31m[-                    ),-][m
+[31m[-                    const SizedBox(width: 10),-][m
+[31m[-                    Expanded(child: _buildStatChip('Reviews', '$_reviewCount')),-][m
+[31m[-                  ],-][m
+[31m[-                ),-][m
+[31m[-                const SizedBox(height: 18),-][m
+[31m[-                Container(-][m
+[31m[-                  padding: const EdgeInsets.all(18),-][m
+[31m[-                  decoration: BoxDecoration(-][m
+[31m[-                    color: Colors.white,-][m
+[31m[-                    borderRadius: BorderRadius.circular(18),-][m
+[31m[-                  ),-][m
+[31m[-                  child: Column(-][m
+[31m[-                    children: [-][m
+[31m[-                      _infoRow(-][m
+[31m[-                        Icons.phone_outlined,-][m
+[31m[-                        'Phone',-][m
+[31m[-                        point['phone']?.toString() ?? '-',-][m
+[31m[-                      ),-][m
+[31m[-                      _infoRow(-][m
+[31m[-                        Icons.location_on_outlined,-][m
+[31m[-                        'Address',-][m
+[31m[-                        address.isEmpty ? '-' : address,-][m
+[31m[-                      ),-][m
+[31m[-                      _infoRow(-][m
+[31m[-                        Icons.schedule_outlined,-][m
+[31m[-                        'Working Hours',-][m
+[31m[-                        point['opening_hours']?.toString() ?? '-',-][m
+[31m[-                      ),-][m
+[31m[-                      _infoRow(-][m
+[31m[-                        Icons.payments_outlined,-][m
+[31m[-                        'Preferred Payment',-][m
+[31m[-                        paymentMethod,-][m
+[31m[-                      ),-][m
+[31m[-                      _infoRow(-][m
+[31m[-                        Icons.account_balance_wallet_outlined,-][m
+[31m[-                        'Payment Handling',-][m
+[31m[-                        paymentHandling,-][m
+[31m[-                      ),-][m
+[31m[-                    ],-][m
+[31m[-                  ),-][m
+[31m[-                ),-][m
+[31m[-                const SizedBox(height: 18),-][m
+[31m[-                SizedBox(-][m
+[31m[-                  width: double.infinity,-][m
+[31m[-                  child: ElevatedButton.icon(-][m
+[31m[-                    onPressed: _openReviewDialog,-][m
+[31m[-                    icon: const Icon(Icons.rate_review_outlined),-][m
+[31m[-                    label: const Text('Leave Rating & Feedback'),-][m
+[31m[-                    style: ElevatedButton.styleFrom(-][m
+[31m[-                      padding: const EdgeInsets.symmetric(vertical: 14),-][m
+[31m[-                      shape: RoundedRectangleBorder(-][m
+[31m[-                        borderRadius: BorderRadius.circular(14),-][m
+[31m[-                      ),-][m
+[31m[-                    ),-][m
+[31m[-                  ),-][m
+[31m[-                ),-][m
+[31m[-                const SizedBox(height: 24),-][m
+[31m[-                const Text(-][m
+[31m[-                  'Customer Feedback',-][m
+[31m[-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),-][m
+[31m[-                ),-][m
+[31m[-                const SizedBox(height: 12),-][m
+[31m[-                if (_reviews.isEmpty)-][m
+[31m[-                  Container(-][m
+[31m[-                    padding: const EdgeInsets.all(16),-][m
+[31m[-                    decoration: BoxDecoration(-][m
+[31m[-                      color: Colors.white,-][m
+[31m[-                      borderRadius: BorderRadius.circular(18),-][m
+[31m[-                    ),-][m
+[31m[-                    child: const Text(-][m
+[31m[-                      'No feedback yet for this pickup point.',-][m
+[31m[-                      style: TextStyle(color: Colors.black54),-][m
+[31m[-                    ),-][m
+[31m[-                  )-][m
+[31m[-                else-][m
+[31m[-                  ..._reviews.map((review) {-][m
+[31m[-                    final rating = (review['rating'] as num?)?.toInt() ?? 0;-][m
+[31m[-                    return Container(-][m
+[31m[-                      margin: const EdgeInsets.only(bottom: 12),-][m
+[31m[-                      padding: const EdgeInsets.all(16),-][m
+[31m[-                      decoration: BoxDecoration(-][m
+[31m[-                        color: Colors.white,-][m
+[31m[-                        borderRadius: BorderRadius.circular(18),-][m
+[31m[-                      ),-][m
+[31m[-                      child: Column(-][m
+[31m[-                        crossAxisAlignment: CrossAxisAlignment.start,-][m
+[31m[-                        children: [-][m
+[31m[-                          Row(-][m
+[31m[-                            children: [-][m
+[31m[-                              Expanded(-][m
+[31m[-                                child: Text(-][m
+[31m[-                                  review['customer_name']?.toString() ??-][m
+[31m[-                                      'Customer',-][m
+[31m[-                                  style: const TextStyle(-][m
+[31m[-                                    fontWeight: FontWeight.bold,-][m
+[31m[-                                  ),-][m
+[31m[-                                ),-][m
+[31m[-                              ),-][m
+[31m[-                              Text(-][m
+[31m[-                                List.generate(rating, (_) => '★').join(),-][m
+[31m[-                                style: const TextStyle(-][m
+[31m[-                                  color: Color(0xFFD4800A),-][m
+[31m[-                                  fontSize: 14,-][m
+[31m[-                                ),-][m
+[31m[-                              ),-][m
+[31m[-                            ],-][m
+[31m[-                          ),-][m
+[31m[-                          if ((review['comment']-][m
+[31m[-                                  ?.toString()-][m
+[31m[-                                  .trim()-][m
+[31m[-                                  .isNotEmpty ??-][m
+[31m[-                              false)) ...[-][m
+[31m[-                            const SizedBox(height: 8),-][m
+[31m[-                            Text(-][m
+[31m[-                              review['comment'].toString(),-][m
+[31m[-                              style: const TextStyle(-][m
+[31m[-                                color: Colors.black87,-][m
+[31m[-                                height: 1.4,-][m
+[31m[-                              ),-][m
+[31m[-                            ),-][m
+[31m[-                          ],-][m
+[31m[-                        ],-][m
+[31m[-                      ),-][m
+[31m[-                    );-][m
+[31m[-                  }),-][m
+[31m[-              ],-][m
+[31m[-            ),-][m
+[31m[-    );-][m
+[31m[-  }-][m
+[31m[-}-][m
+[1mdiff --git a/lib/features/merchant/presentation/pages/merchant_create_order_screen.dart b/lib/features/merchant/presentation/pages/merchant_create_order_screen.dart[m
+[1mindex 4b03a35..d1bf549 100644[m
+[1m--- a/lib/features/merchant/presentation/pages/merchant_create_order_screen.dart[m
+[1m+++ b/lib/features/merchant/presentation/pages/merchant_create_order_screen.dart[m
+[36m@@ -2476,7 +2476,10 @@[m [mclass _PickupPointOption {[m
+  }[m
+
+  String get starsLabel =>[m
+      reviewCount <= 0
+          ? 'New'
+          : [31m[-averageRating.toStringAsFixed(1);-][m[32m{+'${averageRating.toStringAsFixed(1)} ($reviewCount)';+}[m
+
+}[m
+
+class _LatLngOption {[m
+[1mdiff --git a/lib/features/pickup_point/data/pickup_point_service.dart b/lib/features/pickup_point/data/pickup_point_service.dart[m
+[1mindex c363911..1c19174 100644[m
+[1m--- a/lib/features/pickup_point/data/pickup_point_service.dart[m
+[1m+++ b/lib/features/pickup_point/data/pickup_point_service.dart[m
+[36m@@ -26,37 +26,35 @@[m [mclass PickupPointService {[m
+      return null;[m
+    }[m
+  }[m
+
+  bool usesWhishRemittance(Map<String, dynamic>? pickupPoint) {[m
+  final preferred = pickupPoint?['preferred_payment_method']
+      ?.toString()
+      .trim()
+      .toLowerCase();
+  final handling = pickupPoint?['payment_handling_method']
+      ?.toString()
+      .trim()
+      .toLowerCase();
+
+  return preferred == 'wish_money' ||[31m[-preferred == 'customer_pays_online' ||-][m
+      handling == [31m[-'customer_pays_online';-][m[32m{+'wish_money';+}[m
+}
+bool usesAgentCollection(Map<String, dynamic>? pickupPoint) {
+  if (usesWhishRemittance(pickupPoint)) return false;
+
+  final preferred = pickupPoint?['preferred_payment_method']
+      ?.toString()
+      .trim()
+      .toLowerCase();
+  final handling = pickupPoint?['payment_handling_method']
+      ?.toString()
+      .trim()
+      .toLowerCase();
+
+  [32m{+return preferred == 'agent_collection' ||+}[m
+[32m{+      handling == 'agent_collection';+}[m
+[32m{+}+}[m
+
+[31m[-    return preferred == 'customer_pays_at_pickup' ||-][m
+[31m[-        handling == 'customer_pays_at_pickup';-][m
+[31m[-  }-][m
+
+  Future<List<Map<String, dynamic>>> getPendingCashOrders() async {[m
+    try {[m
+[1mdiff --git a/lib/features/pickup_point/presentation/pages/pickup_dashboard_screen.dart b/lib/features/pickup_point/presentation/pages/pickup_dashboard_screen.dart[m
+[1mindex e696e77..3cd4bf9 100644[m
+[1m--- a/lib/features/pickup_point/presentation/pages/pickup_dashboard_screen.dart[m
+[1m+++ b/lib/features/pickup_point/presentation/pages/pickup_dashboard_screen.dart[m
+[36m@@ -5,6 +5,7 @@[m [mimport 'package:flutter/material.dart';[m
+import 'package:image_picker/image_picker.dart';[m
+import 'package:supabase_flutter/supabase_flutter.dart';[m
+import 'package:wasle/core/ui/ui.dart';[m
+[32m{+import 'package:wasle/features/auth/data/auth_service.dart';+}[m
+import 'package:wasle/features/pickup_point/data/pickup_point_repository.dart';[m
+import 'package:wasle/features/pickup_point/presentation/pages/pickup_point_dashboard_screen.dart';[m
+
+[36m@@ -17,6 +18,7 @@[m [mclass PickupDashboardScreen extends StatefulWidget {[m
+
+class _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+  final PickupPointRepository _repository = PickupPointRepository();[m
+  [32m{+final AuthService _authService = AuthService();+}[m
+  final TextEditingController searchController = TextEditingController();[m
+  final ImagePicker _imagePicker = ImagePicker();[m
+
+[36m@@ -30,6 +32,10 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+  String? selectedPickupPointId;[m
+  StreamSubscription<List<Map<String, dynamic>>>? _ordersSubscription;[m
+
+  [32m{+double _averageRating = 0.0;+}[m
+[32m{+  int _reviewCount = 0;+}[m
+[32m{+  List<Map<String, dynamic>> _pickupPointReviews = [];+}[m
+
+  bool get _isDemoMode => selectedPickupPointId == 'demo-pickup-point';[m
+
+  String _normalizePhone(String value) =>[m
+[36m@@ -44,8 +50,9 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+
+  IconData _vehicleIcon(String? value) {[m
+    final text = value?.trim().toLowerCase() ?? '';[m
+    if (text.contains('moto') || text.contains('bike')) [32m{+{+}[m
+      return Icons.two_wheeler_rounded;[m
+    [32m{+}+}[m
+    return Icons.directions_car_filled_rounded;[m
+  }[m
+
+[36m@@ -62,27 +69,57 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+    super.dispose();[m
+  }[m
+
+  [32m{+Future<void> _loadPickupPointRatingAndFeedback() async {+}[m
+[32m{+    final pickupPointId = pickupPointData?['id']?.toString();+}[m
+[32m{+    if (pickupPointId == null || pickupPointId.isEmpty) {+}[m
+[32m{+      if (!mounted) return;+}[m
+[32m{+      setState(() {+}[m
+[32m{+        _averageRating = 0.0;+}[m
+[32m{+        _reviewCount = 0;+}[m
+[32m{+        _pickupPointReviews = [];+}[m
+[32m{+      });+}[m
+[32m{+      return;+}[m
+[32m{+    }+}[m
+
+[32m{+    final summaries = await _authService.getPickupPointRatingSummaries([+}[m
+[32m{+      pickupPointId,+}[m
+[32m{+    ]);+}[m
+[32m{+    final reviews = await _authService.getPickupPointReviews(pickupPointId);+}[m
+[32m{+    final summary = summaries[pickupPointId] ?? const <String, dynamic>{};+}[m
+
+[32m{+    if (!mounted) return;+}[m
+[32m{+    setState(() {+}[m
+[32m{+      _averageRating = (summary['average'] as num?)?.toDouble() ?? 0.0;+}[m
+[32m{+      _reviewCount = (summary['count'] as int?) ?? 0;+}[m
+[32m{+      _pickupPointReviews = reviews;+}[m
+[32m{+    });+}[m
+[32m{+  }+}[m
+
+  Future<void> _loadDashboard() async {[m
+    try {[m
+      setState(() {[m
+        isLoading = true;[m
+        errorText = null;[m
+      });[m
+
+      final pickupPoint = await _repository.getMyPickupPoint();[m
+      if (pickupPoint == null) {[m
+        if (!mounted) return;[m
+        _loadDemoData(message: 'No pickup point linked. Showing demo data.');[m
+        return;[m
+      }[m
+
+      final pickupPointId = pickupPoint['id']?.toString();[m
+      if (pickupPointId == null || pickupPointId.isEmpty) {[m
+        if (!mounted) return;[m
+        _loadDemoData(message: 'Pickup point ID missing. Showing demo data.');[m
+        return;[m
+      }[m
+
+      final parcelRows = await _repository.getPickupPointParcels([m
+        pickupPointId: pickupPointId,[m
+      );[m
+
+      if (!mounted) return;[m
+      setState(() {[m
+        selectedPickupPointId = pickupPointId;[m
+[36m@@ -91,6 +128,8 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+        isLoading = false;[m
+        errorText = null;[m
+      });[m
+
+      [32m{+await _loadPickupPointRatingAndFeedback();+}[m
+      _subscribeToRealtime(pickupPointId);[m
+    } catch (e) {[m
+      if (!mounted) return;[m
+[36m@@ -104,8 +143,12 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+      pickupPointData = {[m
+        'id': 'demo-pickup-point',[m
+        'name': 'Hamra Pickup Point',[m
+        [32m{+'owner_name': 'Owner',+}[m
+        'address_text': 'Beirut, Hamra Main Street',[m
+        [32m{+'phone': '+961 70 000 000',+}[m
+        'status': 'active',[m
+        [32m{+'preferred_payment_method': 'wish_money',+}[m
+[32m{+        'payment_handling_method': 'wish_money',+}[m
+      };[m
+      parcels = [[m
+        {[m
+[36m@@ -121,7 +164,7 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+        },[m
+        {[m
+          'order_id': 'ORD-1002',[m
+          'status': [31m[-'received_at_pickup_point',-][m[32m{+'dropped_at_pickup_point',+}[m
+          'customer_name': 'Sara',[m
+          'customer_phone': '+961 70 222 222',[m
+          'delivery_company_name': 'Quick Express',[m
+[36m@@ -153,6 +196,20 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+          'delivery_assigned_at': DateTime.now().toIso8601String(),[m
+        },[m
+      ];[m
+      [32m{+_averageRating = 4.5;+}[m
+[32m{+      _reviewCount = 12;+}[m
+[32m{+      _pickupPointReviews = [+}[m
+[32m{+        {+}[m
+[32m{+          'customer_name': 'Ahmad',+}[m
+[32m{+          'rating': 5,+}[m
+[32m{+          'comment': 'Very helpful and fast.',+}[m
+[32m{+        },+}[m
+[32m{+        {+}[m
+[32m{+          'customer_name': 'Sara',+}[m
+[32m{+          'rating': 4,+}[m
+[32m{+          'comment': 'Good service and easy pickup.',+}[m
+[32m{+        },+}[m
+[32m{+      ];+}[m
+      isLoading = false;[m
+      errorText = message;[m
+    });[m
+[36m@@ -163,19 +220,20 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+    _ordersSubscription = _repository[m
+        .watchPickupPointOrders(pickupPointId)[m
+        .listen((_) async {[m
+      final refreshed = await _repository.getPickupPointParcels(
+        pickupPointId: pickupPointId,
+      );
+      if (!mounted) return;
+      setState(() {
+        parcels = refreshed;
+      });
+    });
+  }[m
+
+  Future<void> _refreshParcels() async {[m
+    final pickupPointId = selectedPickupPointId;[m
+    if (pickupPointId == null || pickupPointId.isEmpty) return;[m
+
+    final refreshed = await _repository.getPickupPointParcels([m
+      pickupPointId: pickupPointId,[m
+    );[m
+[36m@@ -196,6 +254,7 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+      ).showSnackBar(const SnackBar(content: Text('Demo mode only.')));[m
+      return;[m
+    }[m
+
+    try {[m
+      setState(() => isSubmitting = true);[m
+      await _repository.updateParcelStatus([m
+[36m@@ -224,8 +283,10 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+      ).showSnackBar(const SnackBar(content: Text('Demo mode only.')));[m
+      return;[m
+    }[m
+
+    final pickupPointId = selectedPickupPointId;[m
+    if (pickupPointId == null) return;[m
+
+    final descriptionController = TextEditingController();[m
+    String issueType = 'damaged';[m
+    Uint8List? selectedImageBytes;[m
+[36m@@ -278,8 +339,9 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+                      DropdownMenuItem(value: 'other', child: Text('Other')),[m
+                    ],[m
+                    onChanged: (value) {[m
+                      if (value != null) [32m{+{+}[m
+                        setDialogState(() => issueType = value);[m
+                      [32m{+}+}[m
+                    },[m
+                  ),[m
+                  const SizedBox(height: 12),[m
+[36m@@ -356,6 +418,7 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+        },[m
+      ),[m
+    );[m
+
+    descriptionController.dispose();[m
+  }[m
+
+[36m@@ -411,18 +474,15 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+  List<Map<String, dynamic>> _filteredParcels() {[m
+    final query = searchController.text.trim().toLowerCase();[m
+    final normalizedQuery = _normalizePhone(searchController.text.trim());[m
+
+    return parcels.where((parcel) {[m
+      final matchesSearch =[m
+          query.isEmpty ||[m
+          (parcel['order_id']?.toString().toLowerCase() ?? [31m[-'').contains(-][m
+[31m[-            query,-][m
+[31m[-          )-][m[32m{+'').contains(query)+}[m ||
+          (parcel['customer_name']?.toString().toLowerCase() ?? [31m[-'').contains(-][m
+[31m[-            query,-][m
+[31m[-          )-][m[32m{+'')+}[m
+[32m{+              .contains(query)+}[m ||
+          (parcel['customer_phone']?.toString().toLowerCase() ?? [31m[-'').contains(-][m
+[31m[-            query,-][m
+[31m[-          )-][m[32m{+'')+}[m
+[32m{+              .contains(query)+}[m ||
+          (parcel['delivery_company_name']?.toString().toLowerCase() ?? '')[m
+              .contains(query) ||[m
+          (parcel['delivery_driver_name']?.toString().toLowerCase() ?? '')[m
+[36m@@ -431,9 +491,11 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+              _normalizePhone([m
+                parcel['customer_phone']?.toString() ?? '',[m
+              ).contains(normalizedQuery));[m
+
+      final matchesFilter =[m
+          selectedFilter == 'all' ||[m
+          parcel['status']?.toString() == selectedFilter;[m
+
+      return matchesSearch && matchesFilter;[m
+    }).toList();[m
+  }[m
+[36m@@ -450,61 +512,49 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+      .toList();[m
+
+  Widget _buildFilterChip(String value, String label) => ChoiceChip([m
+        label: Text(label),
+        selected: selectedFilter == value,
+        onSelected: (_) => setState(() => selectedFilter = value),
+      );
+
+  List<Widget> _buildParcelActions(Map<String, dynamic> parcel) {[m
+    final status = parcel['status']?.toString() ?? '';[m
+    final orderId = parcel['order_id']?.toString() ?? '';[m
+    final actions = <Widget>[];[m
+
+    if (status == 'dropped_at_pickup_point') {[m
+      actions.add([m
+        OutlinedButton.icon([m
+          onPressed: isSubmitting[m
+              ? null[m
+              : () => _updateStatus([m
+                    orderId: orderId,
+                    newStatus:[31m[-'received_at_pickup_point',-][m
+[31m[-                  successMessage: '$orderId marked as received',-][m
+[31m[-                ),-][m
+[31m[-          icon: const Icon(Icons.move_to_inbox_outlined),-][m
+[31m[-          label: const Text('Mark Received'),-][m
+[31m[-        ),-][m
+[31m[-      );-][m
+[31m[-    }-][m
+[31m[-    if (status == 'received_at_pickup_point' ||-][m
+[31m[-        status == 'dropped_at_pickup_point') {-][m
+[31m[-      actions.add(-][m
+[31m[-        OutlinedButton.icon(-][m
+[31m[-          onPressed: isSubmitting-][m
+[31m[-              ? null-][m
+[31m[-              : () => _updateStatus(-][m
+[31m[-                  orderId: orderId,-][m
+[31m[-                  newStatus:-][m 'ready_for_customer_pickup',
+                    successMessage: '$orderId marked ready',
+                  ),
+          icon: const Icon(Icons.inventory_2_outlined),[m
+          label: const Text('Mark Ready'),[m
+        ),[m
+      );[m
+    }[m
+
+    if (status == 'ready_for_customer_pickup') {[m
+      actions.add([m
+        OutlinedButton.icon([m
+          onPressed: isSubmitting[m
+              ? null[m
+              : () => _updateStatus([m
+                    orderId: orderId,
+                    newStatus: 'picked_up',
+                    successMessage:
+                        '$orderId marked as handed to the customer',
+                  ),
+          icon: const Icon(Icons.check_circle_outline),[m
+          label: const Text('Handed to Customer'),[m
+        ),[m
+      );[m
+    }[m
+
+    if (status != 'picked_up') {[m
+      actions.add([m
+        OutlinedButton.icon([m
+[36m@@ -514,6 +564,7 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+        ),[m
+      );[m
+    }[m
+
+    return actions;[m
+  }[m
+
+[36m@@ -526,6 +577,8 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+        return 'Customer Pays At Pickup';[m
+      case 'wish_money':[m
+        return 'Wish Money';[m
+      [32m{+case 'agent_collection':+}[m
+[32m{+        return 'Agent Collection';+}[m
+      case 'hybrid':[m
+        return 'Hybrid';[m
+      case '':[m
+[36m@@ -572,23 +625,23 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+  }[m
+
+  Widget _buildCustomerInfo(Map<String, dynamic> parcel) => Column([m
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Customer Info', style: AppTextStyles.title),
+          const SizedBox(height: AppSpacing.sm),
+          _buildInfoTile(
+            icon: Icons.person_outline,
+            label: 'Customer Name',
+            value: parcel['customer_name']?.toString() ?? 'Customer',
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          _buildInfoTile(
+            icon: Icons.phone_outlined,
+            label: 'Customer Phone',
+            value: parcel['customer_phone']?.toString() ?? '-',
+          ),
+        ],
+      );
+
+  Widget _buildDeliveryInfo(Map<String, dynamic> parcel) {[m
+    final assignedAt = parcel['delivery_assigned_at']?.toString();[m
+[36m@@ -666,18 +719,15 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+        pickupPointData?['max_orders_per_day']?.toString() ?? '-';[m
+    final workingDays =[m
+        (pickupPointData?['working_days'] as List?)[m
+                ?.map((day) => day?.toString() ?? '')
+                .where((day) => day.trim().isNotEmpty)
+                .join(', ') ??
+            '-';
+
+    final totalCount = parcels.length;[m
+    final arrivedCount = parcels[m
+        .where((p) => p['status'] == 'dropped_at_pickup_point')[m
+        .length;[m
+[31m[-    final receivedCount = parcels-][m
+[31m[-        .where((p) => p['status'] == 'received_at_pickup_point')-][m
+[31m[-        .length;-][m
+    final readyCount = parcels[m
+        .where((p) => p['status'] == 'ready_for_customer_pickup')[m
+        .length;[m
+[36m@@ -704,7 +754,6 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+            ),[m
+            const SizedBox(height: AppSpacing.lg),[m
+          ],[m
+[31m[-          // Hero card-][m
+          Container([m
+            padding: const EdgeInsets.all(AppSpacing.lg),[m
+            decoration: BoxDecoration([m
+[36m@@ -807,6 +856,30 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+                    _HeroChip(label: paymentHandling),[m
+                  ],[m
+                ),[m
+                [32m{+const SizedBox(height: AppSpacing.md),+}[m
+[32m{+                Row(+}[m
+[32m{+                  children: [+}[m
+[32m{+                    Expanded(+}[m
+[32m{+                      child: _buildInfoTile(+}[m
+[32m{+                        icon: Icons.star_outline,+}[m
+[32m{+                        label: 'Rating',+}[m
+[32m{+                        value: _reviewCount == 0+}[m
+[32m{+                            ? 'New'+}[m
+[32m{+                            : _averageRating.toStringAsFixed(1),+}[m
+[32m{+                        color: AppColors.warning,+}[m
+[32m{+                      ),+}[m
+[32m{+                    ),+}[m
+[32m{+                    const SizedBox(width: AppSpacing.sm),+}[m
+[32m{+                    Expanded(+}[m
+[32m{+                      child: _buildInfoTile(+}[m
+[32m{+                        icon: Icons.rate_review_outlined,+}[m
+[32m{+                        label: 'Reviews',+}[m
+[32m{+                        value: '$_reviewCount',+}[m
+[32m{+                        color: AppColors.primary,+}[m
+[32m{+                      ),+}[m
+[32m{+                    ),+}[m
+[32m{+                  ],+}[m
+[32m{+                ),+}[m
+              ],[m
+            ),[m
+          ),[m
+[36m@@ -887,7 +960,72 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+              ],[m
+            ),[m
+          ),[m
+          [31m[-// Stats grid-][m[32m{+const SizedBox(height: AppSpacing.lg),+}[m
+[32m{+          Container(+}[m
+[32m{+            padding: const EdgeInsets.all(AppSpacing.lg),+}[m
+[32m{+            decoration: BoxDecoration(+}[m
+[32m{+              color: Colors.white,+}[m
+[32m{+              borderRadius: BorderRadius.circular(24),+}[m
+[32m{+              boxShadow: const [+}[m
+[32m{+                BoxShadow(+}[m
+[32m{+                  color: Color(0x14000000),+}[m
+[32m{+                  blurRadius: 12,+}[m
+[32m{+                  offset: Offset(0, 6),+}[m
+[32m{+                ),+}[m
+[32m{+              ],+}[m
+[32m{+            ),+}[m
+[32m{+            child: Column(+}[m
+[32m{+              crossAxisAlignment: CrossAxisAlignment.start,+}[m
+[32m{+              children: [+}[m
+[32m{+                Text('Customer Feedback', style: AppTextStyles.heading3),+}[m
+[32m{+                const SizedBox(height: AppSpacing.md),+}[m
+[32m{+                if (_pickupPointReviews.isEmpty)+}[m
+[32m{+                  Text(+}[m
+[32m{+                    'No feedback yet for this pickup point.',+}[m
+[32m{+                    style: AppTextStyles.bodyMuted,+}[m
+[32m{+                  )+}[m
+[32m{+                else+}[m
+[32m{+                  ..._pickupPointReviews.map((review) {+}[m
+[32m{+                    final rating = (review['rating'] as num?)?.toInt() ?? 0;+}[m
+[32m{+                    final customerName =+}[m
+[32m{+                        review['customer_name']?.toString() ?? 'Customer';+}[m
+[32m{+                    final comment =+}[m
+[32m{+                        review['comment']?.toString().trim() ?? '';+}[m
+
+[32m{+                    return Container(+}[m
+[32m{+                      margin: const EdgeInsets.only(bottom: AppSpacing.sm),+}[m
+[32m{+                      padding: const EdgeInsets.all(AppSpacing.md),+}[m
+[32m{+                      decoration: BoxDecoration(+}[m
+[32m{+                        color: AppColors.surface,+}[m
+[32m{+                        borderRadius: BorderRadius.circular(16),+}[m
+[32m{+                      ),+}[m
+[32m{+                      child: Column(+}[m
+[32m{+                        crossAxisAlignment: CrossAxisAlignment.start,+}[m
+[32m{+                        children: [+}[m
+[32m{+                          Text(+}[m
+[32m{+                            customerName,+}[m
+[32m{+                            style: AppTextStyles.body.copyWith(+}[m
+[32m{+                              fontWeight: FontWeight.w700,+}[m
+[32m{+                            ),+}[m
+[32m{+                          ),+}[m
+[32m{+                          const SizedBox(height: AppSpacing.xxs),+}[m
+[32m{+                          Text(+}[m
+[32m{+                            List.generate(rating, (_) => '★').join(),+}[m
+[32m{+                            style: AppTextStyles.body.copyWith(+}[m
+[32m{+                              color: AppColors.warning,+}[m
+[32m{+                            ),+}[m
+[32m{+                          ),+}[m
+[32m{+                          if (comment.isNotEmpty) ...[+}[m
+[32m{+                            const SizedBox(height: AppSpacing.xxs),+}[m
+[32m{+                            Text(comment, style: AppTextStyles.bodyMuted),+}[m
+[32m{+                          ],+}[m
+[32m{+                        ],+}[m
+[32m{+                      ),+}[m
+[32m{+                    );+}[m
+[32m{+                  }),+}[m
+[32m{+              ],+}[m
+[32m{+            ),+}[m
+[32m{+          ),+}[m
+          const SizedBox(height: AppSpacing.xl),[m
+          const SectionHeader([m
+            title: 'Parcel Overview',[m
+[36m@@ -914,13 +1052,6 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+                accentColor: AppColors.warning,[m
+                accentSoftColor: AppColors.warningSoft,[m
+              ),[m
+[31m[-              DashboardStatCard(-][m
+[31m[-                icon: Icons.inventory_outlined,-][m
+[31m[-                value: '$receivedCount',-][m
+[31m[-                label: 'Received',-][m
+[31m[-                accentColor: AppColors.info,-][m
+[31m[-                accentSoftColor: AppColors.infoSoft,-][m
+[31m[-              ),-][m
+              DashboardStatCard([m
+                icon: Icons.local_shipping_outlined,[m
+                value: '$readyCount',[m
+[36m@@ -944,7 +1075,6 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+              ),[m
+            ],[m
+          ),[m
+[31m[-          // Search-][m
+          const SizedBox(height: AppSpacing.xl),[m
+          TextField([m
+            controller: searchController,[m
+[36m@@ -975,7 +1105,6 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+            children: [[m
+              _buildFilterChip('all', 'All'),[m
+              _buildFilterChip('dropped_at_pickup_point', 'Arrived'),[m
+[31m[-              _buildFilterChip('received_at_pickup_point', 'Received'),-][m
+              _buildFilterChip('ready_for_customer_pickup', 'Ready'),[m
+              _buildFilterChip('picked_up', 'Handed Over'),[m
+              _buildFilterChip('issue_reported', 'Issues'),[m
+[36m@@ -1041,7 +1170,6 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+              ),[m
+            ),[m
+          ],[m
+[31m[-          // Parcels list-][m
+          const SizedBox(height: AppSpacing.xl),[m
+          const SectionHeader([m
+            title: 'Recent Parcels',[m
+[36m@@ -1081,7 +1209,7 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+                                ),[m
+                                const SizedBox(height: AppSpacing.xxs),[m
+                                Text([m
+                                  '${parcel['customer_name'] ?? 'Customer'} [31m[-\u2022-][m[32m{+•+}[m ${parcel['customer_phone'] ?? '-'}',
+                                  style: AppTextStyles.bodyMuted,[m
+                                ),[m
+                              ],[m
+[36m@@ -1102,7 +1230,7 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+                      LayoutBuilder([m
+                        builder: (context, constraints) {[m
+                          final isSmall = constraints.maxWidth < 700;[m
+                          if (isSmall) [32m{+{+}[m
+                            return Column([m
+                              crossAxisAlignment: CrossAxisAlignment.start,[m
+                              children: [[m
+[36m@@ -1111,6 +1239,7 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+                                _buildDeliveryInfo(parcel),[m
+                              ],[m
+                            );[m
+                          [32m{+}+}[m
+                          return Row([m
+                            crossAxisAlignment: CrossAxisAlignment.start,[m
+                            children: [[m
+[36m@@ -1186,6 +1315,7 @@[m [mclass _PickupDashboardScreenState extends State<PickupDashboardScreen> {[m
+
+class _HeroChip extends StatelessWidget {[m
+  final String label;[m
+
+  const _HeroChip({required this.label});[m
+
+  @override[m
+[1mdiff --git a/lib/features/pickup_point/presentation/pages/pickup_point_orders_screen.dart b/lib/features/pickup_point/presentation/pages/pickup_point_orders_screen.dart[m
+[1mindex ec6b8dd..c817dd5 100644[m
+[1m--- a/lib/features/pickup_point/presentation/pages/pickup_point_orders_screen.dart[m
+[1m+++ b/lib/features/pickup_point/presentation/pages/pickup_point_orders_screen.dart[m
+[36m@@ -143,108 +143,127 @@[m [mclass _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {[m
+      body: _loading[m
+          ? const Center(child: CircularProgressIndicator())[m
+          : _orders.isEmpty[m
+              ? Center(
+                  child: Text(
+                    _showsAgentCollection
+                        ? 'No orders are waiting for an agent collection.'
+                        : 'No orders waiting for cash payment.',
+                    style: const TextStyle(color: Colors.black54),
+                  ),
+                )
+              : RefreshIndicator(
+                  onRefresh: _load,
+                  child: ListView.separated([31m[-padding: const EdgeInsets.all(16),-][m
+[31m[-                itemCount: _orders.length,-][m
+[31m[-                separatorBuilder: (_, __) => const SizedBox(height: 10),-][m
+[31m[-                itemBuilder: (context, i) {-][m
+[31m[-                  final order = _orders[i];-][m
+[31m[-                  final payment = order['payment'] as Map<String, dynamic>;-][m
+[31m[-                  final amount = (payment['amount'] as num).toDouble();-][m
+[31m[-                  final tracking = order['tracking_code']?.toString() ?? '-';-][m
+
+[31m[-                  return Container(-][m
+                    padding: const EdgeInsets.all(16),[m
+                    [32m{+itemCount: _orders.length,+}[m
+[32m{+                    separatorBuilder: (_, __) => const SizedBox(height: 10),+}[m
+[32m{+                    itemBuilder: (context, i) {+}[m
+[32m{+                      final order = _orders[i];+}[m
+[32m{+                      final payment = order['payment'] as Map<String, dynamic>;+}[m
+[32m{+                      final amount = (payment['amount'] as num).toDouble();+}[m
+[32m{+                      final tracking =+}[m
+[32m{+                          order['tracking_code']?.toString() ?? '-';+}[m
+
+[32m{+                      return Container(+}[m
+[32m{+                        padding: const EdgeInsets.all(16),+}[m
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(16),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x10000000),
+                              blurRadius: 8,
+                              offset: Offset(0, 3),
+                            ),
+                          ],[31m[-),-][m
+[31m[-                    child: Row(-][m
+[31m[-                      children: [-][m
+[31m[-                        Expanded(-][m
+[31m[-                          child: Column(-][m
+[31m[-                            crossAxisAlignment: CrossAxisAlignment.start,-][m
+[31m[-                            children: [-][m
+[31m[-                              Text(-][m
+[31m[-                                tracking,-][m
+[31m[-                                style: const TextStyle(-][m
+[31m[-                                  fontWeight: FontWeight.bold,-][m
+[31m[-                                  fontSize: 15,-][m
+[31m[-                                ),-][m
+[31m[-                              ),-][m
+[31m[-                              const SizedBox(height: 4),-][m
+[31m[-                              Text(-][m
+[31m[-                                _showsAgentCollection-][m
+[31m[-                                    ? 'Cash waiting for agent collection: \$${amount.toStringAsFixed(2)}'-][m
+[31m[-                                    : 'Cash to send Wasle: \$${amount.toStringAsFixed(2)}',-][m
+[31m[-                                style: const TextStyle(-][m
+[31m[-                                  color: Color(0xFFD4800A),-][m
+[31m[-                                  fontWeight: FontWeight.w600,-][m
+[31m[-                                ),-][m
+[31m[-                              ),-][m
+[31m[-                            ],-][m
+[31m[-                          ),-][m
+                        ),[m
+                        [31m[-_showsAgentCollection-][m
+[31m[-                            ? OutlinedButton.icon(-][m
+[31m[-                                onPressed: () => _confirmAgentCollected(order),-][m
+[31m[-                                icon: const Icon(-][m
+[31m[-                                  Icons.handshake_outlined,-][m
+[31m[-                                  size: 16,-][m
+[31m[-                                ),-][m
+[31m[-                                label: const Text('Agent collected'),-][m[32m{+child: Row(+}[m
+[32m{+                          children: [+}[m
+[32m{+                            Expanded(+}[m
+[32m{+                              child: Column(+}[m
+[32m{+                                crossAxisAlignment: CrossAxisAlignment.start,+}[m
+[32m{+                                children: [+}[m
+[32m{+                                  Text(+}[m
+[32m{+                                    tracking,+}[m
+                                    style:[31m[-OutlinedButton.styleFrom(-][m
+[31m[-                                  foregroundColor: Colors.green,-][m
+[31m[-                                  side:-][m const [31m[-BorderSide(color: Colors.green),-][m
+[31m[-                                  shape: RoundedRectangleBorder(-][m
+[31m[-                                    borderRadius: BorderRadius.circular(10),-][m
+[31m[-                                  ),-][m
+[31m[-                                ),-][m
+[31m[-                              )-][m
+[31m[-                            : ElevatedButton(-][m
+[31m[-                                onPressed: () => Navigator.push(-][m
+[31m[-                                  context,-][m
+[31m[-                                  MaterialPageRoute(-][m
+[31m[-                                    builder: (_) => SendToWasleScreen(-][m
+[31m[-                                      orderId: order['id'].toString(),-][m
+[31m[-                                      paymentId: payment['id'].toString(),-][m
+[31m[-                                      amount: amount,-][m
+[31m[-                                      trackingCode: tracking,-][m[32m{+TextStyle(+}[m
+[32m{+                                      fontWeight: FontWeight.bold,+}[m
+[32m{+                                      fontSize: 15,+}[m
+                                    ),[m
+                                  ),[m
+                                  [31m[-).then((_) => _load()),-][m[32m{+const SizedBox(height: 4),+}[m
+[32m{+                                  Text(+}[m
+[32m{+                                    _showsAgentCollection+}[m
+[32m{+                                        ? 'Cash waiting for agent collection: \$${amount.toStringAsFixed(2)}'+}[m
+[32m{+                                        : 'Cash to send Wasle: \$${amount.toStringAsFixed(2)}',+}[m
+                                    style:[31m[-ElevatedButton.styleFrom(-][m
+[31m[-                                  backgroundColor:-][m const [31m[-Color(0xFF2563EB),-][m
+[31m[-                                  foregroundColor: Colors.white,-][m
+[31m[-                                  shape: RoundedRectangleBorder(-][m
+[31m[-                                    borderRadius: BorderRadius.circular(10),-][m[32m{+TextStyle(+}[m
+[32m{+                                      color: Color(0xFFD4800A),+}[m
+[32m{+                                      fontWeight: FontWeight.w600,+}[m
+[32m{+                                    ),+}[m
+                                  ),[m
+                                [31m[-),-][m
+[31m[-                                child: const Text('Send to Wasle'),-][m[32m{+],+}[m
+                              ),[m
+                            [32m{+),+}[m
+[32m{+                            _showsAgentCollection+}[m
+[32m{+                                ? Container(+}[m
+[32m{+                                    padding: const EdgeInsets.symmetric(+}[m
+[32m{+                                      horizontal: 12,+}[m
+[32m{+                                      vertical: 10,+}[m
+[32m{+                                    ),+}[m
+[32m{+                                    decoration: BoxDecoration(+}[m
+[32m{+                                      color: const Color(0xFFFEF4E2),+}[m
+[32m{+                                      borderRadius: BorderRadius.circular(10),+}[m
+[32m{+                                      border: Border.all(+}[m
+[32m{+                                        color: const Color(+}[m
+[32m{+                                          0xFFD4800A,+}[m
+[32m{+                                        ).withValues(alpha: 0.35),+}[m
+[32m{+                                      ),+}[m
+[32m{+                                    ),+}[m
+[32m{+                                    child: const Row(+}[m
+[32m{+                                      mainAxisSize: MainAxisSize.min,+}[m
+[32m{+                                      children: [+}[m
+[32m{+                                        Icon(+}[m
+[32m{+                                          Icons.local_shipping_outlined,+}[m
+[32m{+                                          size: 16,+}[m
+[32m{+                                          color: Color(0xFFD4800A),+}[m
+[32m{+                                        ),+}[m
+[32m{+                                        SizedBox(width: 6),+}[m
+[32m{+                                        Text(+}[m
+[32m{+                                          'Waiting for agent',+}[m
+[32m{+                                          style: TextStyle(+}[m
+[32m{+                                            color: Color(0xFFD4800A),+}[m
+[32m{+                                            fontWeight: FontWeight.w600,+}[m
+[32m{+                                          ),+}[m
+[32m{+                                        ),+}[m
+[32m{+                                      ],+}[m
+[32m{+                                    ),+}[m
+[32m{+                                  )+}[m
+[32m{+                                : ElevatedButton(+}[m
+[32m{+                                    onPressed: () => Navigator.push(+}[m
+[32m{+                                      context,+}[m
+[32m{+                                      MaterialPageRoute(+}[m
+[32m{+                                        builder: (_) => SendToWasleScreen(+}[m
+[32m{+                                          orderId: order['id'].toString(),+}[m
+[32m{+                                          paymentId: payment['id'].toString(),+}[m
+[32m{+                                          amount: amount,+}[m
+[32m{+                                          trackingCode: tracking,+}[m
+[32m{+                                        ),+}[m
+[32m{+                                      ),+}[m
+[32m{+                                    ).then((_) => _load()),+}[m
+[32m{+                                    style: ElevatedButton.styleFrom(+}[m
+[32m{+                                      backgroundColor: const Color(0xFF2563EB),+}[m
+[32m{+                                      foregroundColor: Colors.white,+}[m
+[32m{+                                      shape: RoundedRectangleBorder(+}[m
+[32m{+                                        borderRadius: BorderRadius.circular(10),+}[m
+[32m{+                                      ),+}[m
+[32m{+                                    ),+}[m
+[32m{+                                    child: const Text('Send to Wasle'),+}[m
+[32m{+                                  ),+}[m
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+    );[m
+  }[m
+}[m
+[1mdiff --git a/pubspec.lock b/pubspec.lock[m
+[1mindex 9780851..666ef5c 100644[m
+[1m--- a/pubspec.lock[m
+[1m+++ b/pubspec.lock[m
+[36m@@ -540,10 +540,10 @@[m [mpackages:[m
+    dependency: transitive[m
+    description:[m
+      name: matcher[m
+      sha256: [31m[-dc0b7dc7651697ea4ff3e69ef44b0407ea32c487a39fff6a4004fa585e901861-][m[32m{+"12956d0ad8390bbcc63ca2e1469c0619946ccb52809807067a7020d57e647aa6"+}[m
+      url: "https://pub.dev"[m
+    source: hosted[m
+    version: [31m[-"0.12.19"-][m[32m{+"0.12.18"+}[m
+  material_color_utilities:[m
+    dependency: transitive[m
+    description:[m
+[36m@@ -913,10 +913,10 @@[m [mpackages:[m
+    dependency: transitive[m
+    description:[m
+      name: test_api[m
+      sha256: [31m[-"8161c84903fd860b26bfdefb7963b3f0b68fee7adea0f59ef805ecca346f0c7a"-][m[32m{+"93167629bfc610f71560ab9312acdda4959de4df6fac7492c89ff0d3886f6636"+}[m
+      url: "https://pub.dev"[m
+    source: hosted[m
+    version: [31m[-"0.7.10"-][m[32m{+"0.7.9"+}[m
+  typed_data:[m
+    dependency: transitive[m
+    description:[m

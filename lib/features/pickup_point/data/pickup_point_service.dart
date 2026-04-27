@@ -26,37 +26,35 @@ class PickupPointService {
       return null;
     }
   }
-
   bool usesWhishRemittance(Map<String, dynamic>? pickupPoint) {
-    final preferred = pickupPoint?['preferred_payment_method']
-        ?.toString()
-        .trim()
-        .toLowerCase();
-    final handling = pickupPoint?['payment_handling_method']
-        ?.toString()
-        .trim()
-        .toLowerCase();
+  final preferred = pickupPoint?['preferred_payment_method']
+      ?.toString()
+      .trim()
+      .toLowerCase();
+  final handling = pickupPoint?['payment_handling_method']
+      ?.toString()
+      .trim()
+      .toLowerCase();
 
-    return preferred == 'wish_money' ||
-        preferred == 'customer_pays_online' ||
-        handling == 'customer_pays_online';
-  }
+  return preferred == 'wish_money' ||
+      handling == 'wish_money';
+}
+bool usesAgentCollection(Map<String, dynamic>? pickupPoint) {
+  if (usesWhishRemittance(pickupPoint)) return false;
 
-  bool usesAgentCollection(Map<String, dynamic>? pickupPoint) {
-    if (usesWhishRemittance(pickupPoint)) return false;
+  final preferred = pickupPoint?['preferred_payment_method']
+      ?.toString()
+      .trim()
+      .toLowerCase();
+  final handling = pickupPoint?['payment_handling_method']
+      ?.toString()
+      .trim()
+      .toLowerCase();
 
-    final preferred = pickupPoint?['preferred_payment_method']
-        ?.toString()
-        .trim()
-        .toLowerCase();
-    final handling = pickupPoint?['payment_handling_method']
-        ?.toString()
-        .trim()
-        .toLowerCase();
+  return preferred == 'agent_collection' ||
+      handling == 'agent_collection';
+}
 
-    return preferred == 'customer_pays_at_pickup' ||
-        handling == 'customer_pays_at_pickup';
-  }
 
   Future<List<Map<String, dynamic>>> getPendingCashOrders() async {
     try {

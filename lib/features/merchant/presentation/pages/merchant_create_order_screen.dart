@@ -2476,7 +2476,10 @@ class _PickupPointOption {
   }
 
   String get starsLabel =>
-      reviewCount <= 0 ? 'New' : averageRating.toStringAsFixed(1);
+      reviewCount <= 0
+          ? 'New'
+          : '${averageRating.toStringAsFixed(1)} ($reviewCount)';
+
 }
 
 class _LatLngOption {

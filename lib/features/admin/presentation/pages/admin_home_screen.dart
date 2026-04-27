@@ -630,6 +630,16 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
             'Pickup Point';
         final note = item['note']?.toString() ?? '';
         final collectedAt = item['collected_at']?.toString() ?? '';
+        final order = item['orders'] as Map?;
+        final tracking =
+            order?['tracking_code']?.toString() ??
+            item['order_id']?.toString() ??
+            '-';
+        final customerName =
+            order?['customer_name']?.toString() ?? 'Customer';
+        final customerPhone =
+            order?['customer_phone']?.toString() ?? '-';
+
 
         DateTime? dt;
         try {
@@ -667,16 +677,27 @@ class _AdminHomeScreenState extends State<AdminHomeScreen>
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          ppName,
-                          style: const TextStyle(fontWeight: FontWeight.bold),
+                        tracking,
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      Text(
+                        '$ppName - by $agentName',
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 13,
                         ),
-                        Text(
-                          'by $agentName',
-                          style: const TextStyle(
-                            color: Colors.grey,
-                            fontSize: 13,
-                          ),
+                      ),
+                      Text(
+                        '$customerName - $customerPhone',
+                        style: const TextStyle(
+                          color: Colors.grey,
+                          fontSize: 12,
                         ),
+                      ),
+                      
+
+
+                       
                       ],
                     ),
                   ),
