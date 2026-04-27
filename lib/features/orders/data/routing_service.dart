@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:wasle/env.dart';
 
@@ -72,6 +73,8 @@ class SupabaseEdgeRoutingService implements RoutingService {
                 'lng': destination.lng,
               },
               'vehicleType': vehicleType ?? 'motorcycle',
+              if (departureTime != null)
+                'departureTime': departureTime.toUtc().toIso8601String(),
             }),
           )
           .timeout(const Duration(seconds: 8));
@@ -99,7 +102,10 @@ class SupabaseEdgeRoutingService implements RoutingService {
         distanceMeters: distanceMeters,
         source: source,
       );
-    } catch (_) {
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('[auto-assign] route-estimate failed, using fallback: $error');
+      }
       return _fallback.getTravelEstimate(
         origin: origin,
         destination: destination,

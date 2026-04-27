@@ -37,83 +37,95 @@ class RouteInsertionEngine {
       return null;
     }
 
-    final startAt = _routeStart(driver, now ?? DateTime.now().toUtc());
-    if (driver.shiftEndAt != null && startAt.isAfter(driver.shiftEndAt!)) {
+    final planningNow = now ?? DateTime.now().toUtc();
+    final shiftWindows = _resolveShiftWindows(driver, planningNow);
+    if (shiftWindows.isEmpty) {
       return null;
     }
-
-    final baseMetrics = await _metricsForStops(
-      driver: driver,
-      route: route,
-      stops: route.stops,
-      startAt: startAt,
-    );
-    if (baseMetrics == null) return null;
 
     RouteInsertion? best;
     var feasibleCount = 0;
     final existingStopCount = route.stops.length;
+    for (final shiftWindow in shiftWindows) {
+      final startAt = shiftWindow.startAt;
+      final baseMetrics = await _metricsForStops(
+        driver: driver,
+        route: route,
+        stops: route.stops,
+        startAt: startAt,
+      );
+      if (baseMetrics == null) continue;
 
-    for (var pickupIndex = 0; pickupIndex <= existingStopCount; pickupIndex++) {
       for (
-        var dropoffIndex = pickupIndex + 1;
-        dropoffIndex <= existingStopCount + 1;
-        dropoffIndex++
+        var pickupIndex = 0;
+        pickupIndex <= existingStopCount;
+        pickupIndex++
       ) {
-        final candidateStops = List<RouteStop>.from(route.stops)
-          ..insert(pickupIndex, order.pickupStop())
-          ..insert(dropoffIndex, order.dropoffStop());
+        for (
+          var dropoffIndex = pickupIndex + 1;
+          dropoffIndex <= existingStopCount + 1;
+          dropoffIndex++
+        ) {
+          final candidateStops = List<RouteStop>.from(route.stops)
+            ..insert(pickupIndex, order.pickupStop())
+            ..insert(dropoffIndex, order.dropoffStop());
 
-        final candidateMetrics = await _metricsForStops(
-          driver: driver,
-          route: route,
-          stops: candidateStops,
-          startAt: startAt,
-        );
-        if (candidateMetrics == null) continue;
-        if (!_fitsShift(driver, candidateMetrics)) continue;
+          final candidateMetrics = await _metricsForStops(
+            driver: driver,
+            route: route,
+            stops: candidateStops,
+            startAt: startAt,
+          );
+          if (candidateMetrics == null) continue;
+          if (!_fitsShift(candidateMetrics, shiftWindow)) continue;
 
-        feasibleCount++;
-        final incrementalTravel = math.max(
-          0,
-          candidateMetrics.travelSeconds - baseMetrics.travelSeconds,
-        );
-        final incrementalService = math.max(
-          0,
-          candidateMetrics.serviceSeconds - baseMetrics.serviceSeconds,
-        );
-        final incrementalLateness = math.max(
-          0,
-          candidateMetrics.latenessSeconds - baseMetrics.latenessSeconds,
-        );
-        final latenessPenalty =
-            incrementalLateness * costPolicy.latenessPenaltyMultiplier;
-        final workloadBalancePenalty =
-            route.stops.length *
-            costPolicy.workloadBalancePenaltyPerStopSeconds;
-        final cost =
-            incrementalTravel +
-            incrementalService +
-            latenessPenalty +
-            workloadBalancePenalty -
-            order.prioritySeconds;
+          feasibleCount++;
+          final incrementalTravel = math.max(
+            0,
+            candidateMetrics.travelSeconds - baseMetrics.travelSeconds,
+          );
+          final incrementalService = math.max(
+            0,
+            candidateMetrics.serviceSeconds - baseMetrics.serviceSeconds,
+          );
+          final incrementalLateness = math.max(
+            0,
+            candidateMetrics.latenessSeconds - baseMetrics.latenessSeconds,
+          );
+          final latenessPenalty =
+              incrementalLateness * costPolicy.latenessPenaltyMultiplier;
+          final workloadBalancePenalty =
+              route.stops.length *
+              costPolicy.workloadBalancePenaltyPerStopSeconds;
+          final deferPenaltySeconds = math.max(
+            0,
+            shiftWindow.startAt.difference(planningNow).inSeconds,
+          );
+          final cost =
+              incrementalTravel +
+              incrementalService +
+              latenessPenalty +
+              workloadBalancePenalty +
+              deferPenaltySeconds -
+              order.prioritySeconds;
 
-        final insertion = RouteInsertion(
-          driver: driver,
-          originalRoute: route,
-          plannedRoute: route.copyWith(stops: candidateStops),
-          pickupIndex: pickupIndex,
-          dropoffIndex: dropoffIndex,
-          feasibleInsertionCount: feasibleCount,
-          costSeconds: cost.toDouble(),
-          metrics: candidateMetrics,
-          incrementalTravelSeconds: incrementalTravel,
-          incrementalServiceSeconds: incrementalService,
-          incrementalLatenessPenaltySeconds: latenessPenalty,
-        );
+          final insertion = RouteInsertion(
+            driver: driver,
+            originalRoute: route,
+            plannedRoute: route.copyWith(stops: candidateStops),
+            pickupIndex: pickupIndex,
+            dropoffIndex: dropoffIndex,
+            feasibleInsertionCount: feasibleCount,
+            costSeconds: cost.toDouble(),
+            metrics: candidateMetrics,
+            incrementalTravelSeconds: incrementalTravel,
+            incrementalServiceSeconds: incrementalService,
+            incrementalLatenessPenaltySeconds: latenessPenalty,
+          );
 
-        if (best == null || insertion.costSeconds < best.costSeconds) {
-          best = insertion;
+          if (best == null || insertion.costSeconds < best.costSeconds) {
+            best = insertion;
+          }
         }
       }
     }
@@ -134,15 +146,84 @@ class RouteInsertionEngine {
     );
   }
 
-  DateTime _routeStart(CandidateDriver driver, DateTime now) {
-    final shiftStart = driver.shiftStartAt;
-    if (shiftStart != null && now.isBefore(shiftStart)) return shiftStart;
-    return now;
+  List<_ShiftWindow> _resolveShiftWindows(CandidateDriver driver, DateTime nowUtc) {
+    final shiftStart = driver.shiftStartAt?.toUtc();
+    final shiftEnd = driver.shiftEndAt?.toUtc();
+
+    if (shiftStart == null && shiftEnd == null) {
+      return [_ShiftWindow(startAt: nowUtc, endAt: null)];
+    }
+
+    // If only one side exists, keep backwards-compatible behavior.
+    if (shiftStart == null) {
+      if (nowUtc.isAfter(shiftEnd!)) return const [];
+      return [_ShiftWindow(startAt: nowUtc, endAt: shiftEnd)];
+    }
+    if (shiftEnd == null) {
+      final startAt = nowUtc.isBefore(shiftStart) ? shiftStart : nowUtc;
+      return [_ShiftWindow(startAt: startAt, endAt: null)];
+    }
+
+    // Treat shift_start/end as daily recurring shift boundaries.
+    final startMinutes = shiftStart.hour * 60 + shiftStart.minute;
+    final endMinutes = shiftEnd.hour * 60 + shiftEnd.minute;
+    final isOvernight = endMinutes <= startMinutes;
+    final todayWindow = _dailyShiftWindowForDate(
+      base: nowUtc,
+      shiftStart: shiftStart,
+      shiftEnd: shiftEnd,
+      isOvernight: isOvernight,
+    );
+    final tomorrowWindow = _dailyShiftWindowForDate(
+      base: nowUtc.add(const Duration(days: 1)),
+      shiftStart: shiftStart,
+      shiftEnd: shiftEnd,
+      isOvernight: isOvernight,
+    );
+
+    final windows = <_ShiftWindow>[];
+    if (nowUtc.isBefore(todayWindow.startAt)) {
+      windows.add(todayWindow);
+    } else if (!nowUtc.isAfter(todayWindow.endAt!)) {
+      windows.add(_ShiftWindow(startAt: nowUtc, endAt: todayWindow.endAt));
+      windows.add(tomorrowWindow);
+    } else {
+      windows.add(tomorrowWindow);
+    }
+    return windows;
   }
 
-  bool _fitsShift(CandidateDriver driver, RouteMetrics metrics) {
-    final shiftEnd = driver.shiftEndAt;
-    return shiftEnd == null || !metrics.completionAt.isAfter(shiftEnd);
+  _ShiftWindow _dailyShiftWindowForDate({
+    required DateTime base,
+    required DateTime shiftStart,
+    required DateTime shiftEnd,
+    required bool isOvernight,
+  }) {
+    final startAt = DateTime.utc(
+      base.year,
+      base.month,
+      base.day,
+      shiftStart.hour,
+      shiftStart.minute,
+      shiftStart.second,
+    );
+    var endAt = DateTime.utc(
+      base.year,
+      base.month,
+      base.day,
+      shiftEnd.hour,
+      shiftEnd.minute,
+      shiftEnd.second,
+    );
+    if (isOvernight) {
+      endAt = endAt.add(const Duration(days: 1));
+    }
+    return _ShiftWindow(startAt: startAt, endAt: endAt);
+  }
+
+  bool _fitsShift(RouteMetrics metrics, _ShiftWindow shiftWindow) {
+    final endAt = shiftWindow.endAt;
+    return endAt == null || !metrics.completionAt.isAfter(endAt);
   }
 
   Future<RouteMetrics?> _metricsForStops({
@@ -199,4 +280,11 @@ class RouteInsertionEngine {
       completionAt: clock,
     );
   }
+}
+
+class _ShiftWindow {
+  final DateTime startAt;
+  final DateTime? endAt;
+
+  const _ShiftWindow({required this.startAt, required this.endAt});
 }

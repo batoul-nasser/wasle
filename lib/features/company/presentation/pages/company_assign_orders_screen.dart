@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'package:wasle/core/ui/ui.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
+import 'package:wasle/features/orders/data/order_assignment_service.dart';
 
 class CompanyAssignOrdersScreen extends StatefulWidget {
   const CompanyAssignOrdersScreen({super.key});
@@ -13,6 +14,7 @@ class CompanyAssignOrdersScreen extends StatefulWidget {
 
 class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
   final AuthService _authService = AuthService();
+  final OrderAssignmentService _assignmentService = OrderAssignmentService();
   static const Set<String> _reassignableStatuses = {
     'created',
     'pending',
@@ -35,6 +37,7 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
 
   bool isLoading = true;
   bool isAssigning = false;
+  bool isAutoProcessing = false;
   String? errorText;
   List<Map<String, dynamic>> orders = [];
   List<Map<String, dynamic>> approvedDrivers = [];
@@ -58,6 +61,8 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
         isLoading = false;
         errorText = null;
       });
+
+      await _autoProcessUnassignedOrders();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -67,23 +72,73 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
     }
   }
 
+  bool _hasDriver(Map<String, dynamic> order) {
+    final driverId = order['driver_id']?.toString();
+    return driverId != null && driverId.isNotEmpty;
+  }
+
+  bool _isLocked(Map<String, dynamic> order) {
+    final status = order['status']?.toString().toLowerCase() ?? 'created';
+    return _lockedStatuses.contains(status);
+  }
+
+  bool _canReassign(Map<String, dynamic> order) {
+    final status = order['status']?.toString().toLowerCase() ?? 'created';
+    return _reassignableStatuses.contains(status) && !_isLocked(order);
+  }
+
+  Future<void> _autoProcessUnassignedOrders() async {
+    if (!mounted || isAutoProcessing) return;
+
+    final targets = orders
+        .where((order) => !_hasDriver(order) && _canReassign(order))
+        .toList();
+    if (targets.isEmpty) return;
+
+    setState(() => isAutoProcessing = true);
+    var assignedCount = 0;
+
+    try {
+      // Limit each pass to avoid long UI lock on very large lists.
+      final batch = targets.take(8);
+      for (final order in batch) {
+        final orderId = order['order_id']?.toString();
+        if (orderId == null || orderId.isEmpty) continue;
+        final result = await _assignmentService.autoAssignOrder(orderId);
+        if (result.assigned) assignedCount++;
+      }
+
+      if (!mounted) return;
+      if (assignedCount > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              'Auto-assignment processed: $assignedCount order(s) assigned automatically.',
+            ),
+          ),
+        );
+      }
+
+      final refreshed = await _authService.getCompanyAssignmentsOrders();
+      if (!mounted) return;
+      setState(() {
+        orders = refreshed;
+      });
+    } catch (_) {
+      // Keep screen usable even if one auto-attempt fails.
+    } finally {
+      if (mounted) {
+        setState(() => isAutoProcessing = false);
+      }
+    }
+  }
+
   Future<void> _openAssignSheet(Map<String, dynamic> order) async {
     final pageContext = context;
 
     if (approvedDrivers.isEmpty) {
-      final latestDrivers = await _authService
-          .getApprovedDriversForCurrentCompany();
-      if (!mounted || !pageContext.mounted) return;
-      setState(() => approvedDrivers = latestDrivers);
-    }
-
-    if (approvedDrivers.isEmpty) {
       ScaffoldMessenger.of(pageContext).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'No approved drivers found for this company. Check driver approval/company link.',
-          ),
-        ),
+        const SnackBar(content: Text('No approved drivers available')),
       );
       return;
     }
@@ -108,7 +163,7 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text('Manual Fallback Assign', style: AppTextStyles.heading2),
+                  Text('Assign Driver', style: AppTextStyles.heading2),
                   const SizedBox(height: AppSpacing.xs),
                   Text(
                     order['tracking_code']?.toString() ??
@@ -260,49 +315,189 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
     }
   }
 
+  Future<void> _openOrderDetails(Map<String, dynamic> order) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        final trackingCode =
+            order['tracking_code']?.toString() ?? order['order_id'].toString();
+        return Padding(
+          padding: EdgeInsets.only(
+            left: AppSpacing.xl,
+            right: AppSpacing.xl,
+            top: AppSpacing.xl,
+            bottom: MediaQuery.of(context).viewInsets.bottom + AppSpacing.xl,
+          ),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('Order Details', style: AppTextStyles.heading2),
+                const SizedBox(height: AppSpacing.xs),
+                Text(trackingCode, style: AppTextStyles.bodyMuted),
+                const SizedBox(height: AppSpacing.md),
+                InfoCard(
+                  title: 'Merchant & Pickup',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Merchant: ${order['merchant_name'] ?? '-'}',
+                        style: AppTextStyles.body,
+                      ),
+                      const SizedBox(height: AppSpacing.xs),
+                      Text(
+                        'Pickup: ${order['pickup_name'] ?? '-'}',
+                        style: AppTextStyles.body,
+                      ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        order['pickup_address']?.toString() ?? '-',
+                        style: AppTextStyles.bodyMuted,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                InfoCard(
+                  title: 'Customer & Dropoff',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Customer: ${order['customer_name'] ?? '-'}',
+                        style: AppTextStyles.body,
+                      ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        'Phone: ${order['customer_phone'] ?? '-'}',
+                        style: AppTextStyles.bodyMuted,
+                      ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Text(
+                        'Dropoff: ${order['dropoff_address'] ?? '-'}',
+                        style: AppTextStyles.body,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                InfoCard(
+                  title: 'Assignment',
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Status: ${order['status'] ?? '-'}',
+                        style: AppTextStyles.body,
+                      ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        'Driver: ${order['driver_name'] ?? 'Not assigned'}',
+                        style: AppTextStyles.bodyMuted,
+                      ),
+                      if ((order['driver_phone']?.toString().trim().isNotEmpty ??
+                          false)) ...[
+                        const SizedBox(height: AppSpacing.xxs),
+                        Text(
+                          'Driver phone: ${order['driver_phone']}',
+                          style: AppTextStyles.bodyMuted,
+                        ),
+                      ],
+                      if ((order['auto_assignment_reason']
+                              ?.toString()
+                              .trim()
+                              .isNotEmpty ??
+                          false)) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        Text(
+                          'Auto-assign note: ${order['auto_assignment_reason']}',
+                          style: AppTextStyles.bodyMuted,
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                SecondaryButton(
+                  label: 'Close',
+                  icon: Icons.close_rounded,
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _retryAutomaticAssignment(Map<String, dynamic> order) async {
+    final pageContext = context;
+    final orderId = order['order_id']?.toString();
+    if (orderId == null || orderId.isEmpty) {
+      ScaffoldMessenger.of(
+        pageContext,
+      ).showSnackBar(const SnackBar(content: Text('Order id is missing.')));
+      return;
+    }
+
+    try {
+      setState(() => isAssigning = true);
+      final result = await _assignmentService.autoAssignOrder(orderId);
+      if (!mounted || !pageContext.mounted) return;
+
+      final message = result.assigned
+          ? 'Automatic assignment succeeded (driver ${result.driverId}). '
+                'Tested ${result.testedDrivers}, feasible ${result.feasibleInsertions}.'
+          : 'Automatic assignment still failed: ${result.reason} '
+                '(tested ${result.testedDrivers}, feasible ${result.feasibleInsertions}).';
+      ScaffoldMessenger.of(pageContext).showSnackBar(
+        SnackBar(content: Text(message)),
+      );
+      await _loadData();
+    } catch (e) {
+      if (!mounted || !pageContext.mounted) return;
+      ScaffoldMessenger.of(
+        pageContext,
+      ).showSnackBar(SnackBar(content: Text('Retry failed: $e')));
+    } finally {
+      if (mounted) {
+        setState(() => isAssigning = false);
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    bool hasDriver(Map<String, dynamic> order) {
-      final driverId = order['driver_id']?.toString();
-      return driverId != null && driverId.isNotEmpty;
-    }
-
-    bool isLocked(Map<String, dynamic> order) {
-      final status = order['status']?.toString().toLowerCase() ?? 'created';
-      return _lockedStatuses.contains(status);
-    }
-
-    bool canReassign(Map<String, dynamic> order) {
-      final status = order['status']?.toString().toLowerCase() ?? 'created';
-      return _reassignableStatuses.contains(status) && !isLocked(order);
-    }
-
     bool isAutoFallbackEligible(Map<String, dynamic> order) {
       return order['auto_assignment_failed'] == true;
     }
 
     final unassignedOrders = orders.where((order) {
-      return !hasDriver(order) &&
-          canReassign(order) &&
+      return !_hasDriver(order) &&
+          _canReassign(order) &&
           isAutoFallbackEligible(order);
     }).toList();
 
     final reviewOrders = orders.where((order) {
-      return !hasDriver(order) &&
-          canReassign(order) &&
+      return !_hasDriver(order) &&
+          _canReassign(order) &&
           !isAutoFallbackEligible(order);
     }).toList();
 
     final assignedOrders = orders.where((order) {
-      return hasDriver(order) && canReassign(order);
+      return _hasDriver(order) && _canReassign(order);
     }).toList();
 
     final lockedOrders = orders.where((order) {
-      return isLocked(order);
+      return _isLocked(order);
     }).toList();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Manual Fallback Assign')),
+      appBar: AppBar(title: const Text('Assign Orders')),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorText != null
@@ -330,14 +525,13 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                 children: [
                   const SectionHeader(
                     title: 'Not Assigned Yet',
-                    subtitle:
-                        'Only orders that still need fallback driver assignment appear here',
+                    subtitle: 'Assign these orders to a delivery driver',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (unassignedOrders.isEmpty)
                     const InfoCard(
                       child: Text(
-                        'No automatic-assignment fallbacks are waiting right now.',
+                        'All current orders already have assigned drivers.',
                         style: AppTextStyles.bodyMuted,
                       ),
                     )
@@ -347,6 +541,8 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                         padding: const EdgeInsets.only(bottom: AppSpacing.md),
                         child: _OrderCard(
                           order: order,
+                          onAutoRetryTap: () => _retryAutomaticAssignment(order),
+                          onViewDetailsTap: () => _openOrderDetails(order),
                           onAssignTap: () => _openAssignSheet(order),
                           onUnassignTap: null,
                           assignEnabled: true,
@@ -373,6 +569,8 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                         padding: const EdgeInsets.only(bottom: AppSpacing.md),
                         child: _OrderCard(
                           order: order,
+                          onAutoRetryTap: () => _retryAutomaticAssignment(order),
+                          onViewDetailsTap: () => _openOrderDetails(order),
                           onAssignTap: () => _openAssignSheet(order),
                           onUnassignTap: null,
                           assignEnabled: true,
@@ -382,7 +580,7 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                   const SizedBox(height: AppSpacing.lg),
                   const SectionHeader(
                     title: 'Already Assigned',
-                    subtitle: 'Manual reassignment only when needed',
+                    subtitle: 'Reassign if needed',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (assignedOrders.isEmpty)
@@ -398,6 +596,8 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                         padding: const EdgeInsets.only(bottom: AppSpacing.md),
                         child: _OrderCard(
                           order: order,
+                          onAutoRetryTap: null,
+                          onViewDetailsTap: () => _openOrderDetails(order),
                           onAssignTap: () => _openAssignSheet(order),
                           onUnassignTap: () => _unassignDriver(order),
                           assignEnabled: true,
@@ -407,8 +607,7 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                   const SizedBox(height: AppSpacing.lg),
                   const SectionHeader(
                     title: 'Locked (In Progress / Closed)',
-                    subtitle:
-                        'These orders are no longer part of fallback assignment',
+                    subtitle: 'These orders cannot be assigned anymore',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (lockedOrders.isEmpty)
@@ -424,6 +623,8 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                         padding: const EdgeInsets.only(bottom: AppSpacing.md),
                         child: _OrderCard(
                           order: order,
+                          onAutoRetryTap: null,
+                          onViewDetailsTap: () => _openOrderDetails(order),
                           onAssignTap: () {},
                           onUnassignTap: null,
                           assignEnabled: false,
@@ -440,12 +641,16 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
 
 class _OrderCard extends StatelessWidget {
   final Map<String, dynamic> order;
+  final VoidCallback? onAutoRetryTap;
+  final VoidCallback onViewDetailsTap;
   final VoidCallback onAssignTap;
   final VoidCallback? onUnassignTap;
   final bool assignEnabled;
 
   const _OrderCard({
     required this.order,
+    required this.onAutoRetryTap,
+    required this.onViewDetailsTap,
     required this.onAssignTap,
     required this.onUnassignTap,
     required this.assignEnabled,
@@ -489,26 +694,24 @@ class _OrderCard extends StatelessWidget {
             'Customer: ${order['customer_name'] ?? 'Customer'}',
             style: AppTextStyles.bodyMuted,
           ),
-          if ((order['auto_assignment_reason']?.toString().trim().isNotEmpty ??
-              false)) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              'Auto-assign fallback reason: ${order['auto_assignment_reason']}',
-              style: AppTextStyles.bodyMuted,
-            ),
-          ] else if (!hasDriver) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              order['has_assignment_metadata'] == false
-                  ? 'Automatic assignment note: this order has no saved assignment metadata yet.'
-                  : 'Automatic assignment note: no automatic assignment result recorded yet.',
-              style: AppTextStyles.bodyMuted,
-            ),
-          ],
           const SizedBox(height: AppSpacing.md),
+          SecondaryButton(
+            label: 'View Order Details',
+            icon: Icons.receipt_long_outlined,
+            onPressed: onViewDetailsTap,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          if (assignEnabled && !hasDriver && onAutoRetryTap != null) ...[
+            SecondaryButton(
+              label: 'Retry Automatic Assignment',
+              icon: Icons.auto_awesome_rounded,
+              onPressed: onAutoRetryTap,
+            ),
+            const SizedBox(height: AppSpacing.sm),
+          ],
           PrimaryButton(
             label: assignEnabled
-                ? (hasDriver ? 'Manual Reassign' : 'Manual Fallback Assign')
+                ? (hasDriver ? 'Reassign Driver' : 'Assign Driver')
                 : 'Order Locked',
             icon: assignEnabled
                 ? Icons.person_add_alt_1_rounded

@@ -1,6 +1,7 @@
 import 'dart:developer' as developer;
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/domain/delivery_constraints.dart';
 import 'package:wasle/core/services/supabase_service.dart';
@@ -11,6 +12,7 @@ import 'routing_service.dart';
 
 class OrderAssignmentService {
   static const Duration _freshLocationWindow = Duration(minutes: 3);
+  static const String _preferredTimeWindowPrefix = 'preferred time window:';
 
   final SupabaseClient _db;
   final RoutingService _routingService;
@@ -76,6 +78,12 @@ class OrderAssignmentService {
 
       final drivers = await _loadCandidateDrivers(order.companyId);
       testedDrivers = drivers.length;
+      _debug(
+        'Auto-assign start order=${order.id} company=${order.companyId} '
+        'pickup=${order.pickupLocation.lat},${order.pickupLocation.lng} '
+        'dropoff=${order.dropoffLocation.lat},${order.dropoffLocation.lng} '
+        'candidates=$testedDrivers',
+      );
       if (drivers.isEmpty) {
         await _recordUnassignedEvent(
           order.id,
@@ -91,21 +99,77 @@ class OrderAssignmentService {
 
       RouteInsertion? bestInsertion;
       for (final driver in drivers) {
-        final route = await _loadDriverRoute(driver);
-        if (!_canCarryOrderNow(route: route, orderDemand: order.demand)) {
-          continue;
-        }
-        final insertion = await _insertionEngine.findBestInsertion(
-          driver: driver,
-          route: route,
-          order: order,
-        );
-        if (insertion == null) continue;
+        try {
+          final route = await _loadDriverRoute(driver);
+          if (!_canCarryOrderNow(route: route, orderDemand: order.demand)) {
+            _debug(
+              explainDriverRejection(
+                driverId: driver.id,
+                reason: 'capacity_insufficient',
+                details:
+                    'current_load=${route.initialLoad.itemCount}/${route.initialLoad.weightKg.toStringAsFixed(1)}kg '
+                    'order=${order.demand.itemCount}/${order.demand.weightKg.toStringAsFixed(1)}kg '
+                    'capacity=${driver.capacity.itemCount}/${driver.capacity.weightKg.toStringAsFixed(1)}kg',
+              ),
+            );
+            continue;
+          }
 
-        feasibleInsertions += insertion.feasibleInsertionCount;
-        if (bestInsertion == null ||
-            insertion.costSeconds < bestInsertion.costSeconds) {
-          bestInsertion = insertion;
+          final driverToPickup = await _routingService.getTravelEstimate(
+            origin: driver.currentLocation,
+            destination: order.pickupLocation,
+            departureTime: DateTime.now().toUtc(),
+            vehicleType: driver.vehicleType,
+          );
+          final pickupToDropoff = await _routingService.getTravelEstimate(
+            origin: order.pickupLocation,
+            destination: order.dropoffLocation,
+            departureTime: DateTime.now().toUtc(),
+            vehicleType: driver.vehicleType,
+          );
+          _debug(
+            'Candidate ${driver.id} route preview '
+            'driver->pickup=${driverToPickup.distanceMeters.toStringAsFixed(0)}m/${driverToPickup.durationSeconds}s '
+            'pickup->dropoff=${pickupToDropoff.distanceMeters.toStringAsFixed(0)}m/${pickupToDropoff.durationSeconds}s '
+            'shiftStart=${driver.shiftStartAt?.toIso8601String()} '
+            'shiftEnd=${driver.shiftEndAt?.toIso8601String()}',
+          );
+
+          final insertion = await _insertionEngine.findBestInsertion(
+            driver: driver,
+            route: route,
+            order: order,
+          );
+          if (insertion == null) {
+            _debug(
+              explainDriverRejection(
+                driverId: driver.id,
+                reason: 'route_insertion_not_feasible',
+              ),
+            );
+            continue;
+          }
+
+          feasibleInsertions += insertion.feasibleInsertionCount;
+          _debug(
+            'Candidate ${driver.id} feasible '
+            'cost=${insertion.costSeconds.toStringAsFixed(1)} '
+            'travel+service=${insertion.incrementalTravelSeconds + insertion.incrementalServiceSeconds}s '
+            'lateness_penalty=${insertion.incrementalLatenessPenaltySeconds}s',
+          );
+          if (bestInsertion == null ||
+              insertion.costSeconds < bestInsertion.costSeconds) {
+            bestInsertion = insertion;
+          }
+        } catch (error) {
+          _debug(
+            explainDriverRejection(
+              driverId: driver.id,
+              reason: 'google_maps_failed',
+              details: error.toString(),
+            ),
+          );
+          continue;
         }
       }
 
@@ -208,6 +272,8 @@ class OrderAssignmentService {
       );
     }
 
+    final resolvedTimeWindow = _resolveOrderTimeWindow(order);
+
     return AssignmentOrder(
       id: orderId,
       companyId: companyId,
@@ -217,43 +283,275 @@ class OrderAssignmentService {
       dropoffType: dropoffType,
       demand: demand,
       createdAt: _parseDate(order['created_at']) ?? DateTime.now().toUtc(),
-      timeWindowStart: _firstDate([
-        order['time_window_start'],
-        order['delivery_window_start'],
-        order['preferred_delivery_from'],
-      ]),
-      timeWindowEnd: _firstDate([
-        order['time_window_end'],
-        order['delivery_window_end'],
-        order['preferred_delivery_until'],
-        order['delivery_deadline'],
-      ]),
+      timeWindowStart: resolvedTimeWindow?.$1,
+      timeWindowEnd: resolvedTimeWindow?.$2,
       prioritySeconds: _prioritySeconds(order, dropoffType),
     );
   }
 
+  (DateTime?, DateTime?)? _resolveOrderTimeWindow(Map<String, dynamic> order) {
+    final explicitStart = _firstDate([
+      order['time_window_start'],
+      order['delivery_window_start'],
+      order['preferred_delivery_from'],
+    ]);
+    final explicitEnd = _firstDate([
+      order['time_window_end'],
+      order['delivery_window_end'],
+      order['preferred_delivery_until'],
+      order['delivery_deadline'],
+    ]);
+
+    if (explicitStart != null || explicitEnd != null) {
+      return (explicitStart, explicitEnd);
+    }
+
+    final preferredText = _extractPreferredTimeWindowText(order);
+    if (preferredText == null) return null;
+
+    return _parsePreferredTimeWindow(preferredText);
+  }
+
+  String? _extractPreferredTimeWindowText(Map<String, dynamic> order) {
+    final direct = _firstNonEmpty([
+      order['preferred_time_window'],
+      order['preferredTimeWindow'],
+    ]);
+    if (direct != null) return direct;
+
+    final notes = order['notes']?.toString();
+    if (notes == null || notes.trim().isEmpty) return null;
+
+    for (final rawLine in notes.split('\n')) {
+      final line = rawLine.trim();
+      if (line.isEmpty) continue;
+      final normalized = line.toLowerCase();
+      if (!normalized.startsWith(_preferredTimeWindowPrefix)) continue;
+      final value = line.substring(_preferredTimeWindowPrefix.length).trim();
+      if (value.isNotEmpty) return value;
+    }
+    return null;
+  }
+
+  (DateTime?, DateTime?)? _parsePreferredTimeWindow(String raw) {
+    final value = raw.trim().toLowerCase();
+    if (value.isEmpty) return null;
+
+    final nowLocal = DateTime.now();
+    final rangePattern = RegExp(
+      r'(.+?)\s*(?:-|to|until|->|–)\s*(.+)',
+      caseSensitive: false,
+    );
+    final rangeMatch = rangePattern.firstMatch(value);
+    if (rangeMatch != null) {
+      final startMinutes = _parseClockMinutes(rangeMatch.group(1)!);
+      final endMinutes = _parseClockMinutes(rangeMatch.group(2)!);
+      if (startMinutes == null || endMinutes == null) return null;
+      final start = _nextLocalDateTimeForClock(nowLocal, startMinutes);
+      var end = _localDateTimeForClock(start, endMinutes);
+      if (!end.isAfter(start)) {
+        end = end.add(const Duration(days: 1));
+      }
+      return (start.toUtc(), end.toUtc());
+    }
+
+    final singleMinutes = _parseClockMinutes(value);
+    if (singleMinutes == null) return null;
+    final when = _nextLocalDateTimeForClock(nowLocal, singleMinutes).toUtc();
+    // Exact preferred time with a short tolerance window.
+    return (when, when.add(const Duration(minutes: 30)));
+  }
+
+  int? _parseClockMinutes(String raw) {
+    final text = raw.trim().toLowerCase();
+    if (text.isEmpty) return null;
+
+    final ampmPattern = RegExp(r'^(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m?\.?$');
+    final ampm = ampmPattern.firstMatch(text);
+    if (ampm != null) {
+      final hourRaw = int.tryParse(ampm.group(1)!);
+      final minuteRaw = int.tryParse(ampm.group(2) ?? '0');
+      final marker = ampm.group(3);
+      if (hourRaw == null ||
+          minuteRaw == null ||
+          hourRaw < 1 ||
+          hourRaw > 12 ||
+          minuteRaw < 0 ||
+          minuteRaw > 59 ||
+          marker == null) {
+        return null;
+      }
+      var hour24 = hourRaw % 12;
+      if (marker == 'p') hour24 += 12;
+      return hour24 * 60 + minuteRaw;
+    }
+
+    final hhmmPattern = RegExp(r'^(\d{1,2})(?::(\d{2}))$');
+    final hhmm = hhmmPattern.firstMatch(text);
+    if (hhmm != null) {
+      final hour = int.tryParse(hhmm.group(1)!);
+      final minute = int.tryParse(hhmm.group(2)!);
+      if (hour == null ||
+          minute == null ||
+          hour < 0 ||
+          hour > 23 ||
+          minute < 0 ||
+          minute > 59) {
+        return null;
+      }
+      return hour * 60 + minute;
+    }
+
+    // Accept simple hour values like "4pm" already handled above, and "16".
+    final hourOnly = int.tryParse(text);
+    if (hourOnly == null || hourOnly < 0 || hourOnly > 23) return null;
+    return hourOnly * 60;
+  }
+
+  DateTime _nextLocalDateTimeForClock(DateTime nowLocal, int minutes) {
+    final candidate = _localDateTimeForClock(nowLocal, minutes);
+    if (!candidate.isBefore(nowLocal)) return candidate;
+    return candidate.add(const Duration(days: 1));
+  }
+
+  DateTime _localDateTimeForClock(DateTime date, int minutes) {
+    final hour = minutes ~/ 60;
+    final minute = minutes % 60;
+    return DateTime(
+      date.year,
+      date.month,
+      date.day,
+      hour,
+      minute,
+    );
+  }
+
   Future<List<CandidateDriver>> _loadCandidateDrivers(String companyId) async {
-    final driverRows = await _db
-        .from('drivers')
-        .select('*')
+    final approvedRequestRows = await _db
+        .from('driver_company_requests')
+        .select('driver_profile_id')
         .eq('company_id', companyId)
-        .eq('verification_status', 'approved')
-        .eq('availability_status', 'available')
-        .eq('is_active_shift', true);
-    final rows = List<Map<String, dynamic>>.from(driverRows);
+        .eq('request_status', 'approved');
+    final approvedProfileIds = List<Map<String, dynamic>>.from(approvedRequestRows)
+        .map((row) => row['driver_profile_id']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+
+    final rowsByCompany = List<Map<String, dynamic>>.from(
+      await _db.from('drivers').select('*').eq('company_id', companyId),
+    );
+    final rowsByProfile = approvedProfileIds.isEmpty
+        ? <Map<String, dynamic>>[]
+        : List<Map<String, dynamic>>.from(
+            await _db
+                .from('drivers')
+                .select('*')
+                .inFilter('profile_id', approvedProfileIds),
+          );
+    final rowsById = approvedProfileIds.isEmpty
+        ? <Map<String, dynamic>>[]
+        : List<Map<String, dynamic>>.from(
+            await _db.from('drivers').select('*').inFilter('id', approvedProfileIds),
+          );
+
+    final rowByDriverId = <String, Map<String, dynamic>>{};
+    for (final row in [...rowsByCompany, ...rowsByProfile, ...rowsById]) {
+      final id = row['id']?.toString();
+      if (id == null || id.isEmpty) continue;
+      rowByDriverId[id] = row;
+    }
+    final rows = rowByDriverId.values.toList();
+    _debug(
+      'Candidate pool for company=$companyId: '
+      'linked=${rowsByCompany.length}, approved_profile_matches=${rowsByProfile.length}, '
+      'approved_id_matches=${rowsById.length}, unique_total=${rows.length}',
+    );
     final drivers = <CandidateDriver>[];
 
     for (final row in rows) {
-      if (!_isDriverAvailable(row)) continue;
       final driverId = row['id']?.toString();
-      if (driverId == null || driverId.isEmpty) continue;
+      if (driverId == null || driverId.isEmpty) {
+        _debug('Reject candidate: missing driver id');
+        continue;
+      }
+
+      final driverCompanyId = row['company_id']?.toString();
+      final profileId = row['profile_id']?.toString();
+      final approvedViaRequest =
+          profileId != null && approvedProfileIds.contains(profileId);
+      if ((driverCompanyId == null || driverCompanyId != companyId) &&
+          !approvedViaRequest) {
+        _debug(
+          explainDriverRejection(
+            driverId: driverId,
+            reason: 'company_mismatch',
+            details:
+                'order_company=$companyId driver_company=$driverCompanyId '
+                'profile_id=$profileId approved_via_request=$approvedViaRequest',
+          ),
+        );
+        continue;
+      }
+
+      final verificationStatus = row['verification_status']
+          ?.toString()
+          .trim()
+          .toLowerCase();
+      if (verificationStatus != 'approved') {
+        _debug(
+          explainDriverRejection(
+            driverId: driverId,
+            reason: 'not_approved',
+            details: 'verification_status=$verificationStatus',
+          ),
+        );
+        continue;
+      }
+
+      if (!_isDriverAvailable(row)) {
+        _debug(
+          explainDriverRejection(
+            driverId: driverId,
+            reason: 'unavailable',
+            details:
+                'availability_status=${row['availability_status']} '
+                'is_available=${row['is_available']} '
+                'is_active_shift=${row['is_active_shift']}',
+          ),
+        );
+        continue;
+      }
+
+      final activeOrder = await getDriverActiveOrder(driverId);
+      if (activeOrder != null) {
+        _debug(
+          explainDriverRejection(
+            driverId: driverId,
+            reason: 'has_active_order',
+            details:
+                'order_id=${activeOrder['order_id']} status=${activeOrder['status']}',
+          ),
+        );
+        continue;
+      }
+
       final location = await _loadFreshDriverLocation(driverId, row);
-      if (location == null) continue;
+      if (location == null) {
+        _debug(
+          explainDriverRejection(
+            driverId: driverId,
+            reason: 'no_location',
+          ),
+        );
+        continue;
+      }
 
       drivers.add(
         CandidateDriver(
           id: driverId,
-          profileId: row['profile_id']?.toString(),
+          profileId: profileId,
           companyId: companyId,
           vehicleType: row['vehicle_type']?.toString() ?? 'motorcycle',
           capacity: _driverCapacity(row),
@@ -271,6 +569,11 @@ class OrderAssignmentService {
             row['shift_window_end'],
           ]),
         ),
+      );
+      _debug(
+        'Accept candidate driver=$driverId company=$driverCompanyId '
+        'profile_id=$profileId approved_via_request=$approvedViaRequest '
+        'lat=${location.lat} lng=${location.lng}',
       );
     }
 
@@ -406,7 +709,7 @@ class OrderAssignmentService {
       if (existingOrder == null) continue;
 
       final status = await _loadOrderStatus(existingOrderId);
-      if (_isCompletedStatus(status)) continue;
+      if (_isRouteInactiveStatus(status)) continue;
       if (_isLoadedStatus(status)) {
         if (!dropoffOrderIds.contains(existingOrderId)) {
           initialLoad = initialLoad + existingOrder.demand;
@@ -761,9 +1064,20 @@ class OrderAssignmentService {
     ]);
     final rowLat = _toDouble(driverRow['current_location_lat']);
     final rowLng = _toDouble(driverRow['current_location_lng']);
-    if (_isFreshPing(rowPing) && rowLat != null && rowLng != null) {
+    if (rowLat != null && rowLng != null) {
+      if (!_isFreshPing(rowPing)) {
+        _debug(
+          explainDriverRejection(
+            driverId: driverId,
+            reason: 'stale_location',
+            details: 'source=drivers updated_at=${driverRow['updated_at']}',
+          ),
+        );
+        return null;
+      }
       return AssignmentLocation(
         name: 'Driver $driverId',
+        address: null,
         lat: rowLat,
         lng: rowLng,
       );
@@ -780,10 +1094,21 @@ class OrderAssignmentService {
         row['last_location_ping_at'],
         row['updated_at'],
       ]);
-      if (!_isFreshPing(pingAt)) return null;
       final lat = _toDouble(row['lat']);
       final lng = _toDouble(row['lng']);
       if (lat == null || lng == null) return null;
+      if (!_isFreshPing(pingAt)) {
+        _debug(
+          explainDriverRejection(
+            driverId: driverId,
+            reason: 'stale_location',
+            details:
+                'source=driver_locations last_ping=${row['last_location_ping_at']} '
+                'updated_at=${row['updated_at']}',
+          ),
+        );
+        return null;
+      }
       return AssignmentLocation(
         name: row['city']?.toString() ?? 'Driver $driverId',
         address: row['address_text']?.toString() ?? row['city']?.toString(),
@@ -925,8 +1250,15 @@ class OrderAssignmentService {
 
   OrderDemand? _tryOrderDemand(Map<String, dynamic> row) {
     try {
+      final rawItemCount = _toInt(
+        row['item_count'] ??
+            row['items_count'] ??
+            row['package_count'] ??
+            row['quantity'],
+      );
       final normalizedDemand = DeliveryConstraintDefaults.normalizeOrderDemand(
-        itemCount: _toInt(row['item_count'] ?? row['items_count']),
+        // Keep auto-assignment resilient for legacy orders with missing count.
+        itemCount: rawItemCount == null || rawItemCount <= 0 ? 1 : rawItemCount,
         weightKg: _toDouble(
           row['estimated_weight'] ?? row['estimated_weight_kg'],
         ),
@@ -1031,6 +1363,88 @@ class OrderAssignmentService {
       'returned_to_store',
       'cancelled',
     }.contains(status.toLowerCase());
+  }
+
+  bool _isRouteInactiveStatus(String status) {
+    final normalized = status.toLowerCase();
+    return _isCompletedStatus(normalized) ||
+        const {'failed', 'rescheduled'}.contains(normalized);
+  }
+
+  Future<bool> isDriverCurrentlyAvailable(String driverId) async {
+    final row = await _db
+        .from('drivers')
+        .select('*')
+        .eq('id', driverId)
+        .limit(1)
+        .maybeSingle();
+    if (row == null) return false;
+    return _isDriverAvailable(row);
+  }
+
+  Future<Map<String, dynamic>?> getDriverActiveOrder(String driverId) async {
+    final rows = await _db
+        .from('assignments')
+        .select('order_id, assigned_at')
+        .eq('driver_id', driverId)
+        .isFilter('completed_at', null)
+        .limit(20);
+    for (final row in List<Map<String, dynamic>>.from(rows)) {
+      final orderId = row['order_id']?.toString();
+      if (orderId == null || orderId.isEmpty) continue;
+      final status = await _loadOrderStatus(orderId);
+      if (status == null) continue;
+      if (_isRouteInactiveStatus(status)) continue;
+      return {'order_id': orderId, 'status': status};
+    }
+    return null;
+  }
+
+  Future<void> releaseDriverAfterOrderFinished({
+    required String orderId,
+    required String driverId,
+  }) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    try {
+      await _db
+          .from('assignments')
+          .update({'completed_at': now})
+          .eq('order_id', orderId)
+          .eq('driver_id', driverId);
+    } catch (_) {}
+    try {
+      await _db
+          .from('driver_route_stops')
+          .update({'completed_at': now, 'updated_at': now})
+          .eq('order_id', orderId)
+          .eq('driver_id', driverId)
+          .isFilter('completed_at', null);
+    } catch (_) {}
+  }
+
+  Future<AssignmentLocation?> getFreshDriverLocation(String driverId) async {
+    final row = await _db
+        .from('drivers')
+        .select('*')
+        .eq('id', driverId)
+        .limit(1)
+        .maybeSingle();
+    if (row == null) return null;
+    return _loadFreshDriverLocation(driverId, row);
+  }
+
+  String explainDriverRejection({
+    required String driverId,
+    required String reason,
+    String? details,
+  }) {
+    final suffix = details == null || details.trim().isEmpty ? '' : ' | $details';
+    return '[auto-assign] reject driver=$driverId reason=$reason$suffix';
+  }
+
+  void _debug(String message) {
+    if (!kDebugMode) return;
+    debugPrint(message);
   }
 
   String? _extractOrderId(Map<String, dynamic> response) {
