@@ -14,7 +14,6 @@ class _ApprovedDriversScreenState extends State<ApprovedDriversScreen> {
   final AuthService _authService = AuthService();
 
   bool isLoading = true;
-  bool isRemoving = false;
   String? errorText;
   List<Map<String, dynamic>> approvedDrivers = [];
 
@@ -26,7 +25,12 @@ class _ApprovedDriversScreenState extends State<ApprovedDriversScreen> {
 
   Future<void> _loadApprovedDrivers() async {
     try {
-      final approved = await _authService.getApprovedDriversForCurrentCompany();
+      final data = await _authService.getDriverRequestsForCurrentCompany();
+
+      final approved = data.where((request) {
+        final requestStatus = request['request_status']?.toString().toLowerCase();
+        return requestStatus == 'approved';
+      }).toList();
 
       if (!mounted) return;
       setState(() {
@@ -40,55 +44,6 @@ class _ApprovedDriversScreenState extends State<ApprovedDriversScreen> {
         errorText = e.toString();
         isLoading = false;
       });
-    }
-  }
-
-  Future<void> _removeDriver(Map<String, dynamic> driver) async {
-    final driverId = driver['driver_id']?.toString();
-    final name = driver['full_name']?.toString() ?? 'this driver';
-    if (driverId == null || driverId.isEmpty) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Delete driver from company?'),
-          content: Text(
-            'This will remove $name from your approved drivers list.',
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(false),
-              child: const Text('Cancel'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(true),
-              child: const Text('Delete'),
-            ),
-          ],
-        );
-      },
-    );
-
-    if (confirmed != true) return;
-
-    try {
-      setState(() => isRemoving = true);
-      await _authService.removeDriverFromCurrentCompany(driverId: driverId);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Driver removed successfully')),
-      );
-      await _loadApprovedDrivers();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to remove driver: $e')));
-    } finally {
-      if (mounted) {
-        setState(() => isRemoving = false);
-      }
     }
   }
 
@@ -128,7 +83,7 @@ class _ApprovedDriversScreenState extends State<ApprovedDriversScreen> {
                           final driver = approvedDrivers[index];
                           final name = driver['full_name']?.toString() ?? 'Unknown Driver';
                           final phone = driver['phone']?.toString() ?? '-';
-                          const status = 'approved';
+                          final status = driver['verification_status']?.toString() ?? 'approved';
 
                           return InfoCard(
                             title: name,
@@ -158,22 +113,9 @@ class _ApprovedDriversScreenState extends State<ApprovedDriversScreen> {
                                   color: AppColors.textSecondary,
                                 ),
                                 const SizedBox(width: AppSpacing.xs),
-                                Expanded(
-                                  child: Text(
-                                    phone,
-                                    style: AppTextStyles.body,
-                                  ),
-                                ),
-                                SecondaryButton(
-                                  label: 'Delete',
-                                  icon: Icons.delete_outline_rounded,
-                                  isExpanded: false,
-                                  borderColor: AppColors.danger,
-                                  foregroundColor: AppColors.danger,
-                                  isLoading: isRemoving,
-                                  onPressed: isRemoving
-                                      ? null
-                                      : () => _removeDriver(driver),
+                                Text(
+                                  phone,
+                                  style: AppTextStyles.body,
                                 ),
                               ],
                             ),

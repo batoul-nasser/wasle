@@ -24,7 +24,6 @@ class _CompanyDashboardScreenState extends State<CompanyDashboardScreen> {
   Map<String, dynamic>? profileData;
   Map<String, dynamic>? companyData;
   List<Map<String, dynamic>> requests = [];
-  int approvedDriversCount = 0;
 
   @override
   void initState() {
@@ -45,10 +44,7 @@ class _CompanyDashboardScreenState extends State<CompanyDashboardScreen> {
 
       final profile = await _authService.getProfileById(user.id);
       final company = await _authService.getCompanyById(user.id);
-      final driverRequests =
-          await _authService.getDriverRequestsForCurrentCompany();
-      final approvedDrivers =
-          await _authService.getApprovedDriversForCurrentCompany();
+      final driverRequests = await _authService.getDriverRequestsForCurrentCompany();
 
       if (!mounted) return;
 
@@ -56,7 +52,6 @@ class _CompanyDashboardScreenState extends State<CompanyDashboardScreen> {
         profileData = profile;
         companyData = company;
         requests = driverRequests;
-        approvedDriversCount = approvedDrivers.length;
         isLoading = false;
         errorText = null;
       });
@@ -129,11 +124,12 @@ class _CompanyDashboardScreenState extends State<CompanyDashboardScreen> {
     );
   }
 
-  int _countPendingRequests() {
+  int _countByStatus(String status) {
+    final normalized = status.toLowerCase();
     return requests.where((request) {
-      final requestStatus =
-          request['request_status']?.toString().trim().toLowerCase();
-      return requestStatus == 'pending';
+      final requestStatus = request['request_status']?.toString().toLowerCase();
+      final verificationStatus = request['verification_status']?.toString().toLowerCase();
+      return requestStatus == normalized || verificationStatus == normalized;
     }).length;
   }
 
@@ -142,8 +138,8 @@ class _CompanyDashboardScreenState extends State<CompanyDashboardScreen> {
     final companyName = companyData?['name']?.toString() ?? 'Your Company';
     final adminName = profileData?['full_name']?.toString() ?? 'Company Admin';
 
-    final pendingCount = _countPendingRequests();
-    final approvedCount = approvedDriversCount;
+    final pendingCount = _countByStatus('pending');
+    final approvedCount = _countByStatus('approved');
     final showActionPanel = !isLoading && errorText == null;
 
     return Scaffold(

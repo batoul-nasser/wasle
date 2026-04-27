@@ -70,9 +70,9 @@ class _CompanyProfileScreenState extends State<CompanyProfileScreen> {
       Navigator.pushNamedAndRemoveUntil(context, '/welcome', (route) => false);
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to log out: $e')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to log out: $e')),
+      );
     } finally {
       if (mounted) {
         setState(() {
@@ -98,7 +98,10 @@ class _CompanyProfileScreenState extends State<CompanyProfileScreen> {
         child: Icon(icon, size: 18, color: AppColors.primary),
       ),
       title: label,
-      child: Text(value?.toString() ?? '-', style: AppTextStyles.title),
+      child: Text(
+        value?.toString() ?? '-',
+        style: AppTextStyles.title,
+      ),
     );
   }
 
@@ -107,119 +110,109 @@ class _CompanyProfileScreenState extends State<CompanyProfileScreen> {
     final companyName = companyData?['name']?.toString() ?? 'No company name';
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Company Profile')),
+      appBar: AppBar(
+        title: const Text('Company Profile'),
+      ),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorText != null
-          ? EmptyStateWidget(
-              icon: Icons.error_outline_rounded,
-              title: 'Unable to load profile',
-              message: errorText!,
-              action: SecondaryButton(
-                label: 'Try Again',
-                isExpanded: false,
-                onPressed: _loadCompanyProfile,
-              ),
-            )
-          : ListView(
-              padding: const EdgeInsets.all(AppSpacing.xl),
-              children: [
-                Container(
-                  padding: const EdgeInsets.all(AppSpacing.lg),
-                  decoration: BoxDecoration(
-                    color: AppColors.primary,
-                    borderRadius: BorderRadius.circular(24),
+              ? EmptyStateWidget(
+                  icon: Icons.error_outline_rounded,
+                  title: 'Unable to load profile',
+                  message: errorText!,
+                  action: SecondaryButton(
+                    label: 'Try Again',
+                    isExpanded: false,
+                    onPressed: _loadCompanyProfile,
                   ),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 58,
-                        height: 58,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withValues(alpha: 0.16),
-                          borderRadius: BorderRadius.circular(16),
-                        ),
-                        child: const Icon(
-                          Icons.business_outlined,
-                          color: Colors.white,
-                          size: 30,
-                        ),
+                )
+              : ListView(
+                  padding: const EdgeInsets.all(AppSpacing.xl),
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.all(AppSpacing.lg),
+                      decoration: BoxDecoration(
+                        color: AppColors.primary,
+                        borderRadius: BorderRadius.circular(24),
                       ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              companyName,
-                              style: AppTextStyles.heading2.copyWith(
-                                color: Colors.white,
-                              ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 58,
+                            height: 58,
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.16),
+                              borderRadius: BorderRadius.circular(16),
                             ),
-                            const SizedBox(height: AppSpacing.xxs),
-                            Text(
-                              'Company Admin Profile',
-                              style: AppTextStyles.body.copyWith(
-                                color: Colors.white.withValues(alpha: 0.9),
-                              ),
+                            child: const Icon(
+                              Icons.business_outlined,
+                              color: Colors.white,
+                              size: 30,
                             ),
-                          ],
-                        ),
+                          ),
+                          const SizedBox(width: AppSpacing.md),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  companyName,
+                                  style: AppTextStyles.heading2.copyWith(color: Colors.white),
+                                ),
+                                const SizedBox(height: AppSpacing.xxs),
+                                Text(
+                                  'Company Admin Profile',
+                                  style: AppTextStyles.body.copyWith(
+                                    color: Colors.white.withValues(alpha: 0.9),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                    const SizedBox(height: AppSpacing.xl),
+                    _infoTile(
+                      icon: Icons.person_outline_rounded,
+                      label: 'Admin Name',
+                      value: profileData?['full_name'],
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _infoTile(
+                      icon: Icons.email_outlined,
+                      label: 'Email',
+                      value: profileData?['email'],
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _infoTile(
+                      icon: Icons.work_outline_rounded,
+                      label: 'Role',
+                      value: profileData?['role'],
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _infoTile(
+                      icon: Icons.business_center_outlined,
+                      label: 'Company Name',
+                      value: companyData?['name'],
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _infoTile(
+                      icon: Icons.location_on_outlined,
+                      label: 'Location',
+                      value: companyData?['location'],
+                    ),
+                    const SizedBox(height: AppSpacing.xl),
+                    PrimaryButton(
+                      label: 'Log Out',
+                      icon: Icons.logout_rounded,
+                      backgroundColor: AppColors.danger,
+                      isLoading: isSigningOut,
+                      onPressed: _signOut,
+                    ),
+                    const SizedBox(height: AppSpacing.xl),
+                  ],
                 ),
-                const SizedBox(height: AppSpacing.xl),
-                _infoTile(
-                  icon: Icons.person_outline_rounded,
-                  label: 'Admin Name',
-                  value: profileData?['full_name'],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                _infoTile(
-                  icon: Icons.email_outlined,
-                  label: 'Email',
-                  value: profileData?['email'],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                _infoTile(
-                  icon: Icons.work_outline_rounded,
-                  label: 'Role',
-                  value: profileData?['role'],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                _infoTile(
-                  icon: Icons.business_center_outlined,
-                  label: 'Company Name',
-                  value: companyData?['name'],
-                ),
-                const SizedBox(height: AppSpacing.sm),
-                _infoTile(
-                  icon: Icons.location_on_outlined,
-                  label: 'Location',
-                  value:
-                      companyData?['address_text'] ?? companyData?['location'],
-                ),
-                if (companyData?['lat'] != null &&
-                    companyData?['lng'] != null) ...[
-                  const SizedBox(height: AppSpacing.sm),
-                  _infoTile(
-                    icon: Icons.map_outlined,
-                    label: 'Coordinates',
-                    value: '${companyData?['lat']}, ${companyData?['lng']}',
-                  ),
-                ],
-                const SizedBox(height: AppSpacing.xl),
-                PrimaryButton(
-                  label: 'Log Out',
-                  icon: Icons.logout_rounded,
-                  backgroundColor: AppColors.danger,
-                  isLoading: isSigningOut,
-                  onPressed: _signOut,
-                ),
-                const SizedBox(height: AppSpacing.xl),
-              ],
-            ),
     );
   }
 }
