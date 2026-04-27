@@ -10,6 +10,8 @@ import 'route_insertion_engine.dart';
 import 'routing_service.dart';
 
 class OrderAssignmentService {
+  static const Duration _freshLocationWindow = Duration(minutes: 3);
+
   final SupabaseClient _db;
   final RoutingService _routingService;
   late final RouteInsertionEngine _insertionEngine;
@@ -59,6 +61,10 @@ class OrderAssignmentService {
         companyIdHint: companyIdHint,
       );
       if (order == null) {
+        await _recordUnassignedEvent(
+          orderId,
+          'Order not found or missing company, package, or routing data.',
+        );
         return AssignmentResult.unassigned(
           orderId: orderId,
           reason:
@@ -176,6 +182,10 @@ class OrderAssignmentService {
       'pickup_points',
       order['pickup_point_id'],
     );
+    final destinationPickupPoint = await _loadById(
+      'pickup_points',
+      order['destination_pickup_point_id'],
+    );
     final address = await _loadOrderAddress(orderId);
     final dropoffType = _parseDropoffType(order);
     final demand = _tryOrderDemand(order);
@@ -189,7 +199,7 @@ class OrderAssignmentService {
     final dropoffLocation = _dropoffLocation(
       order,
       address,
-      pickupPoint,
+      destinationPickupPoint ?? pickupPoint,
       dropoffType,
     );
     if (!pickupLocation.hasCoordinates || !dropoffLocation.hasCoordinates) {
@@ -227,7 +237,9 @@ class OrderAssignmentService {
         .from('drivers')
         .select('*')
         .eq('company_id', companyId)
-        .eq('verification_status', 'approved');
+        .eq('verification_status', 'approved')
+        .eq('availability_status', 'available')
+        .eq('is_active_shift', true);
     final rows = List<Map<String, dynamic>>.from(driverRows);
     final drivers = <CandidateDriver>[];
 
@@ -235,6 +247,8 @@ class OrderAssignmentService {
       if (!_isDriverAvailable(row)) continue;
       final driverId = row['id']?.toString();
       if (driverId == null || driverId.isEmpty) continue;
+      final location = await _loadFreshDriverLocation(driverId, row);
+      if (location == null) continue;
 
       drivers.add(
         CandidateDriver(
@@ -243,13 +257,15 @@ class OrderAssignmentService {
           companyId: companyId,
           vehicleType: row['vehicle_type']?.toString() ?? 'motorcycle',
           capacity: _driverCapacity(row),
-          currentLocation: await _loadDriverLocation(driverId),
+          currentLocation: location,
           shiftStartAt: _firstDate([
+            row['shift_started_at'],
             row['shift_start_at'],
             row['shift_starts_at'],
             row['shift_window_start'],
           ]),
           shiftEndAt: _firstDate([
+            row['shift_ended_at'],
             row['shift_end_at'],
             row['shift_ends_at'],
             row['shift_window_end'],
@@ -480,7 +496,11 @@ class OrderAssignmentService {
         .from('orders')
         .update({
           'delivery_company_id': order.companyId,
+          'company_id': order.companyId,
           'status': 'assigned',
+          'assignment_status': 'assigned',
+          'assigned_driver_id': insertion.driver.id,
+          'assignment_failure_reason': null,
           'updated_at': now,
         })
         .eq('id', order.id);
@@ -504,6 +524,27 @@ class OrderAssignmentService {
     });
 
     await _persistDriverRoute(insertion.driver, insertion.plannedRoute);
+    await _updateDriverLoadSnapshot(
+      driverId: insertion.driver.id,
+      load: insertion.plannedRoute.initialLoad,
+    );
+  }
+
+  Future<void> _updateDriverLoadSnapshot({
+    required String driverId,
+    required OrderDemand load,
+  }) async {
+    try {
+      await _db
+          .from('drivers')
+          .update({
+            'current_load_weight': load.weightKg,
+            'current_load_volume': load.volumeCm3,
+            'current_load_item_count': load.itemCount,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', driverId);
+    } catch (_) {}
   }
 
   Future<void> _persistDriverRoute(
@@ -607,13 +648,29 @@ class OrderAssignmentService {
   Future<void> _recordUnassignedEvent(String orderId, String reason) async {
     if (orderId == 'unknown') return;
     try {
+      await _markAssignmentFailed(orderId, reason);
       await _db.from('order_events').insert({
         'order_id': orderId,
         'event_type': 'note_added',
         'created_by': _db.auth.currentUser?.id,
         'note': reason,
-        'metadata': {'assignment_status': 'unassigned'},
+        'metadata': {'assignment_status': 'assignment_failed'},
       });
+    } catch (_) {}
+  }
+
+  Future<void> _markAssignmentFailed(String orderId, String reason) async {
+    try {
+      await _db
+          .from('orders')
+          .update({
+            'status': 'pending',
+            'assignment_status': 'assignment_failed',
+            'assigned_driver_id': null,
+            'assignment_failure_reason': reason,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .eq('id', orderId);
     } catch (_) {}
   }
 
@@ -687,28 +744,54 @@ class OrderAssignmentService {
           .from('orders')
           .update({
             'delivery_company_id': companyId,
+            'company_id': companyId,
             'updated_at': DateTime.now().toUtc().toIso8601String(),
           })
           .eq('id', orderId);
     } catch (_) {}
   }
 
-  Future<AssignmentLocation> _loadDriverLocation(String driverId) async {
+  Future<AssignmentLocation?> _loadFreshDriverLocation(
+    String driverId,
+    Map<String, dynamic> driverRow,
+  ) async {
+    final rowPing = _firstDate([
+      driverRow['last_location_ping_at'],
+      driverRow['updated_at'],
+    ]);
+    final rowLat = _toDouble(driverRow['current_location_lat']);
+    final rowLng = _toDouble(driverRow['current_location_lng']);
+    if (_isFreshPing(rowPing) && rowLat != null && rowLng != null) {
+      return AssignmentLocation(
+        name: 'Driver $driverId',
+        lat: rowLat,
+        lng: rowLng,
+      );
+    }
+
     try {
       final row = await _db
           .from('driver_locations')
           .select('*')
           .eq('driver_id', driverId)
           .maybeSingle();
-      if (row == null) return AssignmentLocation.unknown('Driver $driverId');
+      if (row == null) return null;
+      final pingAt = _firstDate([
+        row['last_location_ping_at'],
+        row['updated_at'],
+      ]);
+      if (!_isFreshPing(pingAt)) return null;
+      final lat = _toDouble(row['lat']);
+      final lng = _toDouble(row['lng']);
+      if (lat == null || lng == null) return null;
       return AssignmentLocation(
         name: row['city']?.toString() ?? 'Driver $driverId',
         address: row['address_text']?.toString() ?? row['city']?.toString(),
-        lat: _toDouble(row['lat']),
-        lng: _toDouble(row['lng']),
+        lat: lat,
+        lng: lng,
       );
     } catch (_) {
-      return AssignmentLocation.unknown('Driver $driverId');
+      return null;
     }
   }
 
@@ -718,6 +801,32 @@ class OrderAssignmentService {
     Map<String, dynamic>? pickupPoint,
     Map<String, dynamic>? address,
   ) {
+    final pickupSourceType = order['pickup_source_type']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    if (pickupSourceType == 'pickup_point' && pickupPoint != null) {
+      return AssignmentLocation(
+        name: pickupPoint['name']?.toString() ?? 'Pickup point',
+        address: pickupPoint['address_text']?.toString(),
+        lat: _toDouble(pickupPoint['lat']),
+        lng: _toDouble(pickupPoint['lng']),
+      );
+    }
+
+    final explicitPickupLat = _toDouble(order['pickup_location_lat']);
+    final explicitPickupLng = _toDouble(order['pickup_location_lng']);
+    if (explicitPickupLat != null && explicitPickupLng != null) {
+      return AssignmentLocation(
+        name: order['merchant_name']?.toString() ?? 'Merchant pickup',
+        address:
+            address?['pickup_address_text']?.toString() ??
+            order['pickup_address_text']?.toString(),
+        lat: explicitPickupLat,
+        lng: explicitPickupLng,
+      );
+    }
+
     if (branch != null) {
       return AssignmentLocation(
         name: branch['name']?.toString() ?? 'Merchant branch',
@@ -741,8 +850,16 @@ class OrderAssignmentService {
       address:
           address?['pickup_address_text']?.toString() ??
           order['pickup_address_text']?.toString(),
-      lat: _toDouble(address?['pickup_lat'] ?? order['pickup_lat']),
-      lng: _toDouble(address?['pickup_lng'] ?? order['pickup_lng']),
+      lat: _toDouble(
+        address?['pickup_lat'] ??
+            order['pickup_location_lat'] ??
+            order['pickup_lat'],
+      ),
+      lng: _toDouble(
+        address?['pickup_lng'] ??
+            order['pickup_location_lng'] ??
+            order['pickup_lng'],
+      ),
     );
   }
 
@@ -769,17 +886,33 @@ class OrderAssignmentService {
         order['customer_address_text'],
         order['dropoff_address_text'],
       ]),
-      lat: _toDouble(address?['dropoff_lat'] ?? order['dropoff_lat']),
-      lng: _toDouble(address?['dropoff_lng'] ?? order['dropoff_lng']),
+      lat: _toDouble(
+        address?['dropoff_lat'] ??
+            order['dropoff_location_lat'] ??
+            order['customer_lat'] ??
+            order['dropoff_lat'],
+      ),
+      lng: _toDouble(
+        address?['dropoff_lng'] ??
+            order['dropoff_location_lng'] ??
+            order['customer_lng'] ??
+            order['dropoff_lng'],
+      ),
     );
   }
 
   DropoffType _parseDropoffType(Map<String, dynamic> order) {
     final raw = order['dropoff_type']?.toString().toLowerCase();
-    if (raw == 'pickup_point' || raw == 'pickup point') {
+    if (raw == 'home' || raw == 'home_delivery') {
+      return DropoffType.home;
+    }
+    if (raw == 'pickup_point' ||
+        raw == 'pickup point' ||
+        raw == 'pickup_point_specific' ||
+        raw == 'pickup_point_nearest') {
       return DropoffType.pickupPoint;
     }
-    return order['pickup_point_id'] == null
+    return order['destination_pickup_point_id'] == null
         ? DropoffType.home
         : DropoffType.pickupPoint;
   }
@@ -867,9 +1000,19 @@ class OrderAssignmentService {
     final isActive = row['is_active'];
     if (isActive is bool && !isActive) return false;
 
+    final isAvailable = row['is_available'];
+    if (isAvailable is bool && !isAvailable) return false;
+
+    if (row['is_active_shift'] != true) return false;
+
     final status = row['availability_status']?.toString().toLowerCase();
-    if (status == null || status.isEmpty) return true;
-    return const {'available', 'active', 'online', 'idle'}.contains(status);
+    return status == 'available';
+  }
+
+  bool _isFreshPing(DateTime? pingAt) {
+    if (pingAt == null) return false;
+    final age = DateTime.now().toUtc().difference(pingAt.toUtc());
+    return age <= _freshLocationWindow;
   }
 
   bool _isLoadedStatus(String status) {

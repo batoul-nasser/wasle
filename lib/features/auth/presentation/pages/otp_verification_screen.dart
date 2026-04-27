@@ -14,8 +14,17 @@ class OtpVerificationScreen extends StatefulWidget {
   final String? fullName;
   final String? phone;
   final String? city;
+  final String? companyId;
+  final String? vehicleType;
+  final String? password;
   final String? companyName;
+  final String? companyPhone;
   final String? location;
+  final String? exactAddress;
+  final String? companyCity;
+  final String? companyArea;
+  final double? companyLat;
+  final double? companyLng;
   final String? businessName;
   final String? branchName;
   final String? addressText;
@@ -55,8 +64,17 @@ class OtpVerificationScreen extends StatefulWidget {
     this.fullName,
     this.phone,
     this.city,
+    this.companyId,
+    this.vehicleType,
+    this.password,
     this.companyName,
+    this.companyPhone,
     this.location,
+    this.exactAddress,
+    this.companyCity,
+    this.companyArea,
+    this.companyLat,
+    this.companyLng,
     this.businessName,
     this.branchName,
     this.addressText,
@@ -94,10 +112,10 @@ class OtpVerificationScreen extends StatefulWidget {
 }
 
 class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
-  static const int _otpLength = 6;
-
   final AuthService _authService = AuthService();
   final TextEditingController _otpController = TextEditingController();
+  int get _otpLength => 6;
+
 
   int _secondsRemaining = 60;
   Timer? _timer;
@@ -177,7 +195,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
     }
 
     if (otp.length != _otpLength) {
-      return 'Please enter the 6-digit verification code.';
+      return 'Please enter the $_otpLength-digit verification code.';
     }
 
     return null;
@@ -207,34 +225,59 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         token: otp,
         mode: widget.mode,
       );
-
       final userId = response.user?.id ?? _authService.currentUser?.id;
-      if (userId == null) {
-        throw Exception('User session not found after OTP verification');
-      }
 
       switch (widget.mode) {
         case AuthFlowMode.driverSignup:
+          if (userId == null) {
+            throw Exception('User session not found after OTP verification');
+          }
+          await _authService.setCurrentUserPassword(
+            _required(widget.password, 'Password'),
+          );
           await _authService.createDriverProfile(
             userId: userId,
             fullName: _required(widget.fullName, 'Full name'),
             phone: _required(widget.phone, 'Phone'),
             city: _required(widget.city, 'City'),
-          );
-          _goTo('/select-company');
-          return;
-
-        case AuthFlowMode.companySignup:
-          await _authService.createCompanyProfile(
-            userId: userId,
-            adminName: _required(widget.fullName, 'Admin name'),
-            companyName: _required(widget.companyName, 'Company name'),
-            location: _required(widget.location, 'Location'),
+            companyId: _required(widget.companyId, 'Delivery company'),
+            vehicleType: _required(widget.vehicleType, 'Vehicle type'),
           );
           _goTo('/waiting-approval');
           return;
 
+        case AuthFlowMode.companySignup:
+          if (userId == null) {
+            throw Exception('User session not found after OTP verification');
+          }
+          await _authService.createCompanyProfile(
+            userId: userId,
+            adminName: _required(widget.fullName, 'Admin name'),
+            companyName: _required(widget.companyName, 'Company name'),
+            phone: _required(widget.companyPhone ?? widget.phone, 'Phone'),
+            email: widget.email,
+            exactAddress: _required(
+              widget.exactAddress ?? widget.location,
+              'Exact address',
+            ),
+            city: _required(widget.companyCity ?? widget.city, 'City'),
+            area: _required(widget.companyArea ?? widget.area, 'Area'),
+            latitude: _requiredDouble(
+              widget.companyLat ?? widget.branchLat,
+              'Latitude',
+            ),
+            longitude: _requiredDouble(
+              widget.companyLng ?? widget.branchLng,
+              'Longitude',
+            ),
+          );
+          _goTo('/company-dashboard');
+          return;
+
         case AuthFlowMode.customerSignup:
+          if (userId == null) {
+            throw Exception('User session not found after OTP verification');
+          }
           await _authService.createCustomerProfile(
             userId: userId,
             fullName: _required(widget.fullName, 'Full name'),
@@ -244,6 +287,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           return;
 
         case AuthFlowMode.merchantSignup:
+          if (userId == null) {
+            throw Exception('User session not found after OTP verification');
+          }
           await _authService.createMerchantProfile(
             userId: userId,
             fullName: _required(widget.fullName, 'Full name'),
@@ -258,6 +304,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           return;
 
         case AuthFlowMode.pickupPointSignup:
+          if (userId == null) {
+            throw Exception('User session not found after OTP verification');
+          }
           final timestamp = DateTime.now().millisecondsSinceEpoch;
           final safeEmail = _safeEmail();
 
@@ -342,17 +391,31 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           return;
 
         case AuthFlowMode.login:
+          if (userId == null) {
+            throw Exception('User session not found after OTP verification');
+          }
           final route = await _authService.resolveInitialRoute();
+          if (route == '/welcome') {
+            await _authService.signOut();
+            throw Exception(
+              'No account setup found for this user. Please sign up first.',
+            );
+          }
           _goTo(route);
           return;
       }
     } catch (error, stackTrace) {
       AuthErrorMapper.log('otp_verify', error, stackTrace);
+      final mappedError = AuthErrorMapper.map(
+        error,
+        context: AuthErrorContext.otpVerification,
+      );
       setState(() {
-        _errorText = AuthErrorMapper.map(
-          error,
-          context: AuthErrorContext.otpVerification,
-        );
+        _errorText = mappedError;
+        if (mappedError.toLowerCase().contains('expired')) {
+          _secondsRemaining = 0;
+          _timer?.cancel();
+        }
       });
     } finally {
       if (mounted) {

@@ -1,0 +1,424 @@
+--- PAGE 1 ---
+1
+ Automated Order Assignment System -
+ Multi-Company Case
+ Algorithm and routing logic report
+Core method
+Dynamic insertion-based routing
+Travel-time source
+Google Maps API
+Optimization basis
+Feasibility + cost scoring
+Advanced extension
+Transfer via pickup points
+Executive Summary
+The proposed system solves a real-time delivery assignment problem in a multi-company
+platform where orders are created continuously and driver states change dynamically over time.
+Each new order must be assigned to the most suitable driver while minimizing total operational
+cost and respecting hard constraints such as vehicle capacity, pickup-delivery precedence,
+service time, and routing feasibility.
+The system is based on a dynamic insertion-based routing algorithm. Instead of assigning the
+nearest driver directly, the system evaluates how each new order can be inserted into existing
+driver routes and selects the feasible insertion that produces the lowest additional cost. This
+cost is not limited to geographic distance; it includes travel time, service effort, lateness risk, and
+priority differences between home delivery and pickup-point delivery.
+Travel times are obtained through Google Maps API and reused through a caching layer to
+reduce cost and latency. In addition, pickup points are not treated only as dropoff destinations;
+they can also be used as transfer hubs between drivers of the same company when this
+reduces total routing cost.
+1. Problem Definition
+The platform must assign each incoming order to a driver in real time.
+Each order contains two routing stages:
+a pickup stage, where the order is collected from a merchant
+a dropoff stage, where the order is delivered either to a home address or to a pickup point
+The problem is therefore not just “which driver is closest?” The real question is:
+
+
+--- PAGE 2 ---
+2
+Which driver can absorb this order into the current route with the lowest feasible
+additional cost?
+This is important because a close driver may still be a bad option if:
+the driver is overloaded
+the route is already congested
+the new order would delay previously assigned deliveries
+the driver’s vehicle capacity is insufficient
+the required service effort is too high
+So the system must evaluate both feasibility and cost impact before assigning any order.
+2. System Scope
+The platform operates in a multi-company environment.
+This means:
+each delivery company has its own drivers
+each delivery company has its own pickup points
+assignments are restricted within the same company
+So before any routing or optimization happens, the algorithm first applies a company constraint:
+ driver.company_id == order.company_id
+This is very important because it means the platform does not optimize over one global fleet.
+Instead, every order is optimized only within the driver pool of its assigned company.
+Inside the same company, however, the system can still do advanced routing:
+drivers can carry multiple orders
+orders can come from multiple merchants
+deliveries can be home or pickup point
+future extension: orders can be transferred through company pickup points
+3. Driver Model
+When a driver logs in or activates a shift, the application must collect the vehicle type.
+The driver chooses one category, for example:
+motorcycle
+car
+van
+
+
+--- PAGE 3 ---
+3
+The system then automatically assigns estimated capacity values based on that vehicle type.
+These are not entered manually every time by the driver; they are predefined by the platform.
+For each vehicle type, the system stores:
+maximum weight capacity
+maximum volume capacity
+maximum item-count capacity
+This is important because the algorithm cannot evaluate assignments unless it knows what the
+driver can physically carry.
+Driver state must include:
+company_id
+vehicle_type
+capacity_weight
+capacity_volume
+capacity_item_count
+current_location
+availability_status
+current_load
+current_route
+shift_window
+ driver_id
+Why this matters
+If a driver selects:
+motorcycle → low weight/volume
+car → medium weight/volume
+van → high weight/volume
+then the algorithm can reject impossible assignments immediately, before wasting time
+simulating routes.
+4. Order Requirements
+For the algorithm to work correctly, every order must contain enough information to compute
+feasibility and cost.
+Each order must include:
+order_id
+company_id
+merchant_id
+
+
+--- PAGE 4 ---
+4
+pickup_location
+dropoff_type (HOME or PICKUP_POINT)
+dropoff_location
+item_count
+estimated_weight
+estimated_volume
+optional time_window
+priority
+Why weight and volume are mandatory
+If the order does not include weight and volume, then the system cannot know:
+whether a driver can carry it
+whether route load remains feasible
+whether transfer through pickup points is realistic
+These values can be:
+derived from product catalog data
+entered by the merchant
+estimated through business rules if exact values are unavailable
+But they must exist.
+5. Capacity Constraints
+The system uses a multidimensional capacity model.
+For each driver, the algorithm checks whether:
+ current_load + order_demand ≤ vehicle_capacity
+This must hold in all dimensions:
+weight
+volume
+item count
+So even if a driver is geographically close, the driver is rejected if adding the order exceeds any
+one of these limits.
+Example
+Driver vehicle:
+
+
+--- PAGE 5 ---
+5
+max weight = 20 kg
+max volume = 80,000 cm³
+Current load:
+16 kg
+60,000 cm³
+New order:
+6 kg
+15,000 cm³
+Weight becomes:
+22 kg → exceeds limit
+So the driver is rejected immediately, even though volume still fits.
+This shows why the algorithm must evaluate all capacity dimensions, not just one.
+6. Service Time Modeling
+Travel time alone is not enough to represent delivery effort.
+The algorithm must also include service time, which is the time spent at each stop.
+Home Delivery
+Home delivery usually requires more service time because of:
+parking
+building entrance
+elevator/stairs
+reaching higher floors
+customer handoff
+So an apartment on the 10th floor clearly takes longer than a quick stop.
+Pickup Point
+Pickup point delivery is usually faster:
+predefined location
+simpler handoff
+no building/floor delay
+
+
+--- PAGE 6 ---
+6
+often fixed short stop time
+Why service time matters
+Two options can have similar travel time, but the one with harder stop conditions should still be
+more expensive.
+So the algorithm must model:
+higher service time for home delivery
+lower service time for pickup points
+This directly affects route cost and feasibility.
+7. Priority Logic
+Not all orders have the same business importance.
+The system should include a priority mechanism to support customer satisfaction.
+A common rule is:
+home delivery → higher priority
+pickup point → lower priority
+Why?
+Because home delivery is usually more sensitive from a customer-experience perspective, while
+pickup point delivery is more flexible.
+Priority does not replace feasibility. It only influences the scoring phase.
+So even if home delivery has higher priority, the system will not assign it to an infeasible driver.
+Instead, priority reduces the score of good feasible options so that more important orders are
+favored.
+8. Core Algorithm
+The system uses insertion-based real-time routing.
+Instead of assigning directly, the algorithm does this:
+receive new order
+collect eligible candidate drivers
+reject infeasible drivers
+simulate inserting pickup and dropoff into each remaining route
+
+
+--- PAGE 7 ---
+7
+compute incremental cost for every feasible insertion
+select the minimum-cost feasible option
+update route
+re-optimize future route segments later if needed
+This is much stronger than nearest-driver logic because it evaluates route impact, not just
+distance.
+9. Algorithm Workflow
+Step 1: Filter Drivers
+The algorithm first narrows the search space.
+It keeps only drivers who are:
+from the same company
+available
+currently active
+using a compatible vehicle type
+This is the fast pre-filter layer.
+Step 2: Feasibility Check
+For each remaining driver, the system checks:
+capacity feasibility
+time feasibility
+shift feasibility
+pickup-before-dropoff rule
+If any condition fails, that driver is removed from consideration.
+Step 3: Route Insertion
+For each feasible driver, the algorithm tries inserting the order into different positions of the
+route.
+Because the order has:
+pickup node
+dropoff node
+the algorithm must preserve:
+
+
+--- PAGE 8 ---
+8
+pickup before dropoff
+Example
+Current route:
+A → B
+New order:
+P → D
+Possible insertions:
+P → D → A → B
+A → P → D → B
+A → B → P → D
+The system tests valid placements and computes their impact.
+Step 4: Cost Computation
+For every feasible insertion, the algorithm computes:
+ cost = travel_time + service_time + lateness_penalty − priority
+This is the heart of the decision.
+Step 5: Selection
+After evaluating all candidate drivers, the system chooses:
+the feasible driver whose route integration has the lowest total additional cost
+That means:
+not the nearest driver
+not the emptiest driver
+but the driver with the best route-level fit
+10. Cost Function Details
+The cost function must be explained clearly because this is what turns routing into an actual
+decision model.
+Travel Time
+
+
+--- PAGE 9 ---
+9
+This is the extra route time added by the new insertion.
+It is not straight-line distance. It should come from real routing estimates.
+Service Time
+This accounts for the effort at the stop.
+high for home
+low for pickup point
+Lateness Penalty
+If inserting the order makes the route risk being late, the penalty must rise.
+This protects delivery quality and customer satisfaction.
+Priority
+Priority lowers the effective score of important orders.
+Optional workload term
+The algorithm may also add a balancing term so one driver is not overloaded while another
+remains underused.
+11. Google Maps API Integration
+The system needs real travel-time estimates, not just rough geometric distances.
+So the routing engine should use Google Maps API for:
+travel duration
+travel distance
+ETA estimation between route points
+Where it is used
+Google Maps estimates are needed during:
+candidate scoring
+route insertion evaluation
+cost computation
+ETA updates after assignment
+Why Google Maps matters
+
+
+--- PAGE 10 ---
+10
+Because:
+travel time changes by traffic
+real road network matters
+direct distance is not accurate enough for routing decisions
+So the algorithm should rely on API-based travel estimates whenever it needs route-level
+accuracy.
+12. Caching Strategy
+Since Google Maps API costs money and repeated calls can be expensive, the system should
+not send a fresh API request every single time for similar routes.
+That is why a caching layer is required.
+What is cached
+The system should cache:
+origin-destination travel time
+origin-destination distance
+optionally ETA estimates by time bucket
+Cache key
+A practical cache key can include:
+rounded origin coordinates
+rounded destination coordinates
+time bucket
+optionally company or vehicle profile if needed
+Why rounded coordinates
+Because exact GPS coordinates change slightly all the time. If the system uses raw coordinates,
+cache reuse becomes very weak.
+So instead of exact GPS:
+round coordinates
+or map them to a small geographic cell
+Time bucket
+Traffic changes over time, so the same path at 8 AM is not the same as at 10 PM.
+So the cache should include a time grouping, for example:
+
+
+--- PAGE 11 ---
+11
+every 15 minutes
+every 30 minutes
+peak vs off-peak categories
+Cache flow
+algorithm needs travel time
+check cache first
+if hit → reuse stored result
+if miss → call Google Maps API
+store result in cache
+continue cost computation
+Benefit
+Caching reduces:
+API cost
+latency
+repeated computations
+This is very important because the algorithm may evaluate many candidate insertions per order.
+13. Example
+Example 1: Assignment
+Driver A:
+closer to merchant
+adding the order adds +15 min
+route already heavy
+home-delivery stop has large service time
+Driver B:
+farther away
+adding the order adds only +6 min
+no lateness issue
+The system selects Driver B because the total insertion cost is lower.
+Example 2: Service-time effect
+Two drivers have similar travel times, but:
+one route ends at a high-floor apartment
+the other ends at a pickup point
+
+
+--- PAGE 12 ---
+12
+Even if travel is similar, the home-delivery route becomes more expensive because service time
+is higher.
+Example 3: Transfer via pickup points
+Direct delivery:
+Driver A → destination = 20 min
+Transfer option:
+Driver A → pickup point = 4 min
+Driver B → destination = 3 min
+Total transfer time:
+7 min
+So transfer is better.
+14. Multi-Merchant Routing
+Drivers can carry orders from different merchants within the same company.
+This is important because a driver going to a distant zone should not be limited to one order if
+compatible orders exist on the same path.
+Example
+A route may become:
+ Merchant A → Merchant B → Customer 1 → Customer 2
+The constraint remains:
+each order must be picked up before its own delivery
+This increases efficiency and reduces wasted trips.
+15. Advanced Extension: Transfer via Pickup Points
+This is the extra-value part of the proposal.
+Instead of direct driver-to-driver handoff, which requires two drivers to meet at the same time,
+the platform can use pickup points as asynchronous transfer hubs.
+
+
+--- PAGE 13 ---
+13
+So instead of:
+ Driver A → destination
+the system may use:
+ Driver A → Pickup Point → Driver B → destination
+Why this is valuable
+reduces waiting time
+uses already-existing pickup infrastructure
+enables better route splitting
+ removes synchronization between drivers
+Decision rule
+The system compares:
+cost_direct
+cost_transfer
+And applies transfer only if:
+ cost_transfer < cost_direct
+Where transfer cost includes:
+A to pickup point
+handling time
+B from pickup point to final destination
+This is a strong future extension and shows that the platform can evolve beyond basic
+assignment.
+
+

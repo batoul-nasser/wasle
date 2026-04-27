@@ -71,8 +71,19 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
     final pageContext = context;
 
     if (approvedDrivers.isEmpty) {
+      final latestDrivers = await _authService
+          .getApprovedDriversForCurrentCompany();
+      if (!mounted || !pageContext.mounted) return;
+      setState(() => approvedDrivers = latestDrivers);
+    }
+
+    if (approvedDrivers.isEmpty) {
       ScaffoldMessenger.of(pageContext).showSnackBar(
-        const SnackBar(content: Text('No approved drivers available')),
+        const SnackBar(
+          content: Text(
+            'No approved drivers found for this company. Check driver approval/company link.',
+          ),
+        ),
       );
       return;
     }
@@ -346,7 +357,7 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                   const SectionHeader(
                     title: 'Needs Manual Review',
                     subtitle:
-                        'Older or unattempted orders with no recorded auto-assignment result',
+                        'Legacy or unattempted orders without saved automatic-assignment metadata',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (reviewOrders.isEmpty)
@@ -487,8 +498,10 @@ class _OrderCard extends StatelessWidget {
             ),
           ] else if (!hasDriver) ...[
             const SizedBox(height: AppSpacing.xs),
-            const Text(
-              'Auto-assign fallback reason: No automatic assignment result recorded yet.',
+            Text(
+              order['has_assignment_metadata'] == false
+                  ? 'Automatic assignment note: this order has no saved assignment metadata yet.'
+                  : 'Automatic assignment note: no automatic assignment result recorded yet.',
               style: AppTextStyles.bodyMuted,
             ),
           ],

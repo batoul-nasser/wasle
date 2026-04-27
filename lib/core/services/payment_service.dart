@@ -61,7 +61,7 @@ class PaymentService {
     String? notes,
     int itemCount = 1,
     double estimatedWeightKg = 1.0,
-    double estimatedVolumeCm3 = 500.0,
+    double estimatedVolumeCm3 = 5000.0,
   }) async {
     try {
       final normalizedDemand = DeliveryConstraintDefaults.normalizeOrderDemand(

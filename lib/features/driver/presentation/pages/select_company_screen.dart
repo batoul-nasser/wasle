@@ -28,6 +28,41 @@ class _SelectCompanyScreenState extends State<SelectCompanyScreen> {
 
   Future<void> _loadCompanies() async {
     try {
+      final user = _authService.currentUser;
+      if (user == null) {
+        if (!mounted) return;
+        setState(() {
+          isLoading = false;
+          errorText = 'User session not found';
+        });
+        return;
+      }
+
+      final driver = await _authService.getDriverByProfileId(user.id);
+      final companyId = driver?['company_id']?.toString();
+      if (companyId != null && companyId.isNotEmpty) {
+        if (!mounted) return;
+        setState(() {
+          isLoading = false;
+          errorText =
+              'You are already linked to a delivery company and cannot request another one.';
+        });
+        return;
+      }
+
+      final requestStatus = await _authService.getLatestDriverRequestStatus();
+      if (requestStatus == 'pending' ||
+          requestStatus == 'approved' ||
+          requestStatus == 'rejected') {
+        if (!mounted) return;
+        setState(() {
+          isLoading = false;
+          errorText =
+              'Company selection is only available during initial driver onboarding.';
+        });
+        return;
+      }
+
       final data = await _authService.getDeliveryCompanies();
 
       if (!mounted) return;
@@ -75,9 +110,7 @@ class _SelectCompanyScreenState extends State<SelectCompanyScreen> {
 
       Navigator.pushReplacement(
         context,
-        MaterialPageRoute(
-          builder: (_) => const WaitingApprovalScreen(),
-        ),
+        MaterialPageRoute(builder: (_) => const WaitingApprovalScreen()),
       );
     } catch (e) {
       if (!mounted) return;
@@ -96,9 +129,7 @@ class _SelectCompanyScreenState extends State<SelectCompanyScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Select Delivery Company'),
-      ),
+      appBar: AppBar(title: const Text('Select Delivery Company')),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : Padding(
@@ -153,7 +184,9 @@ class _SelectCompanyScreenState extends State<SelectCompanyScreen> {
                   if (errorText != null)
                     Text(
                       errorText!,
-                      style: AppTextStyles.body.copyWith(color: AppColors.danger),
+                      style: AppTextStyles.body.copyWith(
+                        color: AppColors.danger,
+                      ),
                     ),
                   const Spacer(),
                   PrimaryButton(

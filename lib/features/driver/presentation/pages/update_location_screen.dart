@@ -11,7 +11,6 @@ class UpdateLocationScreen extends StatefulWidget {
 class _UpdateLocationScreenState extends State<UpdateLocationScreen> {
   final AuthService _authService = AuthService();
 
-  final TextEditingController cityController = TextEditingController();
   final TextEditingController latController = TextEditingController();
   final TextEditingController lngController = TextEditingController();
 
@@ -54,7 +53,6 @@ class _UpdateLocationScreenState extends State<UpdateLocationScreen> {
         currentDriverId,
       );
 
-      cityController.text = location?['city']?.toString() ?? '';
       latController.text = location?['lat']?.toString() ?? '';
       lngController.text = location?['lng']?.toString() ?? '';
 
@@ -73,7 +71,6 @@ class _UpdateLocationScreenState extends State<UpdateLocationScreen> {
   Future<void> _saveLocation() async {
     if (driverId == null) return;
 
-    final city = cityController.text.trim();
     final lat = double.tryParse(latController.text.trim());
     final lng = double.tryParse(lngController.text.trim());
 
@@ -84,7 +81,6 @@ class _UpdateLocationScreenState extends State<UpdateLocationScreen> {
 
       await _authService.upsertDriverLocation(
         driverId: driverId!,
-        city: city.isEmpty ? null : city,
         lat: lat,
         lng: lng,
       );
@@ -111,7 +107,6 @@ class _UpdateLocationScreenState extends State<UpdateLocationScreen> {
 
   @override
   void dispose() {
-    cityController.dispose();
     latController.dispose();
     lngController.dispose();
     super.dispose();
@@ -147,17 +142,6 @@ class _UpdateLocationScreenState extends State<UpdateLocationScreen> {
                   'Update Your Location',
                   style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                 ),
-                const SizedBox(height: 16),
-
-                TextField(
-                  controller: cityController,
-                  decoration: const InputDecoration(
-                    labelText: 'City',
-                    border: OutlineInputBorder(),
-                    prefixIcon: Icon(Icons.location_city),
-                  ),
-                ),
-
                 const SizedBox(height: 16),
 
                 TextField(

@@ -58,9 +58,7 @@ class _DriverRequestsScreenState extends State<DriverRequestsScreen> {
 
       if (!mounted) return;
       setState(() {
-        requests.removeWhere(
-          (r) => r['request_id'] == request['request_id'],
-        );
+        requests.removeWhere((r) => r['request_id'] == request['request_id']);
       });
     } catch (e) {
       debugPrint('$e');
@@ -76,9 +74,7 @@ class _DriverRequestsScreenState extends State<DriverRequestsScreen> {
 
       if (!mounted) return;
       setState(() {
-        requests.removeWhere(
-          (r) => r['request_id'] == request['request_id'],
-        );
+        requests.removeWhere((r) => r['request_id'] == request['request_id']);
       });
     } catch (e) {
       debugPrint('$e');
@@ -89,12 +85,16 @@ class _DriverRequestsScreenState extends State<DriverRequestsScreen> {
     final driverName = request['full_name']?.toString() ?? 'Unknown Driver';
     final phone = request['phone']?.toString() ?? '-';
     final requestStatus = request['request_status']?.toString() ?? '-';
-    final verificationStatus = request['verification_status']?.toString() ?? '-';
+    final verificationStatus =
+        request['verification_status']?.toString() ?? '-';
+    final vehicleType = request['vehicle_type']?.toString() ?? '-';
+    final capacityText =
+        '${request['capacity_weight'] ?? '-'} kg / ${request['capacity_volume'] ?? '-'} cm3 / ${request['capacity_item_count'] ?? '-'} items';
     final decisionStatus = requestStatus.toLowerCase() == 'approved'
         ? 'approved'
         : requestStatus.toLowerCase() == 'rejected'
-            ? 'rejected'
-            : 'pending';
+        ? 'rejected'
+        : 'pending';
 
     return InfoCard(
       title: driverName,
@@ -122,6 +122,18 @@ class _DriverRequestsScreenState extends State<DriverRequestsScreen> {
             label: 'Phone',
             value: phone,
             icon: Icons.phone_outlined,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          _RequestField(
+            label: 'Vehicle',
+            value: vehicleType,
+            icon: Icons.local_shipping_outlined,
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          _RequestField(
+            label: 'Capacity',
+            value: capacityText,
+            icon: Icons.inventory_2_outlined,
           ),
           const SizedBox(height: AppSpacing.sm),
           _RequestField(
@@ -169,40 +181,38 @@ class _DriverRequestsScreenState extends State<DriverRequestsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Driver Requests'),
-      ),
+      appBar: AppBar(title: const Text('Driver Requests')),
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorText != null
-              ? EmptyStateWidget(
-                  icon: Icons.error_outline_rounded,
-                  title: 'Could not load requests',
-                  message: errorText!,
-                  action: SecondaryButton(
-                    label: 'Try Again',
-                    isExpanded: false,
-                    onPressed: _loadRequests,
-                  ),
-                )
-              : requests.isEmpty
-                  ? const EmptyStateWidget(
-                      icon: Icons.inbox_outlined,
-                      title: 'No driver requests',
-                      message: 'New requests from drivers will appear here.',
-                    )
-                  : RefreshIndicator(
-                      onRefresh: _loadRequests,
-                      child: ListView.separated(
-                        padding: const EdgeInsets.all(AppSpacing.xl),
-                        itemCount: requests.length,
-                        separatorBuilder: (context, index) =>
-                            const SizedBox(height: AppSpacing.md),
-                        itemBuilder: (context, index) {
-                          return _buildRequestCard(requests[index]);
-                        },
-                      ),
-                    ),
+          ? EmptyStateWidget(
+              icon: Icons.error_outline_rounded,
+              title: 'Could not load requests',
+              message: errorText!,
+              action: SecondaryButton(
+                label: 'Try Again',
+                isExpanded: false,
+                onPressed: _loadRequests,
+              ),
+            )
+          : requests.isEmpty
+          ? const EmptyStateWidget(
+              icon: Icons.inbox_outlined,
+              title: 'No driver requests',
+              message: 'New requests from drivers will appear here.',
+            )
+          : RefreshIndicator(
+              onRefresh: _loadRequests,
+              child: ListView.separated(
+                padding: const EdgeInsets.all(AppSpacing.xl),
+                itemCount: requests.length,
+                separatorBuilder: (context, index) =>
+                    const SizedBox(height: AppSpacing.md),
+                itemBuilder: (context, index) {
+                  return _buildRequestCard(requests[index]);
+                },
+              ),
+            ),
     );
   }
 }
@@ -226,13 +236,8 @@ class _RequestField extends StatelessWidget {
       children: [
         Icon(icon, size: 18, color: AppColors.textSecondary),
         const SizedBox(width: AppSpacing.xs),
-        Expanded(
-          child: Text(
-            '$label: $value',
-            style: AppTextStyles.body,
-          ),
-        ),
-        if (trailing case final trailingWidget?) trailingWidget,
+        Expanded(child: Text('$label: $value', style: AppTextStyles.body)),
+        if (trailing != null) trailing!,
       ],
     );
   }

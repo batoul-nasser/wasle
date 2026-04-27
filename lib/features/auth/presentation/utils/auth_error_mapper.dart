@@ -1,17 +1,24 @@
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
-enum AuthErrorContext {
-  passwordLogin,
-  otpRequest,
-  otpVerification,
+enum AuthErrorContext { passwordLogin, otpRequest, otpVerification }
+
+class EmailAlreadyRegisteredException implements Exception {
+  static const defaultMessage =
+      'This email is already registered. Please log in.';
+
+  const EmailAlreadyRegisteredException();
+
+  @override
+  String toString() => defaultMessage;
 }
 
 class AuthErrorMapper {
-  static String map(
-    Object error, {
-    required AuthErrorContext context,
-  }) {
+  static String map(Object error, {required AuthErrorContext context}) {
+    if (error is EmailAlreadyRegisteredException) {
+      return EmailAlreadyRegisteredException.defaultMessage;
+    }
+
     final code = _extractCode(error);
     final message = _extractMessage(error).toLowerCase();
 
@@ -38,14 +45,34 @@ class AuthErrorMapper {
         if (_isAccountMissing(code, message)) {
           return "We couldn't send a code to this email.";
         }
-        if (message.contains('rate limit') || message.contains('too many requests')) {
+        if (message.contains('rate limit') ||
+            message.contains('too many requests')) {
           return 'Too many attempts. Please try again in a moment.';
+        }
+        if (message.contains('missing resend_api_key') ||
+            message.contains('missing otp_from_email')) {
+          return 'OTP email service is not configured. Add RESEND_API_KEY and OTP_FROM_EMAIL in Supabase secrets.';
+        }
+        if (message.contains('resend api error 401') ||
+            message.contains('resend api error 403')) {
+          return 'OTP email provider rejected the request. Check your RESEND_API_KEY and sender domain verification.';
+        }
+        if (message.contains('resend api error 422')) {
+          return 'Sender email is invalid or not verified in Resend. Update OTP_FROM_EMAIL to a verified sender.';
+        }
+        if (message.contains('resend api error')) {
+          return 'OTP email provider failed to send the code. Check Resend API key and sender settings.';
         }
         return "We couldn't send a code to this email.";
 
       case AuthErrorContext.otpVerification:
         if (_isOtpExpired(code, message)) {
           return 'This code has expired. Please request a new one.';
+        }
+        if (message.contains('weakpassword') ||
+            message.contains('password should contain at least one character') ||
+            message.contains('weak password')) {
+          return 'Password is too weak. Use 8+ chars with uppercase, lowercase, number, and special character.';
         }
         if (_isOtpInvalid(code, message)) {
           return 'The code you entered is incorrect.';

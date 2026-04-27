@@ -62,6 +62,14 @@ class _LoginScreenState extends State<LoginScreen> {
       );
 
       final route = await _authService.resolveInitialRoute();
+      if (route == '/welcome') {
+        await _authService.signOut();
+        if (!mounted) return;
+        setState(() {
+          errorText = 'No account setup found for this user. Please sign up first.';
+        });
+        return;
+      }
 
       if (!mounted) return;
       Navigator.pushNamedAndRemoveUntil(context, route, (route) => false);

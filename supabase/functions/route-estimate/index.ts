@@ -16,6 +16,7 @@ type CacheRow = {
   duration_seconds: number;
   distance_meters: number;
   source: string;
+  expires_at: string;
 };
 
 type CacheKey = Pick<
@@ -31,6 +32,7 @@ type CacheKey = Pick<
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const COORDINATE_PRECISION = 4;
 const TIME_BUCKET_MINUTES = 15;
+const CACHE_TTL_MINUTES = 30;
 
 const supabaseUrl = Deno.env.get("SUPABASE_URL");
 const supabaseServiceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
@@ -99,6 +101,8 @@ function toCacheRow(
   distanceMeters: number,
   source: string,
 ): CacheRow {
+  const expiresAt = new Date(Date.now() + CACHE_TTL_MINUTES * 60 * 1000)
+    .toISOString();
   return {
     origin_lat: origin.lat,
     origin_lng: origin.lng,
@@ -109,6 +113,7 @@ function toCacheRow(
     duration_seconds: durationSeconds,
     distance_meters: distanceMeters,
     source,
+    expires_at: expiresAt,
   };
 }
 
@@ -122,6 +127,7 @@ async function lookupCache(row: CacheKey) {
     .from("routing_cache")
     .select("duration_seconds, distance_meters")
     .match(row)
+    .gt("expires_at", new Date().toISOString())
     .maybeSingle();
 
   if (error) {

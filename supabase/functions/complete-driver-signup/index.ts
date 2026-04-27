@@ -2,7 +2,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
-const OTP_LENGTH = 8;
+const OTP_LENGTH = 6;
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_PURPOSE = "driver_signup";
 const VERIFIED_COMPLETION_WINDOW_MINUTES = 15;
@@ -369,7 +369,7 @@ async function handleVerifyOtp(body: Record<string, unknown>) {
     );
   }
 
-  if (!/^\d{8}$/.test(code) || code.length !== OTP_LENGTH) {
+  if (!/^\d{6}$/.test(code) || code.length !== OTP_LENGTH) {
     return jsonResponse(
       { code: "invalid_otp", error: "The code you entered is incorrect." },
       400,
@@ -434,6 +434,7 @@ async function handleCompleteSignup(body: Record<string, unknown>) {
   const fullName = normalizeText(body.full_name);
   const phone = normalizeText(body.phone);
   const city = normalizeText(body.city);
+  const companyId = normalizeText(body.company_id);
   const vehicleType = normalizeVehicleType(body.vehicle_type);
   let createdUserId: string | null = null;
 
@@ -455,7 +456,7 @@ async function handleCompleteSignup(body: Record<string, unknown>) {
       );
     }
 
-    if (!fullName || !phone || !city || !vehicleType) {
+    if (!fullName || !phone || !city || !companyId || !vehicleType) {
       return jsonResponse(
         {
           code: "invalid_signup_payload",
@@ -535,17 +536,25 @@ async function handleCompleteSignup(body: Record<string, unknown>) {
         capacity_weight: capacity.weight,
         capacity_volume: capacity.volume,
         capacity_item_count: capacity.itemCount,
+        city,
+        service_area: city,
+        availability_status: "unavailable",
+        is_available: false,
+        is_active_shift: false,
+        current_load_weight: 0,
+        current_load_volume: 0,
+        current_load_item_count: 0,
       }, { onConflict: "profile_id" });
     if (driverError) throw driverError;
 
-    const { error: locationError } = await supabaseAdmin!
-      .from("driver_locations")
-      .upsert({
-        driver_id: driverId,
-        city: city || null,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: "driver_id" });
-    if (locationError) throw locationError;
+    const { error: requestError } = await supabaseAdmin!
+      .from("driver_company_requests")
+      .insert({
+        driver_profile_id: userId,
+        company_id: companyId,
+        request_status: "pending",
+      });
+    if (requestError) throw requestError;
 
     return jsonResponse({
       completed: true,

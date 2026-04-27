@@ -5,8 +5,12 @@ import 'routing_service.dart';
 
 class RouteCostPolicy {
   final int latenessPenaltyMultiplier;
+  final int workloadBalancePenaltyPerStopSeconds;
 
-  const RouteCostPolicy({this.latenessPenaltyMultiplier = 3});
+  const RouteCostPolicy({
+    this.latenessPenaltyMultiplier = 3,
+    this.workloadBalancePenaltyPerStopSeconds = 45,
+  });
 }
 
 class RouteInsertionEngine {
@@ -84,10 +88,14 @@ class RouteInsertionEngine {
         );
         final latenessPenalty =
             incrementalLateness * costPolicy.latenessPenaltyMultiplier;
+        final workloadBalancePenalty =
+            route.stops.length *
+            costPolicy.workloadBalancePenaltyPerStopSeconds;
         final cost =
             incrementalTravel +
             incrementalService +
-            latenessPenalty -
+            latenessPenalty +
+            workloadBalancePenalty -
             order.prioritySeconds;
 
         final insertion = RouteInsertion(

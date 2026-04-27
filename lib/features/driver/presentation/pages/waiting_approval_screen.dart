@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import 'package:wasle/core/ui/ui.dart';
+import 'package:wasle/features/driver/presentation/pages/driver_profile_screen.dart';
 
 class WaitingApprovalScreen extends StatelessWidget {
   const WaitingApprovalScreen({super.key});
@@ -38,7 +39,7 @@ class WaitingApprovalScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    'Your driver account has been created and is currently under review.',
+                    'Your request to join a delivery company has been sent and is currently under review.',
                     textAlign: TextAlign.center,
                     style: AppTextStyles.bodyMuted,
                   ),
@@ -50,10 +51,15 @@ class WaitingApprovalScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: AppSpacing.xl),
                   PrimaryButton(
-                    label: 'Back to Home',
-                    icon: Icons.home_outlined,
+                    label: 'Open Profile',
+                    icon: Icons.person_outline_rounded,
                     onPressed: () {
-                      Navigator.popUntil(context, (route) => route.isFirst);
+                      Navigator.pushReplacement(
+                        context,
+                        MaterialPageRoute(
+                          builder: (_) => const DriverProfileScreen(),
+                        ),
+                      );
                     },
                   ),
                 ],

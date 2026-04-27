@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:wasle/core/domain/delivery_constraints.dart';
 
 enum AuthFlowMode {
   login,
@@ -61,22 +63,90 @@ class AuthService {
     );
   }
 
-  Future<void> resendSignupOtp({
-    required String email,
-  }) async {
-    await _client.auth.resend(
-      type: OtpType.signup,
-      email: email,
+  Future<void> requestDriverSignupOtp({required String email}) async {
+    final response = await _client.functions.invoke(
+      'complete-driver-signup',
+      body: {'action': 'request_otp', 'email': email, 'purpose': 'driver_signup'},
     );
+
+    final payload = response.data;
+    final sent = payload is Map && payload['sent'] == true;
+    if (!sent) {
+      final message = _functionErrorMessage(
+        payload,
+        fallback: 'Unable to send verification code.',
+      );
+      throw Exception(message);
+    }
   }
 
-  Future<void> resendLoginOtp({
+  Future<void> verifyDriverSignupOtp({
     required String email,
+    required String code,
   }) async {
-    await _client.auth.resend(
-      type: OtpType.email,
-      email: email,
+    final response = await _client.functions.invoke(
+      'complete-driver-signup',
+      body: {
+        'action': 'verify_otp',
+        'email': email,
+        'purpose': 'driver_signup',
+        'code': code,
+      },
     );
+
+    final payload = response.data;
+    final verified = payload is Map && payload['verified'] == true;
+    if (!verified) {
+      final message = _functionErrorMessage(
+        payload,
+        fallback: 'Invalid or expired verification code.',
+      );
+      throw Exception(message);
+    }
+  }
+
+  Future<void> completeDriverSignup({
+    required String email,
+    required String password,
+    required String fullName,
+    required String phone,
+    required String city,
+    required String companyId,
+    required String vehicleType,
+  }) async {
+    final response = await _client.functions.invoke(
+      'complete-driver-signup',
+      body: {
+        'action': 'complete_signup',
+        'email': email,
+        'password': password,
+        'full_name': fullName,
+        'phone': phone,
+        'city': city,
+        'company_id': companyId,
+        'vehicle_type': vehicleType,
+      },
+    );
+
+    final payload = response.data;
+    final completed = payload is Map && payload['completed'] == true;
+    if (!completed) {
+      final message = _functionErrorMessage(
+        payload,
+        fallback: 'Unable to create driver account.',
+      );
+      throw Exception(message);
+    }
+
+    await signInWithPassword(email: email, password: password);
+  }
+
+  Future<void> resendSignupOtp({required String email}) async {
+    await _client.auth.resend(type: OtpType.signup, email: email);
+  }
+
+  Future<void> resendLoginOtp({required String email}) async {
+    await _client.auth.resend(type: OtpType.email, email: email);
   }
 
   Future<AuthResponse> verifyOtp({
@@ -84,18 +154,55 @@ class AuthService {
     required String token,
     required AuthFlowMode mode,
   }) async {
-    final otpType =
-        mode == AuthFlowMode.login ? OtpType.email : OtpType.signup;
-
-    return await _client.auth.verifyOTP(
-      email: email,
-      token: token,
-      type: otpType,
-    );
+    final otpType = mode == AuthFlowMode.login ? OtpType.email : OtpType.signup;
+    try {
+      return await _client.auth.verifyOTP(
+        email: email,
+        token: token,
+        type: otpType,
+      );
+    } on AuthException catch (_) {
+      // Some signup flows may receive an email OTP type instead of signup.
+      // Retry once with OtpType.email for robustness.
+      if (mode == AuthFlowMode.driverSignup) {
+        return await _client.auth.verifyOTP(
+          email: email,
+          token: token,
+          type: OtpType.email,
+        );
+      }
+      rethrow;
+    }
   }
 
   Future<void> signOut() async {
     await _client.auth.signOut();
+  }
+
+  Future<void> setCurrentUserPassword(String password) async {
+    await _client.auth.updateUser(UserAttributes(password: password));
+  }
+
+  Future<void> deleteCurrentDriverAccount() async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw Exception('User not logged in');
+    }
+
+    final response = await _client.functions.invoke('delete-driver-account');
+    final payload = response.data;
+    final ok = payload is Map && payload['success'] == true;
+
+    if (!ok) {
+      final message = payload is Map
+          ? payload['error']?.toString()
+          : null;
+      throw Exception(message ?? 'Failed to delete driver account');
+    }
+
+    try {
+      await signOut();
+    } catch (_) {}
   }
 
   Future<Map<String, dynamic>?> getCurrentProfile() async {
@@ -141,9 +248,39 @@ class AuthService {
     return response;
   }
 
-  Future<Map<String, dynamic>?> getMerchantByProfileId(
-    String profileId,
-  ) async {
+  Future<List<String>> _getCurrentCompanyIds() async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw Exception('User not logged in');
+
+    final ids = <String>{user.id};
+
+    try {
+      final companyUsers = await _client
+          .from('company_users')
+          .select('company_id')
+          .eq('profile_id', user.id);
+
+      for (final row in List<Map<String, dynamic>>.from(companyUsers)) {
+        final companyId = row['company_id']?.toString();
+        if (companyId != null && companyId.isNotEmpty) {
+          ids.add(companyId);
+        }
+      }
+    } catch (_) {}
+
+    return ids.toList();
+  }
+
+  void _assertCompanyAccess({
+    required String companyId,
+    required List<String> allowedCompanyIds,
+  }) {
+    if (!allowedCompanyIds.contains(companyId)) {
+      throw Exception('Order does not belong to your delivery company');
+    }
+  }
+
+  Future<Map<String, dynamic>?> getMerchantByProfileId(String profileId) async {
     final result = await _client
         .from('merchant_users')
         .select()
@@ -190,15 +327,26 @@ class AuthService {
       return '/welcome';
     }
 
+    // Prefer concrete role-specific records over profile.role text.
+    // This avoids misrouting when profile.role is stale (eg. user has a driver
+    // row but profile role was not updated yet).
+    final driver = await getDriverByProfileId(user.id);
+    if (driver != null) {
+      final status = await checkDriverStatus();
+      final requestStatus = await getLatestDriverRequestStatus();
+      if (status == 'approved') return '/driver-dashboard';
+      if (requestStatus == 'pending') return '/waiting-approval';
+      if (status == 'rejected' || requestStatus == 'rejected') {
+        return '/rejected';
+      }
+      if (status == 'pending') return '/waiting-approval';
+      if (requestStatus == 'approved') return '/driver-dashboard';
+      return '/select-company';
+    }
+
     final role = await getCurrentRole();
 
     switch (role) {
-      case 'driver':
-        final status = await checkDriverStatus();
-        if (status == 'approved') return '/driver-dashboard';
-        if (status == 'rejected') return '/rejected';
-        return '/waiting-approval';
-
       case 'company_admin':
         return '/company-dashboard';
 
@@ -256,13 +404,61 @@ class AuthService {
     return raw.trim().toLowerCase();
   }
 
+  Future<String?> getLatestDriverRequestStatus() async {
+    final user = _client.auth.currentUser;
+    if (user == null) return null;
+
+    final request = await _client
+        .from('driver_company_requests')
+        .select('request_status')
+        .eq('driver_profile_id', user.id)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    final raw = request?['request_status']?.toString();
+    if (raw == null) return null;
+    return raw.trim().toLowerCase();
+  }
+
+  Future<Map<String, dynamic>?> getLatestDriverRequestSummary() async {
+    final user = _client.auth.currentUser;
+    if (user == null) return null;
+
+    final request = await _client
+        .from('driver_company_requests')
+        .select('id, company_id, request_status, created_at')
+        .eq('driver_profile_id', user.id)
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    if (request == null) return null;
+
+    Map<String, dynamic>? company;
+    final companyId = request['company_id']?.toString();
+    if (companyId != null && companyId.isNotEmpty) {
+      company = await getCompanyById(companyId);
+    }
+
+    return {
+      'id': request['id'],
+      'company_id': companyId,
+      'request_status': request['request_status']?.toString(),
+      'created_at': request['created_at'],
+      'company_name': company?['name']?.toString(),
+    };
+  }
+
   Future<String?> uploadPickupPointStorageAreaImage({
     required String fileName,
     required Uint8List bytes,
   }) async {
     final path = 'storage/$fileName';
 
-    await _client.storage.from('pickup-point-storage').uploadBinary(
+    await _client.storage
+        .from('pickup-point-storage')
+        .uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -277,7 +473,9 @@ class AuthService {
   }) async {
     final path = 'shelves/$fileName';
 
-    await _client.storage.from('pickup-point-shelves').uploadBinary(
+    await _client.storage
+        .from('pickup-point-shelves')
+        .uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -292,7 +490,9 @@ class AuthService {
   }) async {
     final path = 'shops/$fileName';
 
-    await _client.storage.from('pickup-point-shops').uploadBinary(
+    await _client.storage
+        .from('pickup-point-shops')
+        .uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -307,7 +507,9 @@ class AuthService {
   }) async {
     final path = 'ids/$fileName';
 
-    await _client.storage.from('pickup-point-ids').uploadBinary(
+    await _client.storage
+        .from('pickup-point-ids')
+        .uploadBinary(
           path,
           bytes,
           fileOptions: const FileOptions(upsert: true),
@@ -321,61 +523,89 @@ class AuthService {
     required String fullName,
     required String phone,
     required String city,
+    required String companyId,
+    required String vehicleType,
   }) async {
-    await _client.from('profiles').upsert(
-      {
-        'id': userId,
-        'full_name': fullName,
-        'phone': phone,
-        'role': 'driver',
-      },
-      onConflict: 'id',
+    final normalizedVehicleType = _normalizeVehicleType(vehicleType);
+    final capacity = DeliveryConstraintDefaults.capacityForVehicleType(
+      normalizedVehicleType,
     );
 
-    await _client.from('drivers').upsert(
-      {
-        'profile_id': userId,
-        'verification_status': 'pending',
-      },
-      onConflict: 'profile_id',
-    );
+    await _client.from('profiles').upsert({
+      'id': userId,
+      'full_name': fullName,
+      'phone': phone,
+      'role': 'driver',
+    }, onConflict: 'id');
 
-    final driverRow = await _client
-        .from('drivers')
-        .select('id')
-        .eq('profile_id', userId)
-        .maybeSingle();
+    final driverPayload = <String, dynamic>{
+      // Many RLS policies on drivers require id to match auth.uid().
+      // Keep id/profile_id aligned to the current authenticated user.
+      'id': userId,
+      'profile_id': userId,
+      'company_id': null,
+      'verification_status': 'pending',
+      'vehicle_type': normalizedVehicleType,
+      'capacity_weight': capacity.weightKg,
+      'capacity_volume': capacity.volumeCm3,
+      'capacity_item_count': capacity.itemCount,
+      'city': city,
+      'service_area': city,
+      'availability_status': 'unavailable',
+      'is_available': false,
+      'is_active_shift': false,
+      'current_load_weight': 0,
+      'current_load_volume': 0,
+      'current_load_item_count': 0,
+    };
 
-    if (driverRow != null) {
-      final driverId = driverRow['id'] as String;
-      await _client.from('driver_locations').upsert(
-        {
-          'driver_id': driverId,
-          'city': city.isEmpty ? null : city,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        },
-        onConflict: 'driver_id',
-      );
-    }
+    await _upsertDriverWithSchemaFallback(driverPayload);
+
+    await sendDriverRequest(driverProfileId: userId, companyId: companyId);
   }
 
   Future<void> createCompanyProfile({
     required String userId,
     required String adminName,
     required String companyName,
-    required String location,
+    required String phone,
+    required String email,
+    required String exactAddress,
+    required String city,
+    required String area,
+    required double latitude,
+    required double longitude,
   }) async {
     await _client.from('profiles').upsert({
       'id': userId,
       'full_name': adminName,
+      'phone': phone,
       'role': 'company_admin',
     });
 
-    await _client.from('delivery_companies').insert({
+    await _client.from('delivery_companies').upsert({
       'id': userId,
       'name': companyName,
-      'location': location,
-    });
+      'phone': phone,
+      'email': email,
+      'location': city,
+      'address_text': exactAddress,
+      'exact_address': exactAddress,
+      'city': city,
+      'area': area,
+      'lat': latitude,
+      'lng': longitude,
+      'latitude': latitude,
+      'longitude': longitude,
+    }, onConflict: 'id');
+
+    try {
+      await _client.from('company_users').upsert({
+        'profile_id': userId,
+        'company_id': userId,
+        'role': 'owner',
+      }, onConflict: 'profile_id,company_id');
+    } catch (_) {}
   }
 
   Future<void> createCustomerProfile({
@@ -454,13 +684,16 @@ class AuthService {
         'is_active': true,
       });
     } else {
-      await _client.from('merchant_branches').update({
-        'name': branchName,
-        'address_text': addressText,
-        'lat': branchLat,
-        'lng': branchLng,
-        'is_active': true,
-      }).eq('id', existingBranch['id'].toString());
+      await _client
+          .from('merchant_branches')
+          .update({
+            'name': branchName,
+            'address_text': addressText,
+            'lat': branchLat,
+            'lng': branchLng,
+            'is_active': true,
+          })
+          .eq('id', existingBranch['id'].toString());
     }
   }
 
@@ -545,23 +778,96 @@ class AuthService {
     required String driverProfileId,
     required String companyId,
   }) async {
-    await _client.from('driver_company_requests').insert({
-      'driver_profile_id': driverProfileId,
-      'company_id': companyId,
-    });
+    final driver = await _client
+        .from('drivers')
+        .select('id, company_id, verification_status')
+        .eq('profile_id', driverProfileId)
+        .maybeSingle();
+
+    final linkedCompanyId = driver?['company_id']?.toString();
+    final verificationStatus = driver?['verification_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+
+    if (linkedCompanyId != null && linkedCompanyId.isNotEmpty) {
+      if (linkedCompanyId == companyId && verificationStatus == 'approved') {
+        throw Exception('You are already linked to this delivery company.');
+      }
+      throw Exception(
+        'You are already linked to a delivery company. Leave or get removed before requesting another one.',
+      );
+    }
+
+    final existingSameCompany = await _client
+        .from('driver_company_requests')
+        .select('id, request_status')
+        .eq('driver_profile_id', driverProfileId)
+        .eq('company_id', companyId)
+        .maybeSingle();
+
+    final sameCompanyStatus = existingSameCompany?['request_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    if (sameCompanyStatus == 'pending') {
+      throw Exception('You already sent a request to this delivery company.');
+    }
+    if (sameCompanyStatus == 'approved') {
+      throw Exception('You are already approved for this delivery company.');
+    }
+
+    final existingPending = await _client
+        .from('driver_company_requests')
+        .select('id')
+        .eq('driver_profile_id', driverProfileId)
+        .eq('request_status', 'pending')
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    if (existingPending != null) {
+      throw Exception('You already have a pending company request.');
+    }
+
+    final createdAt = DateTime.now().toUtc().toIso8601String();
+    if (existingSameCompany != null) {
+      await _client
+          .from('driver_company_requests')
+          .update({'request_status': 'pending', 'created_at': createdAt})
+          .eq('id', existingSameCompany['id'].toString());
+    } else {
+      await _client.from('driver_company_requests').insert({
+        'driver_profile_id': driverProfileId,
+        'company_id': companyId,
+        'request_status': 'pending',
+        'created_at': createdAt,
+      });
+    }
+
+    await _client
+        .from('drivers')
+        .update({
+          'verification_status': 'pending',
+          // Driver remains unlinked until company explicitly accepts request.
+          'company_id': null,
+        })
+        .eq('profile_id', driverProfileId);
   }
 
-  Future<List<Map<String, dynamic>>> getDriverRequestsForCurrentCompany() async {
+  Future<List<Map<String, dynamic>>>
+  getDriverRequestsForCurrentCompany() async {
     final user = _client.auth.currentUser;
 
     if (user == null) {
       throw Exception('User not logged in');
     }
+    final companyIds = await _getCurrentCompanyIds();
 
     final requests = await _client
         .from('driver_company_requests')
         .select()
-        .eq('company_id', user.id)
+        .inFilter('company_id', companyIds)
         .order('created_at', ascending: false);
 
     List<Map<String, dynamic>> result = [];
@@ -575,10 +881,19 @@ class AuthService {
           .eq('id', driverProfileId)
           .maybeSingle();
 
-      final driver = await _client
+      Map<String, dynamic>? driver = await _client
           .from('drivers')
-          .select('profile_id, verification_status')
+          .select(
+            'id, profile_id, verification_status, vehicle_type, capacity_weight, capacity_volume, capacity_item_count',
+          )
           .eq('profile_id', driverProfileId)
+          .maybeSingle();
+      driver ??= await _client
+          .from('drivers')
+          .select(
+            'id, profile_id, verification_status, vehicle_type, capacity_weight, capacity_volume, capacity_item_count',
+          )
+          .eq('id', driverProfileId)
           .maybeSingle();
 
       result.add({
@@ -590,6 +905,10 @@ class AuthService {
         'phone': profile?['phone'],
         'role': profile?['role'],
         'verification_status': driver?['verification_status'],
+        'vehicle_type': driver?['vehicle_type'],
+        'capacity_weight': driver?['capacity_weight'],
+        'capacity_volume': driver?['capacity_volume'],
+        'capacity_item_count': driver?['capacity_item_count'],
       });
     }
 
@@ -605,30 +924,160 @@ class AuthService {
     if (user == null) {
       throw Exception('User not logged in');
     }
+    final companyIds = await _getCurrentCompanyIds();
+    final request = await _client
+        .from('driver_company_requests')
+        .select('id, company_id')
+        .eq('id', requestId)
+        .maybeSingle();
+    final requestCompanyId = request?['company_id']?.toString();
+    if (requestCompanyId == null || requestCompanyId.isEmpty) {
+      throw Exception('Driver request not found');
+    }
+    _assertCompanyAccess(
+      companyId: requestCompanyId,
+      allowedCompanyIds: companyIds,
+    );
 
     await _client
         .from('driver_company_requests')
-        .update({'request_status': 'approved'})
+        .update({
+          'request_status': 'approved',
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
         .eq('id', requestId);
 
-    await _client.from('drivers').update({
-      'verification_status': 'approved',
-      'company_id': user.id,
-    }).eq('profile_id', driverProfileId);
+    await _updateDriverRowsWithSchemaFallback(
+      profileId: driverProfileId,
+      values: {
+        'verification_status': 'approved',
+        'company_id': requestCompanyId,
+        'availability_status': 'unavailable',
+        'is_available': false,
+        'is_active_shift': false,
+        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
+      },
+    );
   }
 
   Future<void> rejectDriverRequest({
     required String requestId,
     required String driverProfileId,
   }) async {
+    final companyIds = await _getCurrentCompanyIds();
+    final request = await _client
+        .from('driver_company_requests')
+        .select('id, company_id')
+        .eq('id', requestId)
+        .maybeSingle();
+    final requestCompanyId = request?['company_id']?.toString();
+    if (requestCompanyId == null || requestCompanyId.isEmpty) {
+      throw Exception('Driver request not found');
+    }
+    _assertCompanyAccess(
+      companyId: requestCompanyId,
+      allowedCompanyIds: companyIds,
+    );
+
     await _client
         .from('driver_company_requests')
-        .update({'request_status': 'rejected'})
+        .update({
+          'request_status': 'rejected',
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
         .eq('id', requestId);
 
-    await _client.from('drivers').update({
-      'verification_status': 'rejected',
-    }).eq('profile_id', driverProfileId);
+    await _updateDriverRowsWithSchemaFallback(
+      profileId: driverProfileId,
+      values: {
+        'verification_status': 'rejected',
+        'company_id': null,
+        'availability_status': 'unavailable',
+        'is_available': false,
+        'is_active_shift': false,
+        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
+      },
+    );
+  }
+
+  Future<void> cancelLatestPendingDriverRequest() async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw Exception('User not logged in');
+
+    final driver = await _client
+        .from('drivers')
+        .select('id, company_id, verification_status')
+        .eq('profile_id', user.id)
+        .maybeSingle();
+
+    final linkedCompanyId = driver?['company_id']?.toString();
+    if (linkedCompanyId != null && linkedCompanyId.isNotEmpty) {
+      throw Exception(
+        'You are already linked to a delivery company. This request cannot be cancelled from here.',
+      );
+    }
+
+    final latestPendingRequest = await _client
+        .from('driver_company_requests')
+        .select('id, request_status')
+        .eq('driver_profile_id', user.id)
+        .eq('request_status', 'pending')
+        .order('created_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+
+    if (latestPendingRequest == null) {
+      throw Exception('No pending delivery company request was found.');
+    }
+
+    await _client
+        .from('driver_company_requests')
+        .delete()
+        .eq('id', latestPendingRequest['id'].toString());
+
+    final verificationStatus = driver?['verification_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    if (verificationStatus == 'pending') {
+      await _client
+          .from('drivers')
+          .update({'verification_status': null})
+          .eq('profile_id', user.id);
+    }
+  }
+
+  Future<void> startDriverShift({required String driverId}) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _updateDriverRowsWithSchemaFallback(
+      driverId: driverId,
+      requireApprovedStatus: true,
+      values: {
+        'availability_status': 'available',
+        'is_available': true,
+        'is_active_shift': true,
+        'shift_started_at': now,
+        'shift_ended_at': null,
+        'shift_start_at': now,
+        'shift_end_at': null,
+        'updated_at': now,
+      },
+    );
+  }
+
+  Future<void> endDriverShift({required String driverId}) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _updateDriverRowsWithSchemaFallback(
+      driverId: driverId,
+      values: {
+        'availability_status': 'unavailable',
+        'is_available': false,
+        'is_active_shift': false,
+        'shift_ended_at': now,
+        'shift_end_at': now,
+        'updated_at': now,
+      },
+    );
   }
 
   Future<List<Map<String, dynamic>>> getMerchantOrders() async {
@@ -681,29 +1130,26 @@ class AuthService {
       throw Exception('No active delivery company mapping found for merchant');
     }
 
-    await _client.from('orders').update({
-      'delivery_company_id': companyId,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    }).eq('id', orderId);
+    await _client
+        .from('orders')
+        .update({
+          'delivery_company_id': companyId,
+          'updated_at': DateTime.now().toUtc().toIso8601String(),
+        })
+        .eq('id', orderId);
   }
 
   Future<List<Map<String, dynamic>>> getCompanyAssignmentsOrders() async {
     final user = _client.auth.currentUser;
     if (user == null) throw Exception('User not logged in');
-    final companyId = user.id;
+    final companyIds = await _getCurrentCompanyIds();
 
-    await _backfillLegacyOrderCompanyLinks(companyId);
+    for (final companyId in companyIds) {
+      await _backfillLegacyOrderCompanyLinks(companyId);
+    }
+    unawaited(_touchDriverRequestBackfill());
 
-    final orderRows = await _client
-        .from('orders')
-        .select(
-          'id, merchant_id, branch_id, customer_profile_id, pickup_point_id, delivery_company_id, status, '
-          'tracking_code, customer_name, customer_phone, customer_address_text, created_at, updated_at',
-        )
-        .eq('delivery_company_id', companyId)
-        .order('created_at', ascending: false);
-
-    final orders = List<Map<String, dynamic>>.from(orderRows);
+    final orders = await _getCompanyOrderRows(companyIds);
     if (orders.isEmpty) return [];
 
     final orderIds = orders
@@ -717,7 +1163,7 @@ class AuthService {
         .select(
           'id, order_id, driver_id, assigned_at, accepted_at, completed_at',
         )
-        .eq('company_id', companyId)
+        .inFilter('company_id', companyIds)
         .inFilter('order_id', orderIds)
         .order('assigned_at', ascending: false);
 
@@ -742,6 +1188,30 @@ class AuthService {
       };
     } catch (_) {
       orderAddressByOrderId = {};
+    }
+
+    Map<String, Map<String, dynamic>> autoAssignmentEventByOrderId = {};
+    try {
+      final eventRows = await _client
+          .from('order_events')
+          .select('order_id, event_type, note, metadata, created_at')
+          .inFilter('order_id', orderIds)
+          .order('created_at', ascending: false);
+
+      for (final row in List<Map<String, dynamic>>.from(eventRows)) {
+        final orderId = row['order_id']?.toString();
+        if (orderId == null || orderId.isEmpty) continue;
+        final note = row['note']?.toString().toLowerCase() ?? '';
+        final metadataText = row['metadata']?.toString().toLowerCase() ?? '';
+        final looksLikeAutoAssignment =
+            note.contains('automatic') ||
+            note.contains('auto assignment') ||
+            metadataText.contains('assignment_status');
+        if (!looksLikeAutoAssignment) continue;
+        autoAssignmentEventByOrderId.putIfAbsent(orderId, () => row);
+      }
+    } catch (_) {
+      autoAssignmentEventByOrderId = {};
     }
 
     final merchantIds = orders
@@ -835,8 +1305,7 @@ class AuthService {
             await _client
                 .from('drivers')
                 .select('id, profile_id, company_id, vehicle_type')
-                .inFilter('id', driverIds)
-                .eq('company_id', companyId),
+                .inFilter('id', driverIds),
           );
 
     final driverById = {
@@ -874,65 +1343,130 @@ class AuthService {
       final hasValidDriver =
           rawDriverId != null && rawDriverId.isNotEmpty && driver != null;
       final driverProfileId = driver?['profile_id']?.toString();
-      final driverProfile =
-          driverProfileId == null ? null : profileById[driverProfileId];
+      final driverProfile = driverProfileId == null
+          ? null
+          : profileById[driverProfileId];
 
       final customerProfileId = order['customer_profile_id']?.toString();
-      final customerProfile =
-          customerProfileId == null ? null : profileById[customerProfileId];
+      final customerProfile = customerProfileId == null
+          ? null
+          : profileById[customerProfileId];
       final branch = branchById[order['branch_id']?.toString()];
       final pickup = pickupById[order['pickup_point_id']?.toString()];
-      final merchant = merchantById[_firstNonEmpty([
-        order['merchant_id'],
-        branch?['merchant_id'],
-      ])];
+      final merchant =
+          merchantById[_firstNonEmpty([
+            order['merchant_id'],
+            branch?['merchant_id'],
+          ])];
       final address = orderAddressByOrderId[orderId];
+      final assignmentStatus = order['assignment_status']?.toString();
+      final hasAssignmentMetadata =
+          order.containsKey('assignment_status') ||
+          order.containsKey('assignment_failure_reason') ||
+          order.containsKey('assigned_driver_id');
+      final autoAssignmentEvent = autoAssignmentEventByOrderId[orderId];
+      final autoAssignmentEventNote = autoAssignmentEvent?['note']?.toString();
+      final autoAssignmentReason =
+          order['assignment_failure_reason']?.toString() ??
+          autoAssignmentEventNote;
+      final eventSuggestsFailure =
+          autoAssignmentEventNote?.toLowerCase().contains('failed') == true ||
+          autoAssignmentEvent?['metadata']?.toString().toLowerCase().contains(
+                'assignment_failed',
+              ) ==
+              true;
 
       return {
         'assignment_id': assignment?['id'],
         'order_id': orderId,
         'tracking_code': _firstNonEmpty([order['tracking_code'], orderId]),
         'status': order['status']?.toString() ?? 'created',
+        'assignment_status': assignmentStatus ?? 'pending_assignment',
+        'has_assignment_metadata': hasAssignmentMetadata,
+        'auto_assignment_failed':
+            const {
+              'assignment_failed',
+              'needs_manual_assignment',
+              'unassigned',
+            }.contains(assignmentStatus?.trim().toLowerCase() ?? '') ||
+            eventSuggestsFailure,
+        'auto_assignment_reason': autoAssignmentReason,
         'pickup_name':
             _firstNonEmpty([pickup?['name'], branch?['name']]) ??
-                'Pickup point',
+            'Pickup point',
         'pickup_address':
             _firstNonEmpty([
               pickup?['address_text'],
               branch?['address_text'],
             ]) ??
-                'No pickup address',
+            'No pickup address',
         'merchant_name':
             _firstNonEmpty([merchant?['name']]) ?? 'Unknown merchant',
         'driver_id': hasValidDriver ? rawDriverId : null,
-        'driver_name':
-            hasValidDriver ? (driverProfile?['full_name']?.toString()) : null,
-        'driver_phone':
-            hasValidDriver ? (driverProfile?['phone']?.toString()) : null,
-        'vehicle_type':
-            hasValidDriver ? (driver?['vehicle_type']?.toString()) : null,
+        'driver_name': hasValidDriver
+            ? (driverProfile?['full_name']?.toString())
+            : null,
+        'driver_phone': hasValidDriver
+            ? (driverProfile?['phone']?.toString())
+            : null,
+        'vehicle_type': hasValidDriver
+            ? (driver['vehicle_type']?.toString())
+            : null,
         'accepted_at': assignment?['accepted_at'],
         'customer_name':
             _firstNonEmpty([
               customerProfile?['full_name'],
               order['customer_name'],
             ]) ??
-                'Unknown customer',
+            'Unknown customer',
         'customer_phone':
             _firstNonEmpty([
               customerProfile?['phone'],
               order['customer_phone'],
             ]) ??
-                'No phone',
+            'No phone',
         'dropoff_address':
             _firstNonEmpty([
               address?['dropoff_address_text'],
               address?['dropoff_address'],
               order['customer_address_text'],
             ]) ??
-                'No dropoff address',
+            'No dropoff address',
       };
     }).toList();
+  }
+
+  Future<List<Map<String, dynamic>>> _getCompanyOrderRows(
+    List<String> companyIds,
+  ) async {
+    try {
+      final orderRows = await _client
+          .from('orders')
+          .select(
+            'id, merchant_id, branch_id, customer_profile_id, pickup_point_id, delivery_company_id, status, '
+            'tracking_code, customer_name, customer_phone, customer_address_text, '
+            'assignment_status, assigned_driver_id, assignment_failure_reason, '
+            'created_at, updated_at',
+          )
+          .inFilter('delivery_company_id', companyIds)
+          .order('created_at', ascending: false);
+
+      return List<Map<String, dynamic>>.from(orderRows);
+    } on PostgrestException catch (error) {
+      if (!_isMissingOrderAssignmentMetadataError(error)) rethrow;
+
+      final orderRows = await _client
+          .from('orders')
+          .select(
+            'id, merchant_id, branch_id, customer_profile_id, pickup_point_id, delivery_company_id, status, '
+            'tracking_code, customer_name, customer_phone, customer_address_text, '
+            'created_at, updated_at',
+          )
+          .inFilter('delivery_company_id', companyIds)
+          .order('created_at', ascending: false);
+
+      return List<Map<String, dynamic>>.from(orderRows);
+    }
   }
 
   Future<void> _backfillLegacyOrderCompanyLinks(String companyId) async {
@@ -951,10 +1485,14 @@ class AuthService {
             .toList();
 
         if (orderIds.isNotEmpty) {
-          await _client.from('orders').update({
-            'delivery_company_id': companyId,
-            'updated_at': DateTime.now().toUtc().toIso8601String(),
-          }).inFilter('id', orderIds).isFilter('delivery_company_id', null);
+          await _client
+              .from('orders')
+              .update({
+                'delivery_company_id': companyId,
+                'updated_at': DateTime.now().toUtc().toIso8601String(),
+              })
+              .inFilter('id', orderIds)
+              .isFilter('delivery_company_id', null);
         }
       } catch (_) {}
 
@@ -1008,29 +1546,98 @@ class AuthService {
 
       if (safeMerchantIds.isEmpty) return;
 
-      await _client.from('orders').update({
-        'delivery_company_id': companyId,
-        'updated_at': DateTime.now().toUtc().toIso8601String(),
-      }).inFilter('merchant_id', safeMerchantIds).isFilter(
-            'delivery_company_id',
-            null,
-          );
+      await _client
+          .from('orders')
+          .update({
+            'delivery_company_id': companyId,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          })
+          .inFilter('merchant_id', safeMerchantIds)
+          .isFilter('delivery_company_id', null);
     } catch (_) {}
   }
 
-  Future<List<Map<String, dynamic>>> getApprovedDriversForCurrentCompany() async {
+  Future<List<Map<String, dynamic>>>
+  getApprovedDriversForCurrentCompany() async {
     final user = _client.auth.currentUser;
     if (user == null) throw Exception('User not logged in');
+    final companyIds = await _getCurrentCompanyIds();
 
-    final driversRows = List<Map<String, dynamic>>.from(
+    final driverById = <String, Map<String, dynamic>>{};
+
+    final linkedDriverRows = List<Map<String, dynamic>>.from(
       await _client
           .from('drivers')
           .select(
             'id, profile_id, company_id, vehicle_type, verification_status',
           )
-          .eq('company_id', user.id)
+          .inFilter('company_id', companyIds)
           .eq('verification_status', 'approved'),
     );
+
+    for (final row in linkedDriverRows) {
+      final id = row['id']?.toString();
+      if (id != null && id.isNotEmpty) {
+        driverById[id] = row;
+      }
+    }
+
+    try {
+      final approvedRequests = List<Map<String, dynamic>>.from(
+        await _client
+            .from('driver_company_requests')
+            .select('driver_profile_id, company_id, request_status')
+            .inFilter('company_id', companyIds)
+            .eq('request_status', 'approved'),
+      );
+
+      final requestProfileIds = approvedRequests
+          .map((row) => row['driver_profile_id']?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty)
+          .toSet()
+          .toList();
+
+      if (requestProfileIds.isNotEmpty) {
+        final requestedDriverRows = <Map<String, dynamic>>[
+          ...List<Map<String, dynamic>>.from(
+            await _client
+                .from('drivers')
+                .select(
+                  'id, profile_id, company_id, vehicle_type, verification_status',
+                )
+                .inFilter('profile_id', requestProfileIds),
+          ),
+          ...List<Map<String, dynamic>>.from(
+            await _client
+                .from('drivers')
+                .select(
+                  'id, profile_id, company_id, vehicle_type, verification_status',
+                )
+                .inFilter('id', requestProfileIds),
+          ),
+        ];
+
+        final requestCompanyByProfileId = {
+          for (final row in approvedRequests)
+            if (row['driver_profile_id'] != null)
+              row['driver_profile_id'].toString(): row['company_id']
+                  ?.toString(),
+        };
+
+        for (final row in requestedDriverRows) {
+          final id = row['id']?.toString();
+          final profileId = row['profile_id']?.toString();
+          if (id == null || id.isEmpty) continue;
+          final requestCompanyId = requestCompanyByProfileId[profileId];
+          driverById.putIfAbsent(id, () {
+            return {...row, '_approved_request_company_id': requestCompanyId};
+          });
+        }
+      }
+    } catch (_) {}
+
+    final driversRows = driverById.values.toList();
 
     if (driversRows.isEmpty) return [];
 
@@ -1070,11 +1677,86 @@ class AuthService {
             'full_name': profile?['full_name'] ?? 'Driver',
             'phone': profile?['phone'] ?? '-',
             'vehicle_type': row['vehicle_type']?.toString(),
-            'verification_status': row['verification_status']?.toString(),
+            'verification_status': row['_approved_request_company_id'] != null
+                ? 'approved'
+                : row['verification_status']?.toString(),
           };
         })
         .where((row) => row.isNotEmpty)
         .toList();
+  }
+
+  Future<void> removeDriverFromCurrentCompany({
+    required String driverId,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) throw Exception('User not logged in');
+    final companyIds = await _getCurrentCompanyIds();
+
+    final driver = await _client
+        .from('drivers')
+        .select('id, profile_id, company_id')
+        .eq('id', driverId)
+        .maybeSingle();
+
+    if (driver == null) {
+      throw Exception('Driver not found');
+    }
+
+    final companyId = driver['company_id']?.toString();
+    if (companyId == null || companyId.isEmpty) {
+      throw Exception('Driver is not linked to a delivery company');
+    }
+    _assertCompanyAccess(companyId: companyId, allowedCompanyIds: companyIds);
+
+    await _updateDriverRowsWithSchemaFallback(
+      driverId: driverId,
+      values: {
+        'company_id': null,
+        'verification_status': 'rejected',
+        'availability_status': 'unavailable',
+        'is_available': false,
+        'is_active_shift': false,
+        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
+      },
+    );
+
+    final profileId = driver['profile_id']?.toString();
+    if (profileId != null && profileId.isNotEmpty) {
+      try {
+        await _client
+            .from('driver_company_requests')
+            .update({
+              'request_status': 'rejected',
+              'updated_at': DateTime.now().toUtc().toIso8601String(),
+            })
+            .eq('driver_profile_id', profileId)
+            .eq('company_id', companyId)
+            .eq('request_status', 'approved');
+      } catch (_) {}
+    }
+  }
+
+  Future<bool> _hasApprovedDriverCompanyRequest({
+    required String? driverProfileId,
+    required String companyId,
+  }) async {
+    if (driverProfileId == null || driverProfileId.isEmpty) return false;
+
+    try {
+      final request = await _client
+          .from('driver_company_requests')
+          .select('id')
+          .eq('driver_profile_id', driverProfileId)
+          .eq('company_id', companyId)
+          .eq('request_status', 'approved')
+          .limit(1)
+          .maybeSingle();
+
+      return request != null;
+    } catch (_) {
+      return false;
+    }
   }
 
   Future<void> assignOrderToDriver({
@@ -1083,6 +1765,7 @@ class AuthService {
   }) async {
     final user = _client.auth.currentUser;
     if (user == null) throw Exception('User not logged in');
+    final companyIds = await _getCurrentCompanyIds();
 
     final orderRows = await _client
         .from('orders')
@@ -1096,20 +1779,21 @@ class AuthService {
     }
 
     final order = orderList.first;
-    final currentStatus =
-        (order['status']?.toString() ?? 'created').toLowerCase();
+    final currentStatus = (order['status']?.toString() ?? 'created')
+        .toLowerCase();
     final orderCompanyId = order['delivery_company_id']?.toString();
 
     if (orderCompanyId == null || orderCompanyId.isEmpty) {
       throw Exception('Order has no delivery company assigned');
     }
-    if (orderCompanyId != user.id) {
-      throw Exception('Order does not belong to your delivery company');
-    }
+    _assertCompanyAccess(
+      companyId: orderCompanyId,
+      allowedCompanyIds: companyIds,
+    );
 
     final driverRows = await _client
         .from('drivers')
-        .select('id, company_id, profile_id')
+        .select('id, company_id, profile_id, verification_status')
         .eq('id', driverId)
         .limit(1);
 
@@ -1120,8 +1804,33 @@ class AuthService {
 
     final driver = driverList.first;
     final driverCompanyId = driver['company_id']?.toString();
-    if (driverCompanyId == null || driverCompanyId != orderCompanyId) {
+    final driverProfileId = driver['profile_id']?.toString();
+    final driverStatus = driver['verification_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+
+    final hasApprovedCompanyRequest = await _hasApprovedDriverCompanyRequest(
+      driverProfileId: driverProfileId,
+      companyId: orderCompanyId,
+    );
+
+    if (driverCompanyId != orderCompanyId && !hasApprovedCompanyRequest) {
       throw Exception('Cannot assign order to a driver from another company');
+    }
+
+    if (driverStatus != 'approved' && !hasApprovedCompanyRequest) {
+      throw Exception('Manual fallback can only use approved drivers');
+    }
+
+    if (driverCompanyId != orderCompanyId || driverStatus != 'approved') {
+      await _client
+          .from('drivers')
+          .update({
+            'company_id': orderCompanyId,
+            'verification_status': 'approved',
+          })
+          .eq('id', driverId);
     }
 
     if (_companyTerminalStatuses.contains(currentStatus)) {
@@ -1135,15 +1844,17 @@ class AuthService {
     final existingAssignmentRows = await _client
         .from('assignments')
         .select('id, order_id, driver_id')
-        .eq('company_id', user.id)
+        .eq('company_id', orderCompanyId)
         .eq('order_id', orderId)
         .order('assigned_at', ascending: false)
         .limit(1);
 
-    final existingAssignments =
-        List<Map<String, dynamic>>.from(existingAssignmentRows);
-    final existingAssignment =
-        existingAssignments.isEmpty ? null : existingAssignments.first;
+    final existingAssignments = List<Map<String, dynamic>>.from(
+      existingAssignmentRows,
+    );
+    final existingAssignment = existingAssignments.isEmpty
+        ? null
+        : existingAssignments.first;
 
     final previousDriverId = existingAssignment?['driver_id']?.toString();
     if (previousDriverId == driverId && currentStatus == 'assigned') {
@@ -1163,7 +1874,7 @@ class AuthService {
           .eq('id', existingAssignment['id'].toString());
     } else {
       await _client.from('assignments').insert({
-        'company_id': user.id,
+        'company_id': orderCompanyId,
         'order_id': orderId,
         'driver_id': driverId,
         'assigned_at': assignedAt,
@@ -1173,14 +1884,17 @@ class AuthService {
     }
 
     const nextStatus = 'assigned';
-    await _client
-        .from('orders')
-        .update({
-          'status': nextStatus,
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .eq('id', orderId)
-        .eq('delivery_company_id', orderCompanyId);
+    await _updateOrderForCompany(
+      orderId: orderId,
+      companyId: orderCompanyId,
+      values: {
+        'status': nextStatus,
+        'assignment_status': 'assigned',
+        'assigned_driver_id': driverId,
+        'assignment_failure_reason': null,
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+    );
 
     await _client.from('order_events').insert({
       'order_id': orderId,
@@ -1190,11 +1904,10 @@ class AuthService {
     });
   }
 
-  Future<void> unassignOrderFromDriver({
-    required String orderId,
-  }) async {
+  Future<void> unassignOrderFromDriver({required String orderId}) async {
     final user = _client.auth.currentUser;
     if (user == null) throw Exception('User not logged in');
+    final companyIds = await _getCurrentCompanyIds();
 
     final orderRows = await _client
         .from('orders')
@@ -1208,16 +1921,17 @@ class AuthService {
     }
 
     final order = orderList.first;
-    final currentStatus =
-        (order['status']?.toString() ?? 'created').toLowerCase();
+    final currentStatus = (order['status']?.toString() ?? 'created')
+        .toLowerCase();
     final orderCompanyId = order['delivery_company_id']?.toString();
 
     if (orderCompanyId == null || orderCompanyId.isEmpty) {
       throw Exception('Order has no delivery company assigned');
     }
-    if (orderCompanyId != user.id) {
-      throw Exception('Order does not belong to your delivery company');
-    }
+    _assertCompanyAccess(
+      companyId: orderCompanyId,
+      allowedCompanyIds: companyIds,
+    );
     if (_companyTerminalStatuses.contains(currentStatus)) {
       throw Exception('Cannot unassign a closed or in-progress order');
     }
@@ -1225,7 +1939,7 @@ class AuthService {
     final assignmentRows = await _client
         .from('assignments')
         .select('id, driver_id')
-        .eq('company_id', user.id)
+        .eq('company_id', orderCompanyId)
         .eq('order_id', orderId)
         .order('assigned_at', ascending: false)
         .limit(1);
@@ -1252,14 +1966,17 @@ class AuthService {
         })
         .eq('id', assignment['id'].toString());
 
-    await _client
-        .from('orders')
-        .update({
-          'status': 'pending',
-          'updated_at': DateTime.now().toUtc().toIso8601String(),
-        })
-        .eq('id', orderId)
-        .eq('delivery_company_id', orderCompanyId);
+    await _updateOrderForCompany(
+      orderId: orderId,
+      companyId: orderCompanyId,
+      values: {
+        'status': 'pending',
+        'assignment_status': 'needs_manual_assignment',
+        'assigned_driver_id': null,
+        'assignment_failure_reason': 'Driver unassigned by delivery company',
+        'updated_at': DateTime.now().toUtc().toIso8601String(),
+      },
+    );
 
     await _client.from('order_events').insert({
       'order_id': orderId,
@@ -1269,6 +1986,50 @@ class AuthService {
     });
   }
 
+  Future<void> _updateOrderForCompany({
+    required String orderId,
+    required String companyId,
+    required Map<String, dynamic> values,
+  }) async {
+    try {
+      await _client
+          .from('orders')
+          .update(values)
+          .eq('id', orderId)
+          .eq('delivery_company_id', companyId);
+    } on PostgrestException catch (error) {
+      if (!_isMissingOrderAssignmentMetadataError(error)) rethrow;
+
+      final legacyValues = Map<String, dynamic>.from(values)
+        ..remove('assignment_status')
+        ..remove('assigned_driver_id')
+        ..remove('assignment_failure_reason');
+
+      await _client
+          .from('orders')
+          .update(legacyValues)
+          .eq('id', orderId)
+          .eq('delivery_company_id', companyId);
+    }
+  }
+
+  bool _isMissingOrderAssignmentMetadataError(PostgrestException error) {
+    final message = error.message.toLowerCase();
+    final code = error.code?.toLowerCase();
+    final isMissingColumn =
+        code == '42703' ||
+        code == 'pgrst204' ||
+        message.contains('does not exist') ||
+        message.contains('could not find');
+    if (!isMissingColumn) return false;
+
+    return const [
+      'assignment_status',
+      'assigned_driver_id',
+      'assignment_failure_reason',
+    ].any(message.contains);
+  }
+
   Future<Map<String, dynamic>?> getDriverLocationByDriverId(
     String driverId,
   ) async {
@@ -1276,6 +2037,8 @@ class AuthService {
         .from('driver_locations')
         .select()
         .eq('driver_id', driverId)
+        .order('updated_at', ascending: false)
+        .limit(1)
         .maybeSingle();
 
     return response;
@@ -1283,20 +2046,65 @@ class AuthService {
 
   Future<void> upsertDriverLocation({
     required String driverId,
-    String? city,
     double? lat,
     double? lng,
+    double? heading,
+    double? speed,
   }) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    if (lat == null || lng == null) {
+      await touchDriverLocationPing(driverId: driverId);
+      return;
+    }
+
     await _client.from('driver_locations').upsert({
       'driver_id': driverId,
-      'city': city,
       'lat': lat,
       'lng': lng,
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'heading': heading,
+      'speed': speed,
+      'last_location_ping_at': now,
+      'updated_at': now,
     }, onConflict: 'driver_id');
+
+    await _updateDriverRowsWithSchemaFallback(
+      driverId: driverId,
+      values: {
+        'current_location_lat': lat,
+        'current_location_lng': lng,
+        'last_location_ping_at': now,
+        'updated_at': now,
+      },
+    );
   }
 
+  Future<void> touchDriverLocationPing({required String driverId}) async {
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _client
+        .from('driver_locations')
+        .update({'last_location_ping_at': now, 'updated_at': now})
+        .eq('driver_id', driverId);
+
+    await _updateDriverRowsWithSchemaFallback(
+      driverId: driverId,
+      values: {'last_location_ping_at': now, 'updated_at': now},
+    );
+  }
+
+  Future<void> _touchDriverRequestBackfill() async {}
+
   User? get currentUser => _client.auth.currentUser;
+
+  String _functionErrorMessage(dynamic payload, {required String fallback}) {
+    if (payload is! Map) return fallback;
+    final error = payload['error']?.toString().trim();
+    final reason = payload['reason']?.toString().trim();
+    // Prefer detailed backend reason when available (eg. Resend status/body),
+    // otherwise fall back to the generic user-facing error string.
+    if (reason != null && reason.isNotEmpty) return reason;
+    if (error != null && error.isNotEmpty) return error;
+    return fallback;
+  }
 
   String? _firstNonEmpty(List<dynamic> values) {
     for (final value in values) {
@@ -1305,6 +2113,88 @@ class AuthService {
       if (text.isNotEmpty && text != '-') {
         return text;
       }
+    }
+    return null;
+  }
+
+  String _normalizeVehicleType(String vehicleType) {
+    final normalized = vehicleType.trim().toLowerCase();
+    if (normalized == 'car' || normalized == 'van') return normalized;
+    return 'motorcycle';
+  }
+
+  Future<void> _upsertDriverWithSchemaFallback(Map<String, dynamic> payload) async {
+    final mutablePayload = Map<String, dynamic>.from(payload);
+
+    // Retry a few times in case the local code has newer columns than the DB.
+    for (var attempt = 0; attempt < 8; attempt++) {
+      try {
+        await _client.from('drivers').upsert(
+          mutablePayload,
+          onConflict: 'id',
+        );
+        return;
+      } on PostgrestException catch (error) {
+        final missingColumn = _extractMissingDriversColumn(error);
+        if (missingColumn == null || !mutablePayload.containsKey(missingColumn)) {
+          rethrow;
+        }
+        mutablePayload.remove(missingColumn);
+      }
+    }
+
+    throw Exception('Failed to create driver profile due to schema mismatch.');
+  }
+
+  Future<void> _updateDriverRowsWithSchemaFallback({
+    required Map<String, dynamic> values,
+    String? driverId,
+    String? profileId,
+    bool requireApprovedStatus = false,
+  }) async {
+    final mutableValues = Map<String, dynamic>.from(values);
+
+    for (var attempt = 0; attempt < 8; attempt++) {
+      try {
+        var query = _client.from('drivers').update(mutableValues);
+        if (driverId != null && driverId.isNotEmpty) {
+          query = query.eq('id', driverId);
+        }
+        if (profileId != null && profileId.isNotEmpty) {
+          query = query.eq('profile_id', profileId);
+        }
+        if (requireApprovedStatus) {
+          query = query.eq('verification_status', 'approved');
+        }
+        await query;
+        return;
+      } on PostgrestException catch (error) {
+        final missingColumn = _extractMissingDriversColumn(error);
+        if (missingColumn == null || !mutableValues.containsKey(missingColumn)) {
+          rethrow;
+        }
+        mutableValues.remove(missingColumn);
+      }
+    }
+
+    throw Exception('Failed to update driver row due to schema mismatch.');
+  }
+
+  String? _extractMissingDriversColumn(PostgrestException error) {
+    final message = error.message.toLowerCase();
+    final code = error.code?.toLowerCase();
+    final isMissingColumn =
+        code == '42703' ||
+        code == 'pgrst204' ||
+        message.contains('does not exist') ||
+        message.contains('could not find');
+    if (!isMissingColumn) return null;
+
+    final singleQuoted = RegExp(r"'([^']+)'").allMatches(message).toList();
+    for (final match in singleQuoted) {
+      final value = match.group(1);
+      if (value == null || value == 'drivers') continue;
+      return value;
     }
     return null;
   }

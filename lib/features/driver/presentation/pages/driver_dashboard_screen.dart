@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'package:wasle/core/debug/automation_test_logger.dart';
 import 'package:wasle/core/ui/ui.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
 import 'package:wasle/features/driver/data/driver_deliveries_repository.dart';
+import 'package:wasle/features/driver/data/driver_live_location_service.dart';
 import 'package:wasle/features/driver/presentation/pages/my_deliveries_screen.dart';
 import 'driver_profile_screen.dart';
 
@@ -15,10 +17,16 @@ class DriverDashboardScreen extends StatefulWidget {
 
 class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   final AuthService _authService = AuthService();
-  final DriverDeliveriesRepository _deliveriesRepository = DriverDeliveriesRepository();
+  final DriverDeliveriesRepository _deliveriesRepository =
+      DriverDeliveriesRepository();
+  final DriverLiveLocationService _liveLocationService =
+      DriverLiveLocationService.instance;
 
   bool isLoading = true;
+  bool isUpdatingAvailability = false;
   String? errorText;
+  String? latestRequestStatus;
+  String? locationPermissionMessage;
   int assignedCount = 0;
   int activeCount = 0;
   int completedCount = 0;
@@ -26,6 +34,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   Map<String, dynamic>? profileData;
   Map<String, dynamic>? driverData;
   Map<String, dynamic>? companyData;
+  Map<String, dynamic>? locationData;
 
   @override
   void initState() {
@@ -38,6 +47,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
       final user = _authService.currentUser;
 
       if (user == null) {
+        if (!mounted) return;
         setState(() {
           isLoading = false;
           errorText = 'User not found';
@@ -47,12 +57,20 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
       final profile = await _authService.getProfileById(user.id);
       final driver = await _authService.getDriverByProfileId(user.id);
+      final requestStatus = await _authService.getLatestDriverRequestStatus();
 
       Map<String, dynamic>? company;
-      final companyId = driver?['company_id'];
+      Map<String, dynamic>? location;
 
-      if (companyId != null) {
-        company = await _authService.getCompanyById(companyId.toString());
+      final driverId = driver?['id']?.toString();
+      final companyId = driver?['company_id']?.toString();
+
+      if (driverId != null && driverId.isNotEmpty) {
+        location = await _authService.getDriverLocationByDriverId(driverId);
+      }
+
+      if (companyId != null && companyId.isNotEmpty) {
+        company = await _authService.getCompanyById(companyId);
       }
 
       try {
@@ -72,9 +90,29 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         profileData = profile;
         driverData = driver;
         companyData = company;
+        locationData = location;
+        latestRequestStatus = requestStatus;
         isLoading = false;
         errorText = null;
       });
+
+      await AutomationTestLogger.log(
+        'driver_dashboard',
+        'Driver dashboard state loaded',
+        data: {
+          'current_user_id': user.id,
+          'driver_row_id': driverId,
+          'profile_id': driver?['profile_id']?.toString(),
+          'company_id': companyId,
+          'verification_status': driver?['verification_status']?.toString(),
+          'availability_status': driver?['availability_status']?.toString(),
+          'can_start_working': _canStartWorking,
+          'needs_company_join_request': _needsCompanyJoinRequest,
+          'latest_request_status': requestStatus,
+        },
+      );
+
+      await _syncLiveLocationTracking();
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -84,29 +122,222 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
     }
   }
 
+  bool get _hasLinkedCompany {
+    final companyId = driverData?['company_id']?.toString();
+    return companyId != null && companyId.isNotEmpty;
+  }
+
+  bool get _isDriverApproved =>
+      driverData?['verification_status']?.toString().trim().toLowerCase() ==
+      'approved';
+
+  bool get _hasPendingCompanyRequest =>
+      latestRequestStatus?.trim().toLowerCase() == 'pending';
+
+  bool get _needsCompanyJoinRequest =>
+      !_hasLinkedCompany && !_hasPendingCompanyRequest;
+
+  bool get _canStartWorking => _hasLinkedCompany && _isDriverApproved;
+
+  bool get _canUseCompanyDriverActions => _canStartWorking;
+
+  bool get _isAvailableForAssignment =>
+      driverData?['availability_status']?.toString().trim().toLowerCase() ==
+      'available';
+
+  bool get _isActiveShift => driverData?['is_active_shift'] == true;
+
+  String get _companyLinkStateLabel {
+    if (_hasLinkedCompany && _isDriverApproved) return 'Approved';
+    if (_hasPendingCompanyRequest) return 'Pending request';
+    if (_needsCompanyJoinRequest) return 'Not linked';
+    return driverData?['verification_status']?.toString() ?? 'Unknown';
+  }
+
+  String get _companyLinkStateMessage {
+    if (_hasLinkedCompany && _isDriverApproved) {
+      return 'You are linked to ${companyData?['name'] ?? 'your delivery company'} and ready to work.';
+    }
+    if (_hasPendingCompanyRequest) {
+      return 'Your delivery company request is still under review.';
+    }
+    return 'You are not linked to a delivery company yet.';
+  }
+
+  String get _availabilityLabel =>
+      _isAvailableForAssignment && _isActiveShift ? 'Available' : 'Unavailable';
+
+  String get _locationReadinessLabel {
+    final lat = locationData?['lat'] ?? driverData?['current_location_lat'];
+    final lng = locationData?['lng'] ?? driverData?['current_location_lng'];
+    if (lat == null || lng == null) return 'Missing location';
+    return 'Location saved';
+  }
+
+  String get _locationSubtitle {
+    final updatedAt =
+        locationData?['last_location_ping_at']?.toString() ??
+        locationData?['updated_at']?.toString() ??
+        driverData?['last_location_ping_at']?.toString();
+    if (updatedAt == null || updatedAt.isEmpty) {
+      return 'No live location synced yet.';
+    }
+    return 'Last sync ${_ageLabelFromUtc(updatedAt)}';
+  }
+
+  String _ageLabelFromUtc(String utcIso) {
+    final parsed = DateTime.tryParse(utcIso)?.toUtc();
+    if (parsed == null) return 'unknown';
+    final diff = DateTime.now().toUtc().difference(parsed);
+    if (diff.inMinutes < 1) return 'just now';
+    if (diff.inHours < 1) return '${diff.inMinutes} min ago';
+    return '${diff.inHours} h ago';
+  }
+
   void _openProfile() {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => const DriverProfileScreen(),
-      ),
-    );
+      MaterialPageRoute(builder: (_) => const DriverProfileScreen()),
+    ).then((_) => _loadDashboard());
   }
 
   void _openMyDeliveries() {
     Navigator.push(
       context,
-      MaterialPageRoute(
-        builder: (_) => const MyDeliveriesScreen(),
-      ),
+      MaterialPageRoute(builder: (_) => const MyDeliveriesScreen()),
     ).then((_) => _loadDashboard());
+  }
+
+  Future<void> _openCompanyJoinFlow() async {
+    final route = _hasPendingCompanyRequest
+        ? '/waiting-approval'
+        : '/select-company';
+    await Navigator.pushNamed(context, route);
+    await _loadDashboard();
+  }
+
+  void _showCompanyLinkRequiredMessage() {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(_companyLinkStateMessage)));
+  }
+
+  Future<void> _syncLiveLocationTracking() async {
+    final driverId = driverData?['id']?.toString();
+    if (driverId == null || driverId.isEmpty) return;
+
+    _liveLocationService.configure(driverId);
+
+    if (!_canUseCompanyDriverActions ||
+        !_isAvailableForAssignment ||
+        !_isActiveShift) {
+      await _liveLocationService.stopTracking();
+      return;
+    }
+
+    final started = await _liveLocationService.startTracking(
+      driverId: driverId,
+      requestPermissionIfNeeded: true,
+      syncImmediately: true,
+    );
+    if (!started) {
+      await _authService.endDriverShift(driverId: driverId);
+      if (!mounted) return;
+      setState(() {
+        driverData = {
+          ...?driverData,
+          'availability_status': 'unavailable',
+          'is_available': false,
+          'is_active_shift': false,
+        };
+        locationPermissionMessage =
+            'Location permission or device location is required before starting a shift.';
+      });
+      return;
+    }
+
+    final latestLocation = await _authService.getDriverLocationByDriverId(
+      driverId,
+    );
+    if (!mounted) return;
+    setState(() {
+      locationData = latestLocation;
+    });
+  }
+
+  Future<void> _setAvailability(bool shouldBeAvailable) async {
+    final driverId = driverData?['id']?.toString();
+    if (driverId == null || driverId.isEmpty) return;
+
+    if (shouldBeAvailable && !_canStartWorking) {
+      _showCompanyLinkRequiredMessage();
+      return;
+    }
+
+    try {
+      setState(() {
+        isUpdatingAvailability = true;
+        locationPermissionMessage = null;
+      });
+
+      if (shouldBeAvailable) {
+        final started = await _liveLocationService.startTracking(
+          driverId: driverId,
+          requestPermissionIfNeeded: true,
+          syncImmediately: true,
+        );
+        if (!started) {
+          if (!mounted) return;
+          setState(() {
+            locationPermissionMessage =
+                'Location permission or device location is required before starting a shift.';
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Enable location permission to start your shift.'),
+            ),
+          );
+          return;
+        }
+        await _authService.startDriverShift(driverId: driverId);
+      } else {
+        await _authService.endDriverShift(driverId: driverId);
+        await _liveLocationService.stopTracking();
+      }
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(shouldBeAvailable ? 'Shift started' : 'Shift ended'),
+        ),
+      );
+      await _loadDashboard();
+    } catch (e) {
+      if (shouldBeAvailable) {
+        await _liveLocationService.stopTracking();
+      }
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Failed to update working mode: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          isUpdatingAvailability = false;
+        });
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     final fullName = profileData?['full_name']?.toString() ?? 'Driver';
-    final companyName = companyData?['name']?.toString() ?? 'Not assigned';
-    final verification = driverData?['verification_status']?.toString() ?? 'pending';
+    final companyName = companyData?['name']?.toString() ?? 'Not linked yet';
 
     return Scaffold(
       appBar: AppBar(
@@ -122,191 +353,178 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
       body: isLoading
           ? const Center(child: CircularProgressIndicator())
           : errorText != null
-              ? EmptyStateWidget(
-                  icon: Icons.error_outline_rounded,
-                  title: 'Unable to load dashboard',
-                  message: errorText!,
-                  action: SecondaryButton(
-                    label: 'Try Again',
-                    isExpanded: false,
-                    onPressed: _loadDashboard,
-                  ),
-                )
-              : RefreshIndicator(
-                  onRefresh: _loadDashboard,
-                  child: ListView(
-                    padding: const EdgeInsets.all(AppSpacing.xl),
-                    children: [
-                      Container(
-                        padding: const EdgeInsets.all(AppSpacing.lg),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(
-                            colors: [AppColors.primary, AppColors.primaryDark],
-                            begin: Alignment.topLeft,
-                            end: Alignment.bottomRight,
-                          ),
-                          borderRadius: BorderRadius.circular(26),
-                          boxShadow: const [
-                            BoxShadow(
-                              color: Color(0x331D4ED8),
-                              blurRadius: 24,
-                              offset: Offset(0, 14),
-                            ),
-                          ],
+          ? EmptyStateWidget(
+              icon: Icons.error_outline_rounded,
+              title: 'Unable to load dashboard',
+              message: errorText!,
+              action: SecondaryButton(
+                label: 'Try Again',
+                isExpanded: false,
+                onPressed: _loadDashboard,
+              ),
+            )
+          : RefreshIndicator(
+              onRefresh: _loadDashboard,
+              child: ListView(
+                padding: const EdgeInsets.all(AppSpacing.xl),
+                children: [
+                  InfoCard(
+                    title: 'Welcome back, $fullName',
+                    subtitle: companyName,
+                    leading: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: AppColors.primarySoft,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.local_shipping_outlined,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    child: Wrap(
+                      spacing: AppSpacing.sm,
+                      runSpacing: AppSpacing.sm,
+                      children: [
+                        StatusChip(
+                          label: '$assignedCount assigned',
+                          tone: StatusChip.fromStatus('info'),
                         ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              'DRIVER PORTAL',
-                              style: AppTextStyles.label.copyWith(
-                                color: Colors.white.withValues(alpha: 0.85),
-                                letterSpacing: 0.7,
-                              ),
-                            ),
-                            const SizedBox(height: AppSpacing.xs),
-                            Text(
-                              'Welcome back, $fullName',
-                              style: AppTextStyles.heading1.copyWith(color: Colors.white),
-                            ),
-                            const SizedBox(height: AppSpacing.xxs),
-                            Text(
-                              companyName,
+                        StatusChip(
+                          label: '$activeCount active',
+                          tone: StatusChip.fromStatus('warning'),
+                        ),
+                        StatusChip(
+                          label: '$completedCount completed',
+                          tone: StatusChip.fromStatus('success'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                  InfoCard(
+                    title: 'Delivery Company Access',
+                    subtitle: _companyLinkStateMessage,
+                    leading: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: AppColors.primarySoft,
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: const Icon(
+                        Icons.apartment_rounded,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        _MetaRow(
+                          label: 'Link status',
+                          value: _companyLinkStateLabel,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        _MetaRow(
+                          label: 'Latest request',
+                          value: latestRequestStatus ?? '-',
+                        ),
+                        if (!_canStartWorking) ...[
+                          const SizedBox(height: AppSpacing.md),
+                          PrimaryButton(
+                            label: _hasPendingCompanyRequest
+                                ? 'Open Approval Status'
+                                : 'Request to Join a Delivery Company',
+                            icon: _hasPendingCompanyRequest
+                                ? Icons.hourglass_top_rounded
+                                : Icons.send_rounded,
+                            onPressed: _openCompanyJoinFlow,
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                  const SectionHeader(
+                    title: 'Working Mode',
+                    subtitle:
+                        'Company link, availability, and location readiness',
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  InfoCard(
+                    title: 'Working State',
+                    child: Column(
+                      children: [
+                        _MetaRow(
+                          label: 'Availability',
+                          value: _availabilityLabel,
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        _MetaRow(
+                          label: 'Active shift',
+                          value: _isActiveShift ? 'Active' : 'Inactive',
+                        ),
+                        const SizedBox(height: AppSpacing.sm),
+                        _MetaRow(
+                          label: 'Location',
+                          value: _locationReadinessLabel,
+                        ),
+                        const SizedBox(height: AppSpacing.xs),
+                        Align(
+                          alignment: Alignment.centerLeft,
+                          child: Text(
+                            _locationSubtitle,
+                            style: AppTextStyles.bodyMuted,
+                          ),
+                        ),
+                        if (locationPermissionMessage != null) ...[
+                          const SizedBox(height: AppSpacing.sm),
+                          Align(
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              locationPermissionMessage!,
                               style: AppTextStyles.body.copyWith(
-                                color: Colors.white.withValues(alpha: 0.92),
+                                color: AppColors.danger,
                               ),
                             ),
-                            const SizedBox(height: AppSpacing.md),
-                            Wrap(
-                              spacing: AppSpacing.xs,
-                              runSpacing: AppSpacing.xs,
-                              children: [
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: AppSpacing.sm,
-                                    vertical: AppSpacing.xs,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.16),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    'Assigned $assignedCount',
-                                    style: AppTextStyles.label.copyWith(color: Colors.white),
-                                  ),
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: AppSpacing.sm,
-                                    vertical: AppSpacing.xs,
-                                  ),
-                                  decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.16),
-                                    borderRadius: BorderRadius.circular(999),
-                                  ),
-                                  child: Text(
-                                    'Active $activeCount',
-                                    style: AppTextStyles.label.copyWith(color: Colors.white),
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.xl),
-                      const SectionHeader(
-                        title: 'Today Summary',
-                        subtitle: 'Quick snapshot of your workflow',
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      SizedBox(
-                        height: 186,
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: DashboardStatCard(
-                                icon: Icons.assignment_turned_in_outlined,
-                                value: '$assignedCount',
-                                label: 'Assigned Orders',
-                                subtitle: 'Ready to pick up',
-                              ),
-                            ),
-                            SizedBox(width: AppSpacing.md),
-                            Expanded(
-                              child: DashboardStatCard(
-                                icon: Icons.check_circle_outline,
-                                value: '$completedCount',
-                                label: 'Completed',
-                                subtitle: 'Delivered today',
-                                accentColor: AppColors.success,
-                                accentSoftColor: AppColors.successSoft,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      DashboardStatCard(
-                        icon: Icons.pending_actions_outlined,
-                        value: '$activeCount',
-                        label: 'Pending Tasks',
-                        subtitle: 'Orders in active progress',
-                        accentColor: AppColors.warning,
-                        accentSoftColor: AppColors.warningSoft,
-                      ),
-                      const SizedBox(height: AppSpacing.xl),
-                      const SectionHeader(
-                        title: 'Quick Actions',
-                        subtitle: 'Common actions for your account',
-                      ),
-                      const SizedBox(height: AppSpacing.md),
-                      PrimaryButton(
-                        label: 'My Deliveries',
-                        icon: Icons.local_shipping_outlined,
-                        onPressed: _openMyDeliveries,
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      PrimaryButton(
-                        label: 'View Profile',
-                        icon: Icons.badge_outlined,
-                        onPressed: _openProfile,
-                      ),
-                      const SizedBox(height: AppSpacing.sm),
-                      SecondaryButton(
-                        label: 'Refresh Dashboard',
-                        icon: Icons.refresh_rounded,
-                        onPressed: _loadDashboard,
-                      ),
-                      const SizedBox(height: AppSpacing.xl),
-                      InfoCard(
-                        title: 'Account State',
-                        subtitle: 'Your verification and company details',
-                        leading: Container(
-                          width: 34,
-                          height: 34,
-                          decoration: BoxDecoration(
-                            color: AppColors.primarySoft,
-                            borderRadius: BorderRadius.circular(10),
                           ),
-                          child: const Icon(
-                            Icons.verified_user_outlined,
-                            color: AppColors.primary,
-                            size: 18,
-                          ),
-                        ),
-                        child: Column(
-                          children: [
-                            _MetaRow(label: 'Verification', value: verification),
-                            const SizedBox(height: AppSpacing.sm),
-                            _MetaRow(label: 'Company', value: companyName),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: AppSpacing.xl),
-                    ],
+                        ],
+                      ],
+                    ),
                   ),
-                ),
+                  const SizedBox(height: AppSpacing.md),
+                  PrimaryButton(
+                    label: _isAvailableForAssignment
+                        ? 'Unavailable / End Shift'
+                        : 'Available / Start Shift',
+                    icon: _isAvailableForAssignment
+                        ? Icons.pause_circle_outline_rounded
+                        : Icons.play_circle_outline_rounded,
+                    isLoading: isUpdatingAvailability,
+                    onPressed: () =>
+                        _setAvailability(!_isAvailableForAssignment),
+                  ),
+                  const SizedBox(height: AppSpacing.xl),
+                  const SectionHeader(
+                    title: 'Quick Actions',
+                    subtitle: 'Common actions for your account',
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  PrimaryButton(
+                    label: 'My Deliveries',
+                    icon: Icons.local_shipping_outlined,
+                    onPressed: _openMyDeliveries,
+                  ),
+                  const SizedBox(height: AppSpacing.sm),
+                  SecondaryButton(
+                    label: 'View Profile',
+                    icon: Icons.badge_outlined,
+                    onPressed: _openProfile,
+                  ),
+                ],
+              ),
+            ),
     );
   }
 }
@@ -315,25 +533,14 @@ class _MetaRow extends StatelessWidget {
   final String label;
   final String value;
 
-  const _MetaRow({
-    required this.label,
-    required this.value,
-  });
+  const _MetaRow({required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
     return Row(
       children: [
-        Expanded(
-          child: Text(
-            label,
-            style: AppTextStyles.bodyMuted,
-          ),
-        ),
-        StatusChip(
-          label: value,
-          tone: StatusChip.fromStatus(value),
-        ),
+        Expanded(child: Text(label, style: AppTextStyles.bodyMuted)),
+        StatusChip(label: value, tone: StatusChip.fromStatus(value)),
       ],
     );
   }

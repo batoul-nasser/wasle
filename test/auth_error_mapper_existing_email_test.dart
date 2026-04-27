@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:wasle/features/auth/data/auth_service.dart';
 import 'package:wasle/features/auth/presentation/utils/auth_error_mapper.dart';
 
 void main() {
@@ -12,13 +11,19 @@ void main() {
     expect(message, EmailAlreadyRegisteredException.defaultMessage);
   });
 
-  test('maps existing-email signup conflict without masking it as OTP expiry', () {
-    final message = AuthErrorMapper.map(
-      const EmailAlreadyRegisteredException(),
-      context: AuthErrorContext.otpVerification,
-    );
+  test(
+    'maps existing-email signup conflict without masking it as OTP expiry',
+    () {
+      final message = AuthErrorMapper.map(
+        const EmailAlreadyRegisteredException(),
+        context: AuthErrorContext.otpVerification,
+      );
 
-    expect(message, EmailAlreadyRegisteredException.defaultMessage);
-    expect(message, isNot('This code has expired. Please request a new one.'));
-  });
+      expect(message, EmailAlreadyRegisteredException.defaultMessage);
+      expect(
+        message,
+        isNot('This code has expired. Please request a new one.'),
+      );
+    },
+  );
 }

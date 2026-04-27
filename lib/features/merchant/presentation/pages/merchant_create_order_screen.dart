@@ -6,6 +6,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/services/payment_service.dart';
 import 'package:wasle/features/payment/data/payment_model.dart';
 import 'package:wasle/features/payment/presentation/widgets/payment_method_selector.dart';
+import 'package:wasle/features/orders/data/order_assignment_service.dart';
 
 enum DeliveryCompanyMode { allApproved, linkedOnly }
 
@@ -20,6 +21,7 @@ class MerchantCreateOrderScreen extends StatefulWidget {
 class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   final SupabaseClient _client = Supabase.instance.client;
   final PaymentService _paymentService = PaymentService();
+  final OrderAssignmentService _assignmentService = OrderAssignmentService();
   final _formKey = GlobalKey<FormState>();
 
   final _customerNameCtrl = TextEditingController();
@@ -356,10 +358,24 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
 
     return basicOptions.map((basic) {
+      final companyLocationHub = basic.hasLocation
+          ? [
+              _CompanyHub(
+                id: '${basic.id}-company-location',
+                name: basic.name,
+                addressText: basic.addressText,
+                city: basic.city,
+                area: basic.area,
+                lat: basic.lat,
+                lng: basic.lng,
+                isActive: true,
+              ),
+            ]
+          : const <_CompanyHub>[];
       return _DeliveryCompanyOption(
         id: basic.id,
         name: basic.name,
-        hubs: hubsByCompany[basic.id] ?? const [],
+        hubs: hubsByCompany[basic.id] ?? companyLocationHub,
         capacity: capacityByCompany[basic.id],
       );
     }).toList();
@@ -370,17 +386,14 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     try {
       final companyRows = await _client
           .from('delivery_companies')
-          .select('id, name, verification_status')
+          .select(
+            'id, name, verification_status, address_text, exact_address, city, area, lat, lng, latitude, longitude',
+          )
           .eq('verification_status', 'approved')
           .order('name');
 
       final options = List<Map<String, dynamic>>.from(companyRows)
-          .map(
-            (row) => _DeliveryCompanyBasicOption(
-              id: row['id']?.toString() ?? '',
-              name: (row['name']?.toString() ?? '').trim(),
-            ),
-          )
+          .map((row) => _DeliveryCompanyBasicOption.fromRow(row))
           .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
           .toList();
 
@@ -406,7 +419,15 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
             delivery_companies:company_id (
               id,
               name,
-              verification_status
+              verification_status,
+              address_text,
+              exact_address,
+              city,
+              area,
+              lat,
+              lng,
+              latitude,
+              longitude
             )
           ''')
           .eq('merchant_id', merchantId)
@@ -440,7 +461,11 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
               return const _DeliveryCompanyBasicOption(id: '', name: '');
             }
 
-            return _DeliveryCompanyBasicOption(id: id, name: name);
+            return _DeliveryCompanyBasicOption.fromRow({
+              ...companyMap,
+              'id': id,
+              'name': name,
+            });
           })
           .where((option) => option.id.isNotEmpty && option.name.isNotEmpty)
           .toList();
@@ -504,12 +529,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         (_selectedCustomerLat != null && _selectedCustomerLng != null);
 
     final hasPaymentAmount = _paymentAmount > 0;
-    final companyOk =
-        _filteredDeliveryCompanies.isEmpty ||
-        _selectedDeliveryCompanyId != null;
+    final companyOk = _selectedDeliveryCompanyId != null;
 
     final itemCount = _parseItemCount();
-    final itemCountOk = itemCount == null || itemCount > 0;
+    final itemCountOk = itemCount != null && itemCount > 0;
+    final weightOk = _parsePositiveDouble(_estimatedWeightCtrl.text) != null;
+    final volumeOk = _parsePositiveDouble(_estimatedVolumeCtrl.text) != null;
 
     return !_loadingFormData &&
         !_submitting &&
@@ -521,7 +546,9 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         mapOk &&
         hasPaymentAmount &&
         companyOk &&
-        itemCountOk;
+        itemCountOk &&
+        weightOk &&
+        volumeOk;
   }
 
   Future<void> _openMapPicker() async {
@@ -967,8 +994,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       return;
     }
 
-    if (_filteredDeliveryCompanies.isNotEmpty &&
-        _selectedDeliveryCompanyId == null) {
+    if (_selectedDeliveryCompanyId == null) {
       _showSnackBar('Please select a delivery company.', isError: true);
       return;
     }
@@ -979,8 +1005,21 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
 
     final itemCount = _parseItemCount();
-    if (itemCount != null && itemCount <= 0) {
+    final estimatedWeight = _parsePositiveDouble(_estimatedWeightCtrl.text);
+    final estimatedVolume = _parsePositiveDouble(_estimatedVolumeCtrl.text);
+
+    if (itemCount == null || itemCount <= 0) {
       _showSnackBar('Item count must be greater than zero.', isError: true);
+      return;
+    }
+
+    if (estimatedWeight == null || estimatedWeight <= 0) {
+      _showSnackBar('Estimated weight is required.', isError: true);
+      return;
+    }
+
+    if (estimatedVolume == null || estimatedVolume <= 0) {
+      _showSnackBar('Estimated volume is required.', isError: true);
       return;
     }
 
@@ -1014,10 +1053,18 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
             : null,
         deliveryCompanyId: _selectedDeliveryCompanyId,
         notes: _mergedNotes(),
+        itemCount: itemCount,
+        estimatedWeightKg: estimatedWeight,
+        estimatedVolumeCm3: estimatedVolume,
       );
 
       final orderId = _resultValue(result, ['id', 'orderId', 'order_id']);
       await _saveOrderExtras(orderId);
+      final assignmentResult = await _assignmentService.autoAssignOrder(
+        orderId,
+        merchantIdHint: merchantId,
+        companyIdHint: _selectedDeliveryCompanyId,
+      );
 
       if (!mounted) return;
       setState(() => _submitting = false);
@@ -1042,6 +1089,9 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           volume: _summaryVolume,
           mapLocation: _summaryMapLocation,
           company: _summaryCompany,
+          assignment: assignmentResult.assigned
+              ? 'Assigned to driver ${assignmentResult.driverId}'
+              : 'Needs manual fallback: ${assignmentResult.reason}',
         ),
       );
 
@@ -1064,11 +1114,20 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       _dropoffPickupNearest => _selectedDestinationPickupPointId,
       _ => null,
     };
+    final pickupLocation = _resolveSourceLocation(
+      sourcePickupId: _selectedSourcePickupPointId,
+      sourceCandidates: _sourcePickupPoints,
+    );
+    final dropoffLocation = _resolveDestinationLocation(
+      overrideNearestPickupId: destinationPickupId,
+      destinationCandidates: _destinationPickupPoints,
+    );
 
     await _client
         .from('orders')
         .update({
           'branch_id': _merchantBranchId,
+          'company_id': _selectedDeliveryCompanyId,
           'pickup_source_type': _pickupSourceType == _pickupFromPickupPoint
               ? 'pickup_point'
               : 'store',
@@ -1083,10 +1142,17 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           'item_count': _parseItemCount(),
           'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
           'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
+          'pickup_location_lat': pickupLocation?.lat,
+          'pickup_location_lng': pickupLocation?.lng,
+          'dropoff_location_lat': dropoffLocation?.lat,
+          'dropoff_location_lng': dropoffLocation?.lng,
           'customer_address_text': _customerAddressForStorage(),
           'customer_lat': _selectedCustomerLat,
           'customer_lng': _selectedCustomerLng,
           'delivery_company_id': _selectedDeliveryCompanyId,
+          'assignment_status': 'pending_assignment',
+          'assigned_driver_id': null,
+          'assignment_failure_reason': null,
           'notes': _mergedNotes(),
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
@@ -1536,7 +1602,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
   String get _summaryVolume {
     final value = _estimatedVolumeCtrl.text.trim();
-    return value.isEmpty ? '-' : '$value m³';
+    return value.isEmpty ? '-' : '$value cm3';
   }
 
   String get _summaryMapLocation {
@@ -1544,10 +1610,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       return 'Not selected';
     }
     return '${_selectedCustomerLat!.toStringAsFixed(6)}, ${_selectedCustomerLng!.toStringAsFixed(6)}';
-  }
-
-  String get _deliveryCompanySubtitle {
-    return 'Nearest 3 to merchant, then capacity';
   }
 
   String get _submitHint {
@@ -1586,12 +1648,21 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         _selectedDeliveryCompanyId == null) {
       return 'Select a delivery company to continue.';
     }
+    if (_selectedDeliveryCompanyId == null) {
+      return 'A linked delivery company is required before creating an order.';
+    }
     if (_paymentAmount <= 0) {
       return 'Enter the payment amount to continue.';
     }
     final itemCount = _parseItemCount();
-    if (itemCount != null && itemCount <= 0) {
+    if (itemCount == null || itemCount <= 0) {
       return 'Item count must be greater than zero.';
+    }
+    if (_parsePositiveDouble(_estimatedWeightCtrl.text) == null) {
+      return 'Estimated weight is required for driver capacity matching.';
+    }
+    if (_parsePositiveDouble(_estimatedVolumeCtrl.text) == null) {
+      return 'Estimated volume is required for driver capacity matching.';
     }
 
     return 'Complete the required fields to continue.';
@@ -1988,7 +2059,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                 iconColor: _W.slate,
                 iconBg: _W.slateLt,
                 title: 'Package Information',
-                subtitle: 'Optional shipment details',
+                subtitle: 'Required for automated driver capacity matching',
                 child: Column(
                   children: [
                     _FormField(
@@ -2006,7 +2077,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       keyboardType: TextInputType.number,
                       validator: (value) {
                         final raw = value?.trim() ?? '';
-                        if (raw.isEmpty) return null;
+                        if (raw.isEmpty) return 'Item count is required';
                         final parsed = int.tryParse(raw);
                         if (parsed == null || parsed <= 0) {
                           return 'Enter a valid item count';
@@ -2028,7 +2099,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                             ),
                             validator: (value) {
                               final raw = value?.trim() ?? '';
-                              if (raw.isEmpty) return null;
+                              if (raw.isEmpty) return 'Required';
                               final parsed = double.tryParse(raw);
                               if (parsed == null || parsed <= 0) {
                                 return 'Invalid weight';
@@ -2041,15 +2112,15 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                         Expanded(
                           child: _FormField(
                             controller: _estimatedVolumeCtrl,
-                            label: 'Volume (m³)',
-                            hint: '0.02',
+                            label: 'Volume (cm3)',
+                            hint: '5000',
                             icon: Icons.straighten_outlined,
                             keyboardType: const TextInputType.numberWithOptions(
                               decimal: true,
                             ),
                             validator: (value) {
                               final raw = value?.trim() ?? '';
-                              if (raw.isEmpty) return null;
+                              if (raw.isEmpty) return 'Required';
                               final parsed = double.tryParse(raw);
                               if (parsed == null || parsed <= 0) {
                                 return 'Invalid volume';
@@ -2259,8 +2330,43 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 class _DeliveryCompanyBasicOption {
   final String id;
   final String name;
+  final String addressText;
+  final String city;
+  final String area;
+  final double? lat;
+  final double? lng;
 
-  const _DeliveryCompanyBasicOption({required this.id, required this.name});
+  const _DeliveryCompanyBasicOption({
+    required this.id,
+    required this.name,
+    this.addressText = '',
+    this.city = '',
+    this.area = '',
+    this.lat,
+    this.lng,
+  });
+
+  factory _DeliveryCompanyBasicOption.fromRow(Map<String, dynamic> row) {
+    return _DeliveryCompanyBasicOption(
+      id: row['id']?.toString() ?? '',
+      name: (row['name']?.toString() ?? '').trim(),
+      addressText:
+          (row['exact_address']?.toString() ??
+                  row['address_text']?.toString() ??
+                  '')
+              .trim(),
+      city: (row['city']?.toString() ?? '').trim(),
+      area: (row['area']?.toString() ?? '').trim(),
+      lat: _MerchantCreateOrderScreenState._asDouble(
+        row['lat'] ?? row['latitude'],
+      ),
+      lng: _MerchantCreateOrderScreenState._asDouble(
+        row['lng'] ?? row['longitude'],
+      ),
+    );
+  }
+
+  bool get hasLocation => lat != null && lng != null;
 }
 
 class _DeliveryCompanyOption {
@@ -3064,7 +3170,7 @@ class _InfoBox extends StatelessWidget {
       decoration: BoxDecoration(
         color: background,
         borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.22), width: 1.3),
+        border: Border.all(color: color.withValues(alpha: 0.22), width: 1.3),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -3156,14 +3262,14 @@ class _SubmitButton extends StatelessWidget {
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
                 color: isEnabled
-                    ? _W.blueDark.withOpacity(0.18)
+                    ? _W.blueDark.withValues(alpha: 0.18)
                     : const Color(0xFFC7D0E0),
                 width: 1.2,
               ),
               boxShadow: isEnabled
                   ? [
                       BoxShadow(
-                        color: _W.blue.withOpacity(0.18),
+                        color: _W.blue.withValues(alpha: 0.18),
                         blurRadius: 14,
                         offset: const Offset(0, 6),
                       ),
@@ -3235,6 +3341,7 @@ class _SuccessDialog extends StatelessWidget {
   final String volume;
   final String mapLocation;
   final String company;
+  final String assignment;
 
   const _SuccessDialog({
     required this.orderId,
@@ -3249,6 +3356,7 @@ class _SuccessDialog extends StatelessWidget {
     required this.volume,
     required this.mapLocation,
     required this.company,
+    required this.assignment,
   });
 
   @override
@@ -3305,6 +3413,8 @@ class _SuccessDialog extends StatelessWidget {
                     _DialogRow(label: 'Destination', value: dropoffMethod),
                     const SizedBox(height: 8),
                     _DialogRow(label: 'Company', value: company),
+                    const SizedBox(height: 8),
+                    _DialogRow(label: 'Assignment', value: assignment),
                     const SizedBox(height: 8),
                     _DialogRow(label: 'Map', value: mapLocation),
                     const SizedBox(height: 8),

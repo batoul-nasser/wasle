@@ -137,6 +137,8 @@ Future<void> _cleanup(SupabaseClient db) async {
 }
 
 Future<void> _seed(SupabaseClient db) async {
+  final now = DateTime.now().toUtc().toIso8601String();
+
   await db.from('delivery_companies').upsert([
     {
       'id': _Ids.companyA,
@@ -185,6 +187,12 @@ Future<void> _seed(SupabaseClient db) async {
       'capacity_volume': 40000,
       'capacity_item_count': 5,
       'availability_status': 'available',
+      'is_available': true,
+      'is_active_shift': true,
+      'shift_started_at': now,
+      'last_location_ping_at': now,
+      'current_location_lat': 33.8942,
+      'current_location_lng': 35.5030,
     },
     {
       'id': _Ids.driverA2,
@@ -195,6 +203,12 @@ Future<void> _seed(SupabaseClient db) async {
       'capacity_volume': 200000,
       'capacity_item_count': 20,
       'availability_status': 'available',
+      'is_available': true,
+      'is_active_shift': true,
+      'shift_started_at': now,
+      'last_location_ping_at': now,
+      'current_location_lat': 33.8900,
+      'current_location_lng': 35.4920,
     },
     {
       'id': _Ids.driverA3,
@@ -205,6 +219,12 @@ Future<void> _seed(SupabaseClient db) async {
       'capacity_volume': 1000000,
       'capacity_item_count': 80,
       'availability_status': 'available',
+      'is_available': true,
+      'is_active_shift': true,
+      'shift_started_at': now,
+      'last_location_ping_at': now,
+      'current_location_lat': 33.8995,
+      'current_location_lng': 35.4880,
     },
     {
       'id': _Ids.driverB1,
@@ -215,6 +235,12 @@ Future<void> _seed(SupabaseClient db) async {
       'capacity_volume': 200000,
       'capacity_item_count': 20,
       'availability_status': 'available',
+      'is_available': true,
+      'is_active_shift': true,
+      'shift_started_at': now,
+      'last_location_ping_at': now,
+      'current_location_lat': 33.8939,
+      'current_location_lng': 35.5019,
     },
   ], onConflict: 'id');
 
@@ -224,28 +250,32 @@ Future<void> _seed(SupabaseClient db) async {
       'lat': 33.8942,
       'lng': 35.5030,
       'city': 'Beirut',
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'last_location_ping_at': now,
+      'updated_at': now,
     },
     {
       'driver_id': _Ids.driverA2,
       'lat': 33.8900,
       'lng': 35.4920,
       'city': 'Beirut',
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'last_location_ping_at': now,
+      'updated_at': now,
     },
     {
       'driver_id': _Ids.driverA3,
       'lat': 33.8995,
       'lng': 35.4880,
       'city': 'Beirut',
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'last_location_ping_at': now,
+      'updated_at': now,
     },
     {
       'driver_id': _Ids.driverB1,
       'lat': 33.8939,
       'lng': 35.5019,
       'city': 'Beirut',
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
+      'last_location_ping_at': now,
+      'updated_at': now,
     },
   ], onConflict: 'driver_id');
 
