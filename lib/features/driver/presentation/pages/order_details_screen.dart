@@ -435,8 +435,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
-<<<<<<< Updated upstream
-=======
   Future<void> _redirectCustomerNotAvailableFlow() async {
     if (details == null || _isBusy) return;
 
@@ -487,8 +485,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       }
     }
   }
-
->>>>>>> Stashed changes
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -727,11 +723,8 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         return 'Delivered';
       case 'dropped_at_pickup_point':
         return 'Drop At Pickup Point';
-<<<<<<< Updated upstream
-=======
       case 'customer_not_available':
         return 'Drop At Pickup Point';
->>>>>>> Stashed changes
       case 'failed':
         return 'Delivery Failed';
       case 'rescheduled':

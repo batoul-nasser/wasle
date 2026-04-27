@@ -90,13 +90,8 @@ class DriverDeliveriesRepository {
     'assigned': ['pending_driver_receipt'],
     'pending_driver_receipt': ['driver_received_order'],
     'driver_received_order': ['in_transit'],
-<<<<<<< Updated upstream
-    'in_transit': ['delivered', 'failed'],
-    'failed': ['rescheduled', 'dropped_at_pickup_point', 'returning_to_store'],
-=======
     'in_transit': ['delivered', 'customer_not_available', 'failed'],
     'failed': ['returning_to_store'],
->>>>>>> Stashed changes
     'rescheduled': [],
     'returning_to_store': ['returned_to_store'],
     'delivered': [],
@@ -401,6 +396,44 @@ class DriverDeliveriesRepository {
           .update({'pickup_point_id': pickupPointId})
           .eq('id', orderId);
     } catch (_) {}
+  }
+
+  Future<void> redirectHomeDeliveryToNearestPickupPoint({
+    required String orderId,
+  }) async {
+    final order = await _client
+        .from('orders')
+        .select('id, delivery_company_id')
+        .eq('id', orderId)
+        .maybeSingle();
+    if (order == null) {
+      throw Exception('Order not found.');
+    }
+
+    final companyId = order['delivery_company_id']?.toString();
+    final pickupRows = companyId == null || companyId.isEmpty
+        ? await _client
+              .from('pickup_points')
+              .select('id, name')
+              .order('name', ascending: true)
+              .limit(1)
+        : await _client
+              .from('pickup_points')
+              .select('id, name')
+              .eq('company_id', companyId)
+              .order('name', ascending: true)
+              .limit(1);
+    final pickups = List<Map<String, dynamic>>.from(pickupRows);
+    if (pickups.isEmpty) {
+      throw Exception('No pickup point available for this order.');
+    }
+
+    final pickup = pickups.first;
+    await confirmDropoffAtPickupPoint(
+      orderId: orderId,
+      pickupPointId: pickup['id'].toString(),
+      pickupPointName: pickup['name']?.toString(),
+    );
   }
 
   Future<void> updateOrderStatus({

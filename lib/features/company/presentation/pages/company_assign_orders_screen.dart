@@ -472,25 +472,6 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
 
   @override
   Widget build(BuildContext context) {
-<<<<<<< Updated upstream
-    bool hasDriver(Map<String, dynamic> order) {
-      final driverId = order['driver_id']?.toString();
-      return driverId != null && driverId.isNotEmpty;
-    }
-
-    bool isLocked(Map<String, dynamic> order) {
-      final status = order['status']?.toString().toLowerCase() ?? 'created';
-      return _lockedStatuses.contains(status);
-    }
-
-    bool canReassign(Map<String, dynamic> order) {
-      final status = order['status']?.toString().toLowerCase() ?? 'created';
-      return _reassignableStatuses.contains(status) && !isLocked(order);
-    }
-
-    final unassignedOrders = orders.where((order) {
-      return !hasDriver(order) && canReassign(order);
-=======
     bool isAutoFallbackEligible(Map<String, dynamic> order) {
       return order['auto_assignment_failed'] == true;
     }
@@ -505,7 +486,6 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
       return !_hasDriver(order) &&
           _canReassign(order) &&
           !isAutoFallbackEligible(order);
->>>>>>> Stashed changes
     }).toList();
 
     final assignedOrders = orders.where((order) {
@@ -571,8 +551,6 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                     }),
                   const SizedBox(height: AppSpacing.lg),
                   const SectionHeader(
-<<<<<<< Updated upstream
-=======
                     title: 'Needs Manual Review',
                     subtitle:
                         'Legacy or unattempted orders without saved automatic-assignment metadata',
@@ -601,7 +579,6 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                     }),
                   const SizedBox(height: AppSpacing.lg),
                   const SectionHeader(
->>>>>>> Stashed changes
                     title: 'Already Assigned',
                     subtitle: 'Reassign if needed',
                   ),

@@ -624,8 +624,6 @@ class AuthService {
     return raw.trim().toLowerCase();
   }
 
-<<<<<<< Updated upstream
-=======
   Future<String?> getLatestDriverRequestStatus() async {
     final user = _client.auth.currentUser;
     if (user == null) return null;
@@ -711,25 +709,23 @@ class AuthService {
     }
 
     final now = DateTime.now().toUtc().toIso8601String();
-    await _updateDriverRowsWithSchemaFallback(
-      profileId: user.id,
-      values: {
-        'verification_status': 'approved',
-        'company_id': requestCompanyId,
-        'updated_at': now,
-      },
-    );
-    await _updateDriverRowsWithSchemaFallback(
-      driverId: user.id,
-      values: {
-        'verification_status': 'approved',
-        'company_id': requestCompanyId,
-        'updated_at': now,
-      },
-    );
+    await _client
+        .from('drivers')
+        .update({
+          'verification_status': 'approved',
+          'company_id': requestCompanyId,
+          'updated_at': now,
+        })
+        .eq('profile_id', user.id);
+    await _client
+        .from('drivers')
+        .update({
+          'verification_status': 'approved',
+          'company_id': requestCompanyId,
+          'updated_at': now,
+        })
+        .eq('id', user.id);
   }
-
->>>>>>> Stashed changes
   Future<String?> uploadPickupPointStorageAreaImage({
     required String fileName,
     required Uint8List bytes,
@@ -1021,12 +1017,6 @@ class AuthService {
     required String driverProfileId,
     required String companyId,
   }) async {
-<<<<<<< Updated upstream
-    await _client.from('driver_company_requests').insert({
-      'driver_profile_id': driverProfileId,
-      'company_id': companyId,
-    });
-=======
     final driver = await _client
         .from('drivers')
         .select('id, company_id, verification_status')
@@ -1109,7 +1099,6 @@ class AuthService {
           'company_id': null,
         })
         .eq('id', driverProfileId);
->>>>>>> Stashed changes
   }
 
   Future<List<Map<String, dynamic>>>
@@ -1172,36 +1161,37 @@ class AuthService {
         .from('driver_company_requests')
         .update({'request_status': 'approved'})
         .eq('id', requestId);
+    final request = await _client
+        .from('driver_company_requests')
+        .select('company_id')
+        .eq('id', requestId)
+        .maybeSingle();
+    final requestCompanyId =
+        request?['company_id']?.toString() ?? user.id;
 
-<<<<<<< Updated upstream
+    final now = DateTime.now().toUtc().toIso8601String();
     await _client
         .from('drivers')
-        .update({'verification_status': 'approved', 'company_id': user.id})
+        .update({
+          'verification_status': 'approved',
+          'company_id': requestCompanyId,
+          'availability_status': 'unavailable',
+          'is_available': false,
+          'is_active_shift': false,
+          'shift_ended_at': now,
+        })
         .eq('profile_id', driverProfileId);
-=======
-    await _updateDriverRowsWithSchemaFallback(
-      profileId: driverProfileId,
-      values: {
-        'verification_status': 'approved',
-        'company_id': requestCompanyId,
-        'availability_status': 'unavailable',
-        'is_available': false,
-        'is_active_shift': false,
-        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
-      },
-    );
-    await _updateDriverRowsWithSchemaFallback(
-      driverId: driverProfileId,
-      values: {
-        'verification_status': 'approved',
-        'company_id': requestCompanyId,
-        'availability_status': 'unavailable',
-        'is_available': false,
-        'is_active_shift': false,
-        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
-      },
-    );
->>>>>>> Stashed changes
+    await _client
+        .from('drivers')
+        .update({
+          'verification_status': 'approved',
+          'company_id': requestCompanyId,
+          'availability_status': 'unavailable',
+          'is_available': false,
+          'is_active_shift': false,
+          'shift_ended_at': now,
+        })
+        .eq('id', driverProfileId);
   }
 
   Future<void> rejectDriverRequest({
@@ -1212,31 +1202,29 @@ class AuthService {
         .from('driver_company_requests')
         .update({'request_status': 'rejected'})
         .eq('id', requestId);
-
-<<<<<<< Updated upstream
-=======
-    await _updateDriverRowsWithSchemaFallback(
-      profileId: driverProfileId,
-      values: {
-        'verification_status': 'rejected',
-        'company_id': null,
-        'availability_status': 'unavailable',
-        'is_available': false,
-        'is_active_shift': false,
-        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
-      },
-    );
-    await _updateDriverRowsWithSchemaFallback(
-      driverId: driverProfileId,
-      values: {
-        'verification_status': 'rejected',
-        'company_id': null,
-        'availability_status': 'unavailable',
-        'is_available': false,
-        'is_active_shift': false,
-        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
-      },
-    );
+    final now = DateTime.now().toUtc().toIso8601String();
+    await _client
+        .from('drivers')
+        .update({
+          'verification_status': 'rejected',
+          'company_id': null,
+          'availability_status': 'unavailable',
+          'is_available': false,
+          'is_active_shift': false,
+          'shift_ended_at': now,
+        })
+        .eq('profile_id', driverProfileId);
+    await _client
+        .from('drivers')
+        .update({
+          'verification_status': 'rejected',
+          'company_id': null,
+          'availability_status': 'unavailable',
+          'is_available': false,
+          'is_active_shift': false,
+          'shift_ended_at': now,
+        })
+        .eq('id', driverProfileId);
   }
 
   Future<void> cancelLatestPendingDriverRequest() async {
@@ -1269,11 +1257,21 @@ class AuthService {
       throw Exception('No pending delivery company request was found.');
     }
 
->>>>>>> Stashed changes
     await _client
-        .from('drivers')
-        .update({'verification_status': 'rejected'})
-        .eq('profile_id', driverProfileId);
+        .from('driver_company_requests')
+        .delete()
+        .eq('id', latestPendingRequest['id'].toString());
+
+    final verificationStatus = driver?['verification_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    if (verificationStatus == 'pending') {
+      await _client
+          .from('drivers')
+          .update({'verification_status': null})
+          .eq('profile_id', user.id);
+    }
   }
 
   Future<List<Map<String, dynamic>>> getMerchantOrders() async {
@@ -1946,14 +1944,25 @@ class AuthService {
     String? city,
     double? lat,
     double? lng,
+    double? heading,
+    double? speed,
   }) async {
     await _client.from('driver_locations').upsert({
       'driver_id': driverId,
       'city': city,
       'lat': lat,
       'lng': lng,
+      'heading': heading,
+      'speed': speed,
       'updated_at': DateTime.now().toUtc().toIso8601String(),
     }, onConflict: 'driver_id');
+  }
+
+  Future<void> touchDriverLocationPing({required String driverId}) async {
+    await _client
+        .from('driver_locations')
+        .update({'updated_at': DateTime.now().toUtc().toIso8601String()})
+        .eq('driver_id', driverId);
   }
 
   User? get currentUser => _client.auth.currentUser;

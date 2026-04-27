@@ -1028,7 +1028,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   Future<void> _saveOrderExtras(String orderId) async {
     if (orderId.trim().isEmpty || orderId == '-') return;
 
-<<<<<<< Updated upstream
     final destinationPickupId =
         (_dropoffType == _dropoffHome ||
             _dropoffType == _dropoffPickupSpecific)
@@ -1061,101 +1060,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', orderId);
-=======
-    final destinationPickupId = switch (_dropoffType) {
-      _dropoffPickupSpecific => _selectedDestinationPickupPointId,
-      _dropoffPickupNearest => _selectedDestinationPickupPointId,
-      _ => null,
-    };
-    final pickupLocation = _resolveSourceLocation(
-      sourcePickupId: _selectedSourcePickupPointId,
-      sourceCandidates: _sourcePickupPoints,
-    );
-    final dropoffLocation = _resolveDestinationLocation(
-      overrideNearestPickupId: destinationPickupId,
-      destinationCandidates: _destinationPickupPoints,
-    );
-    final preferredWindow = _parsePreferredTimeWindow(
-      _timeWindowCtrl.text.trim(),
-    );
-    final preferredFromUtc = preferredWindow?.$1.toUtc().toIso8601String();
-    final preferredUntilUtc = preferredWindow?.$2.toUtc().toIso8601String();
-
-    final payload = <String, dynamic>{
-      'branch_id': _merchantBranchId,
-      'company_id': _selectedDeliveryCompanyId,
-      'pickup_source_type': _pickupSourceType == _pickupFromPickupPoint
-          ? 'pickup_point'
-          : 'store',
-      'pickup_point_id': _pickupSourceType == _pickupFromPickupPoint
-          ? _selectedSourcePickupPointId
-          : null,
-      'destination_pickup_point_id': destinationPickupId,
-      'dropoff_type': _normalizedDropoffType(),
-      'parcel_description': _parcelDescriptionCtrl.text.trim().isEmpty
-          ? null
-          : _parcelDescriptionCtrl.text.trim(),
-      'item_count': _parseItemCount(),
-      'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
-      'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
-      'pickup_location_lat': pickupLocation?.lat,
-      'pickup_location_lng': pickupLocation?.lng,
-      'dropoff_location_lat': dropoffLocation?.lat,
-      'dropoff_location_lng': dropoffLocation?.lng,
-      'customer_address_text': _customerAddressForStorage(),
-      'customer_lat': _selectedCustomerLat,
-      'customer_lng': _selectedCustomerLng,
-      'delivery_company_id': _selectedDeliveryCompanyId,
-      'assignment_status': 'pending_assignment',
-      'assigned_driver_id': null,
-      'assignment_failure_reason': null,
-      'preferred_delivery_from': preferredFromUtc,
-      'preferred_delivery_until': preferredUntilUtc,
-      'notes': _mergedNotes(),
-      'updated_at': DateTime.now().toUtc().toIso8601String(),
-    };
-
-    await _updateOrderWithSchemaFallback(orderId: orderId, payload: payload);
-  }
-
-  Future<void> _updateOrderWithSchemaFallback({
-    required String orderId,
-    required Map<String, dynamic> payload,
-  }) async {
-    final mutable = Map<String, dynamic>.from(payload);
-    for (var attempt = 0; attempt < 6; attempt++) {
-      try {
-        await _client.from('orders').update(mutable).eq('id', orderId);
-        return;
-      } on PostgrestException catch (error) {
-        final missingColumn = _extractMissingColumn(error);
-        if (missingColumn == null || !mutable.containsKey(missingColumn)) {
-          rethrow;
-        }
-        mutable.remove(missingColumn);
-      }
-    }
-    throw Exception('Failed to update order due to schema mismatch.');
-  }
-
-  String? _extractMissingColumn(PostgrestException error) {
-    final message = error.message.toLowerCase();
-    final code = error.code?.toLowerCase();
-    final isMissingColumn =
-        code == '42703' ||
-        code == 'pgrst204' ||
-        message.contains('does not exist') ||
-        message.contains('could not find');
-    if (!isMissingColumn) return null;
-
-    final singleQuoted = RegExp(r"'([^']+)'").allMatches(message).toList();
-    for (final match in singleQuoted) {
-      final value = match.group(1);
-      if (value == null || value == 'orders') continue;
-      return value;
-    }
-    return null;
->>>>>>> Stashed changes
   }
 
   String _normalizedDropoffType() {
