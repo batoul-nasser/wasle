@@ -84,10 +84,19 @@ class AgentService {
       if (agentId == null) throw Exception('Agent not logged in');
 
       // Update payment status only — no extra columns
-      await _db.from('payments').update({
-        'status': 'paid',
-        'transaction_ref': 'AGENT-$orderId-${DateTime.now().millisecondsSinceEpoch}',
-      }).eq('id', paymentId);
+      final token =
+          Supabase.instance.client.auth.currentSession?.accessToken ?? '';
+      final response = await Supabase.instance.client.functions.invoke(
+        'mark_cash_paid',
+        headers: {'Authorization': 'Bearer $token'},
+        body: {'order_id': orderId},
+      );
+
+      if (response.status != 200) {
+        throw Exception(
+          response.data['error'] ?? 'Failed to mark payment as paid',
+        );
+      }
 
       // Record the collection
       await _db.from('agent_collections').insert({

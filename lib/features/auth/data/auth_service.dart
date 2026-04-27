@@ -51,6 +51,7 @@ class AuthService {
     required String email,
     required bool shouldCreateUser,
     String? emailRedirectTo,
+    Map<String, dynamic>? data,
   }) async {
     if (shouldCreateUser && _client.auth.currentUser != null) {
       await _client.auth.signOut();
@@ -60,6 +61,7 @@ class AuthService {
       email: email,
       shouldCreateUser: shouldCreateUser,
       emailRedirectTo: emailRedirectTo,
+      data: data,
     );
   }
 
@@ -142,11 +144,19 @@ class AuthService {
   }
 
   Future<void> resendSignupOtp({required String email}) async {
-    await _client.auth.resend(type: OtpType.signup, email: email);
+    await _resendEmailOtp(
+      email: email,
+      preferredType: OtpType.email,
+      fallbackType: OtpType.signup,
+    );
   }
 
   Future<void> resendLoginOtp({required String email}) async {
-    await _client.auth.resend(type: OtpType.email, email: email);
+    await _resendEmailOtp(
+      email: email,
+      preferredType: OtpType.email,
+      fallbackType: OtpType.signup,
+    );
   }
 
   Future<AuthResponse> verifyOtp({
@@ -154,24 +164,74 @@ class AuthService {
     required String token,
     required AuthFlowMode mode,
   }) async {
-    final otpType = mode == AuthFlowMode.login ? OtpType.email : OtpType.signup;
+    final preferredType =
+        mode == AuthFlowMode.login ? OtpType.email : OtpType.signup;
+
+    return await _verifyEmailOtp(
+      email: email,
+      token: token,
+      preferredType: preferredType,
+      fallbackType: preferredType == OtpType.email
+          ? OtpType.signup
+          : OtpType.email,
+    );
+  }
+
+  Future<AuthResponse> _verifyEmailOtp({
+    required String email,
+    required String token,
+    required OtpType preferredType,
+    OtpType? fallbackType,
+  }) async {
+    AuthException? firstError;
+
     try {
       return await _client.auth.verifyOTP(
         email: email,
         token: token,
-        type: otpType,
+        type: preferredType,
       );
-    } on AuthException catch (_) {
-      // Some signup flows may receive an email OTP type instead of signup.
-      // Retry once with OtpType.email for robustness.
-      if (mode == AuthFlowMode.driverSignup) {
-        return await _client.auth.verifyOTP(
-          email: email,
-          token: token,
-          type: OtpType.email,
-        );
-      }
-      rethrow;
+    } on AuthException catch (error) {
+      firstError = error;
+    }
+
+    if (fallbackType == null || fallbackType == preferredType) {
+      throw firstError!;
+    }
+
+    try {
+      return await _client.auth.verifyOTP(
+        email: email,
+        token: token,
+        type: fallbackType,
+      );
+    } on AuthException {
+      throw firstError!;
+    }
+  }
+
+  Future<void> _resendEmailOtp({
+    required String email,
+    required OtpType preferredType,
+    OtpType? fallbackType,
+  }) async {
+    AuthException? firstError;
+
+    try {
+      await _client.auth.resend(type: preferredType, email: email);
+      return;
+    } on AuthException catch (error) {
+      firstError = error;
+    }
+
+    if (fallbackType == null || fallbackType == preferredType) {
+      throw firstError!;
+    }
+
+    try {
+      await _client.auth.resend(type: fallbackType, email: email);
+    } on AuthException {
+      throw firstError!;
     }
   }
 
@@ -312,6 +372,302 @@ class AuthService {
         .order('submitted_at', ascending: false)
         .limit(1)
         .maybeSingle();
+  }
+
+  Future<List<Map<String, dynamic>>> getPickupPointApplications({
+    String status = 'pending',
+  }) async {
+    final rows = await _client
+        .from('pickup_point_applications')
+        .select()
+        .eq('verification_status', status)
+        .order('submitted_at', ascending: false);
+
+    return List<Map<String, dynamic>>.from(rows);
+  }
+
+  Future<List<Map<String, dynamic>>> getCustomerRecentPickupPoints({
+    int limit = 10,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) return [];
+
+    final orderRows = await _client
+        .from('orders')
+        .select('pickup_point_id, created_at')
+        .eq('customer_profile_id', user.id)
+        .not('pickup_point_id', 'is', null)
+        .order('created_at', ascending: false)
+        .limit(limit * 3);
+
+    final orders = List<Map<String, dynamic>>.from(orderRows);
+    if (orders.isEmpty) return [];
+
+    final pickupIds = <String>[];
+    for (final order in orders) {
+      final pickupId = order['pickup_point_id']?.toString();
+      if (pickupId == null ||
+          pickupId.isEmpty ||
+          pickupIds.contains(pickupId)) {
+        continue;
+      }
+      pickupIds.add(pickupId);
+      if (pickupIds.length >= limit) break;
+    }
+
+    if (pickupIds.isEmpty) return [];
+
+    final pickupRows = await _client
+        .from('pickup_points')
+        .select('id, name, address_text, city, area, phone')
+        .inFilter('id', pickupIds);
+
+    final pickupById = {
+      for (final row in List<Map<String, dynamic>>.from(pickupRows))
+        if (row['id'] != null) row['id'].toString(): row,
+    };
+
+    return pickupIds
+        .map((id) => pickupById[id])
+        .whereType<Map<String, dynamic>>()
+        .toList();
+  }
+
+  Future<Map<String, Map<String, dynamic>>> getPickupPointRatingSummaries(
+    List<String> pickupPointIds,
+  ) async {
+    if (pickupPointIds.isEmpty) return {};
+
+    final rows = await _client
+        .from('pickup_point_reviews')
+        .select('pickup_point_id, rating')
+        .inFilter('pickup_point_id', pickupPointIds);
+
+    final summaries = <String, Map<String, dynamic>>{};
+    for (final row in List<Map<String, dynamic>>.from(rows)) {
+      final pickupPointId = row['pickup_point_id']?.toString();
+      final rating = (row['rating'] as num?)?.toDouble();
+      if (pickupPointId == null || pickupPointId.isEmpty || rating == null) {
+        continue;
+      }
+
+      final summary = summaries.putIfAbsent(
+        pickupPointId,
+        () => {'count': 0, 'total': 0.0},
+      );
+      summary['count'] = (summary['count'] as int) + 1;
+      summary['total'] = (summary['total'] as double) + rating;
+    }
+
+    for (final entry in summaries.entries) {
+      final count = entry.value['count'] as int;
+      final total = entry.value['total'] as double;
+      entry.value['average'] = count == 0 ? 0.0 : total / count;
+    }
+
+    return summaries;
+  }
+
+  Future<List<Map<String, dynamic>>> getPickupPointReviews(
+    String pickupPointId,
+  ) async {
+    if (pickupPointId.trim().isEmpty) return [];
+
+    final rows = await _client
+        .from('pickup_point_reviews')
+        .select(
+          'id, pickup_point_id, customer_profile_id, rating, comment, created_at',
+        )
+        .eq('pickup_point_id', pickupPointId)
+        .order('created_at', ascending: false);
+
+    final reviews = List<Map<String, dynamic>>.from(rows);
+    if (reviews.isEmpty) return [];
+
+    final customerIds = reviews
+        .map((review) => review['customer_profile_id']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+
+    final profiles = customerIds.isEmpty
+        ? <Map<String, dynamic>>[]
+        : List<Map<String, dynamic>>.from(
+            await _client
+                .from('profiles')
+                .select('id, full_name')
+                .inFilter('id', customerIds),
+          );
+
+    final profileById = {
+      for (final profile in profiles)
+        if (profile['id'] != null) profile['id'].toString(): profile,
+    };
+
+    return reviews.map((review) {
+      final profile = profileById[review['customer_profile_id']?.toString()];
+      return {
+        ...review,
+        'customer_name': profile?['full_name']?.toString() ?? 'Customer',
+      };
+    }).toList();
+  }
+
+  Future<void> submitPickupPointReview({
+    required String pickupPointId,
+    required int rating,
+    required String comment,
+  }) async {
+    final user = _client.auth.currentUser;
+    if (user == null) {
+      throw Exception('You must be logged in.');
+    }
+    if (pickupPointId.trim().isEmpty) {
+      throw Exception('Pickup point is missing.');
+    }
+    if (rating < 1 || rating > 5) {
+      throw Exception('Rating must be between 1 and 5.');
+    }
+
+    final orders = await _client
+        .from('orders')
+        .select('id')
+        .eq('customer_profile_id', user.id)
+        .eq('pickup_point_id', pickupPointId)
+        .limit(1);
+
+    if ((orders as List).isEmpty) {
+      throw Exception('You can only review pickup points you used before.');
+    }
+
+    await _client.from('pickup_point_reviews').upsert({
+      'pickup_point_id': pickupPointId,
+      'customer_profile_id': user.id,
+      'rating': rating,
+      'comment': comment.trim(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    }, onConflict: 'pickup_point_id,customer_profile_id');
+  }
+
+  Future<void> approvePickupPointApplication({
+    required String applicationId,
+  }) async {
+    final admin = _client.auth.currentUser;
+    if (admin == null) {
+      throw Exception('User not logged in');
+    }
+
+    final application = await _client
+        .from('pickup_point_applications')
+        .select()
+        .eq('id', applicationId)
+        .maybeSingle();
+
+    if (application == null) {
+      throw Exception('Pickup point application not found');
+    }
+
+    final applicantId = application['user_id']?.toString();
+    if (applicantId == null || applicantId.isEmpty) {
+      throw Exception('Pickup point applicant is missing');
+    }
+
+    final pickupPayload = <String, dynamic>{
+      'owner_profile_id': applicantId,
+      'created_by': admin.id,
+      'name': application['pickup_point_name'],
+      'owner_name': application['owner_name'],
+      'phone': application['phone'],
+      'email': application['email'],
+      'address_text': application['address_text'],
+      'city': application['city'],
+      'area': application['area'],
+      'opens_at': application['opens_at'],
+      'closes_at': application['closes_at'],
+      'opening_hours': _buildOpeningHours(
+        opensAt: application['opens_at']?.toString(),
+        closesAt: application['closes_at']?.toString(),
+      ),
+      'working_days': application['working_days'],
+      'preferred_payment_method': application['preferred_payment_method'],
+      'payment_handling_method': application['payment_handling_method'],
+      'max_orders_per_day': application['max_orders_per_day'],
+      'image_url': application['shop_image_url'],
+      'status': 'active',
+      'is_active': true,
+    };
+
+    final existingPickupPoint = await _client
+        .from('pickup_points')
+        .select('id')
+        .eq('owner_profile_id', applicantId)
+        .maybeSingle();
+
+    String pickupPointId;
+    if (existingPickupPoint != null) {
+      pickupPointId = existingPickupPoint['id'].toString();
+      await _client
+          .from('pickup_points')
+          .update(pickupPayload)
+          .eq('id', pickupPointId);
+    } else {
+      final created = await _client
+          .from('pickup_points')
+          .insert(pickupPayload)
+          .select('id')
+          .single();
+      pickupPointId = created['id'].toString();
+    }
+
+    await _client.from('profiles').upsert({
+      'id': applicantId,
+      'full_name': application['owner_name'],
+      'phone': application['phone'],
+      'role': 'pickup_point',
+    }, onConflict: 'id');
+
+    try {
+      final existingOperator = await _client
+          .from('pickup_point_operators')
+          .select('pickup_point_id')
+          .eq('profile_id', applicantId)
+          .eq('pickup_point_id', pickupPointId)
+          .maybeSingle();
+
+      if (existingOperator == null) {
+        await _client.from('pickup_point_operators').insert({
+          'profile_id': applicantId,
+          'pickup_point_id': pickupPointId,
+        });
+      }
+    } catch (_) {}
+
+    await _client
+        .from('pickup_point_applications')
+        .update({'verification_status': 'approved'})
+        .eq('id', applicationId);
+  }
+
+  Future<void> rejectPickupPointApplication({
+    required String applicationId,
+  }) async {
+    await _client
+        .from('pickup_point_applications')
+        .update({'verification_status': 'rejected'})
+        .eq('id', applicationId);
+  }
+
+  String _buildOpeningHours({
+    required String? opensAt,
+    required String? closesAt,
+  }) {
+    final open = opensAt?.trim() ?? '';
+    final close = closesAt?.trim() ?? '';
+    if (open.isEmpty && close.isEmpty) return '';
+    if (open.isEmpty) return close;
+    if (close.isEmpty) return open;
+    return '$open - $close';
   }
 
   Future<String?> getCurrentRole() async {

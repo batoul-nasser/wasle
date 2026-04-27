@@ -1,393 +1,254 @@
-// File: lib/features/customer/presentation/pages/customer_dashboard_screen.dart
-
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'package:wasle/core/ui/ui.dart';
+
 import 'track_my_order_page.dart';
 import 'payment_method_page.dart';
 import 'pickup_point_page.dart';
 
-class CustomerDashboardScreen extends StatefulWidget {
+class CustomerDashboardScreen extends StatelessWidget {
   const CustomerDashboardScreen({super.key});
 
-  @override
-  State<CustomerDashboardScreen> createState() =>
-      _CustomerDashboardScreenState();
-}
-
-class _CustomerDashboardScreenState extends State<CustomerDashboardScreen> {
-  final _client = Supabase.instance.client;
-
-  bool _isLoading = true;
-  String? _errorText;
-  String _userName = 'Customer';
-  List<Map<String, dynamic>> _orders = [];
-  Map<String, dynamic>? _latestOrder;
-  Map<String, dynamic>? _latestPayment;
-  Map<String, dynamic>? _pickupPoint;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadData();
+  Widget _buildCard({
+    required IconData icon,
+    required String title,
+    required String value,
+  }) {
+    return Expanded(
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(18),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x14000000),
+              blurRadius: 10,
+              offset: Offset(0, 4),
+            ),
+          ],
+        ),
+        child: Column(
+          children: [
+            Icon(icon, size: 28, color: Colors.blue),
+            const SizedBox(height: 10),
+            Text(
+              value,
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 6),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.black54),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  Future<void> _loadData() async {
-    try {
-      setState(() {
-        _isLoading = true;
-        _errorText = null;
-      });
-
-      final user = _client.auth.currentUser;
-      if (user == null) {
-        setState(() {
-          _isLoading = false;
-          _errorText = 'Not logged in';
-        });
-        return;
-      }
-
-      // Load profile
-      final profile = await _client
-          .from('profiles')
-          .select('full_name')
-          .eq('id', user.id)
-          .maybeSingle();
-      _userName = profile?['full_name']?.toString() ?? 'Customer';
-
-      // Load customer orders (orders tied to customer_profile_id)
-      final ordersRaw = await _client
-          .from('orders')
-          .select('id, tracking_code, status, created_at, pickup_point_id')
-          .eq('customer_profile_id', user.id)
-          .order('created_at', ascending: false)
-          .limit(10);
-
-      _orders = List<Map<String, dynamic>>.from(ordersRaw);
-
-      if (_orders.isNotEmpty) {
-        _latestOrder = _orders.first;
-        final orderId = _latestOrder!['id'].toString();
-
-        // Load payment for latest order
-        final paymentRaw = await _client
-            .from('payments')
-            .select('status, method, amount')
-            .eq('order_id', orderId)
-            .maybeSingle();
-        _latestPayment = paymentRaw;
-
-        // Load pickup point if linked
-        final ppId = _latestOrder!['pickup_point_id']?.toString();
-        if (ppId != null && ppId.isNotEmpty) {
-          final ppRaw = await _client
-              .from('pickup_points')
-              .select('name, address_text, phone')
-              .eq('id', ppId)
-              .maybeSingle();
-          _pickupPoint = ppRaw;
-        }
-      }
-
-      if (!mounted) return;
-      setState(() => _isLoading = false);
-    } catch (e) {
-      if (!mounted) return;
-      setState(() {
-        _isLoading = false;
-        _errorText = e.toString();
-      });
-    }
+  Widget _buildInfoSection({
+    required String title,
+    required List<Widget> children,
+  }) {
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x14000000),
+            blurRadius: 10,
+            offset: Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            title,
+            style: const TextStyle(fontSize: 17, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 14),
+          ...children,
+        ],
+      ),
+    );
   }
 
-  Future<void> _logout() async {
-    await _client.auth.signOut();
-    if (!mounted) return;
-    Navigator.of(context).pushNamedAndRemoveUntil('/welcome', (_) => false);
+  Widget _buildInfoRow({
+    required IconData icon,
+    required String label,
+    required String value,
+    Color? valueColor,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        children: [
+          Icon(icon, color: Colors.blue, size: 22),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(label, style: const TextStyle(color: Colors.black54)),
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: valueColor ?? Colors.black87,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  String _formatStatus(String? raw) {
-    if (raw == null || raw.isEmpty) return 'Unknown';
-    return raw
-        .replaceAll('_', ' ')
-        .split(' ')
-        .map((w) => w.isEmpty ? w : '${w[0].toUpperCase()}${w.substring(1)}')
-        .join(' ');
-  }
-
-  Color _statusColor(String? raw) {
-    switch (raw?.toLowerCase()) {
-      case 'delivered':
-      case 'dropped_at_pickup_point':
-        return AppColors.success;
-      case 'in_transit':
-      case 'picked_up':
-      case 'driver_received_order':
-        return AppColors.info;
-      case 'assigned':
-      case 'pending_driver_receipt':
-      case 'created':
-      case 'pending':
-        return AppColors.warning;
-      case 'failed':
-      case 'cancelled':
-        return AppColors.danger;
-      default:
-        return AppColors.textSecondary;
-    }
+  Widget _buildActionButton({
+    required BuildContext context,
+    required IconData icon,
+    required String label,
+    required VoidCallback onPressed,
+  }) {
+    return SizedBox(
+      width: double.infinity,
+      child: ElevatedButton.icon(
+        onPressed: onPressed,
+        icon: Icon(icon),
+        label: Text(label),
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    final activeCount = _orders
-        .where(
-          (o) => !{
-            'delivered',
-            'cancelled',
-            'returned_to_store',
-          }.contains(o['status']?.toString().toLowerCase()),
-        )
-        .length;
-    final completedCount = _orders
-        .where((o) => o['status']?.toString().toLowerCase() == 'delivered')
-        .length;
-
-    final orderStatus = _latestOrder?['status']?.toString();
-    final trackingCode =
-        _latestOrder?['tracking_code']?.toString() ??
-        _latestOrder?['id']?.toString() ??
-        '-';
-    final paymentStatus = _latestPayment?['status']?.toString() ?? 'pending';
-    final paymentMethod = _latestPayment?['method']?.toString() ?? '-';
+    const orderId = 'ORD-1024';
+    const orderStatus = 'Arrived at Pickup Point';
+    const eta = 'Ready for pickup';
 
     return Scaffold(
-      backgroundColor: AppColors.background,
+      backgroundColor: const Color(0xFFF5F7FB),
+
+      // ✅ FIXED APPBAR + LOGOUT
       appBar: AppBar(
         title: const Text('Customer Dashboard'),
         centerTitle: true,
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout_rounded),
-            tooltip: 'Log out',
-            onPressed: _logout,
+            icon: const Icon(Icons.logout),
+            tooltip: 'Sign out',
+            onPressed: () async {
+              await Supabase.instance.client.auth.signOut();
+
+              if (!context.mounted) return;
+
+              Navigator.pushNamedAndRemoveUntil(
+                context,
+                '/login',
+                (route) => false,
+              );
+            },
           ),
         ],
       ),
-      body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : _errorText != null
-          ? EmptyStateWidget(
-              icon: Icons.error_outline_rounded,
-              title: 'Could not load dashboard',
-              message: _errorText!,
-              action: SecondaryButton(
-                label: 'Try Again',
-                isExpanded: false,
-                onPressed: _loadData,
+
+      body: ListView(
+        padding: const EdgeInsets.all(20),
+        children: [
+          const Text(
+            'Order Summary',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 12),
+
+          Row(
+            children: [
+              _buildCard(
+                icon: Icons.inventory_2_outlined,
+                title: 'Active Order',
+                value: orderId,
               ),
-            )
-          : RefreshIndicator(
-              onRefresh: _loadData,
-              child: ListView(
-                padding: const EdgeInsets.all(AppSpacing.xl),
-                children: [
-                  // Hero card
-                  Container(
-                    padding: const EdgeInsets.all(AppSpacing.lg),
-                    decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                        colors: [AppColors.primary, AppColors.primaryDark],
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                      ),
-                      borderRadius: BorderRadius.circular(24),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'CUSTOMER PORTAL',
-                          style: AppTextStyles.label.copyWith(
-                            color: Colors.white.withOpacity(0.85),
-                            letterSpacing: 1,
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.xs),
-                        Text(
-                          'Welcome, $_userName!',
-                          style: AppTextStyles.heading2.copyWith(
-                            color: Colors.white,
-                          ),
-                        ),
-                        const SizedBox(height: AppSpacing.xs),
-                        Text(
-                          'Track your orders, payment, and pickup info.',
-                          style: AppTextStyles.body.copyWith(
-                            color: Colors.white70,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
+              const SizedBox(width: 12),
+              _buildCard(icon: Icons.schedule, title: 'ETA', value: eta),
+            ],
+          ),
 
-                  // Stats
-                  const SectionHeader(title: 'Order Summary'),
-                  const SizedBox(height: AppSpacing.md),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: DashboardStatCard(
-                          icon: Icons.inventory_2_outlined,
-                          value: '${_orders.length}',
-                          label: 'Total Orders',
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: DashboardStatCard(
-                          icon: Icons.local_shipping_outlined,
-                          value: '$activeCount',
-                          label: 'Active',
-                          accentColor: AppColors.warning,
-                          accentSoftColor: AppColors.warningSoft,
-                        ),
-                      ),
-                      const SizedBox(width: AppSpacing.md),
-                      Expanded(
-                        child: DashboardStatCard(
-                          icon: Icons.check_circle_outline,
-                          value: '$completedCount',
-                          label: 'Delivered',
-                          accentColor: AppColors.success,
-                          accentSoftColor: AppColors.successSoft,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
+          const SizedBox(height: 24),
 
-                  // Latest order
-                  if (_latestOrder != null) ...[
-                    const SectionHeader(
-                      title: 'Latest Order',
-                      subtitle: 'Real-time status from the platform',
-                    ),
-                    const SizedBox(height: AppSpacing.md),
-                    InfoCard(
-                      title: 'Order #$trackingCode',
-                      subtitle: 'Status',
-                      trailing: StatusChip(
-                        label: _formatStatus(orderStatus),
-                        tone: StatusChip.fromStatus(orderStatus),
-                      ),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.payments_outlined,
-                                size: 16,
-                                color: AppColors.textSecondary,
-                              ),
-                              const SizedBox(width: AppSpacing.xs),
-                              Text(
-                                'Payment: ${_formatStatus(paymentMethod)} — ',
-                                style: AppTextStyles.bodyMuted,
-                              ),
-                              StatusChip(
-                                label: _formatStatus(paymentStatus),
-                                tone: paymentStatus == 'paid'
-                                    ? StatusChipTone.success
-                                    : StatusChipTone.warning,
-                              ),
-                            ],
-                          ),
-                          if (_pickupPoint != null) ...[
-                            const SizedBox(height: AppSpacing.sm),
-                            Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                const Icon(
-                                  Icons.store_outlined,
-                                  size: 16,
-                                  color: AppColors.textSecondary,
-                                ),
-                                const SizedBox(width: AppSpacing.xs),
-                                Expanded(
-                                  child: Text(
-                                    _pickupPoint!['name']?.toString() ??
-                                        'Pickup Point',
-                                    style: AppTextStyles.body,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            if (_pickupPoint!['address_text'] != null) ...[
-                              const SizedBox(height: AppSpacing.xxs),
-                              Padding(
-                                padding: const EdgeInsets.only(left: 22),
-                                child: Text(
-                                  _pickupPoint!['address_text'].toString(),
-                                  style: AppTextStyles.bodyMuted,
-                                ),
-                              ),
-                            ],
-                          ],
-                        ],
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.xl),
-                  ] else ...[
-                    const EmptyStateWidget(
-                      icon: Icons.inbox_outlined,
-                      title: 'No orders yet',
-                      message: 'Your orders will appear here once placed.',
-                    ),
-                    const SizedBox(height: AppSpacing.xl),
-                  ],
-
-                  // Quick actions
-                  const SectionHeader(title: 'Quick Actions'),
-                  const SizedBox(height: AppSpacing.md),
-                  PrimaryButton(
-                    label: 'Track My Order',
-                    icon: Icons.location_searching_outlined,
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const TrackMyOrderPage(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  SecondaryButton(
-                    label: 'Payment Method',
-                    icon: Icons.payments_outlined,
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const PaymentMethodPage(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.sm),
-                  SecondaryButton(
-                    label: 'Pickup Point Details',
-                    icon: Icons.store_outlined,
-                    onPressed: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => const PickupPointPage(),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.xl),
-                ],
+          _buildInfoSection(
+            title: 'Current Order',
+            children: [
+              _buildInfoRow(
+                icon: Icons.confirmation_number,
+                label: 'Order ID',
+                value: orderId,
               ),
-            ),
+              _buildInfoRow(
+                icon: Icons.local_shipping,
+                label: 'Status',
+                value: orderStatus,
+              ),
+            ],
+          ),
+
+          const SizedBox(height: 24),
+
+          const Text(
+            'Quick Actions',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+
+          const SizedBox(height: 12),
+
+          _buildActionButton(
+            context: context,
+            icon: Icons.location_searching,
+            label: 'Track My Order',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const TrackMyOrderPage()),
+              );
+            },
+          ),
+
+          const SizedBox(height: 12),
+
+          _buildActionButton(
+            context: context,
+            icon: Icons.payments,
+            label: 'Payment Method',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PaymentMethodPage()),
+              );
+            },
+          ),
+
+          const SizedBox(height: 12),
+
+          _buildActionButton(
+            context: context,
+            icon: Icons.store,
+            label: 'Pickup Point Details',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const PickupPointPage()),
+              );
+            },
+          ),
+        ],
+      ),
     );
   }
 }
