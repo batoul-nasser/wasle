@@ -76,7 +76,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
   static const _dropoffHome = 'Home Delivery';
   static const _dropoffPickupSpecific = 'Specific Pickup Point';
-  static const _dropoffPickupNearest = 'Nearest Pickup Point';
 
   static const DeliveryCompanyMode _deliveryCompanyMode =
       DeliveryCompanyMode.linkedOnly;
@@ -203,127 +202,77 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   }
 
   Future<List<_PickupPointOption>> _loadPickupPoints() async {
-    try {
-      final rows = await _client
-          .from('pickup_points')
-          .select('''
-            id,
-            name,
-            address_text,
-            lat,
-            lng,
-            city,
-            area,
-            is_active,
-            status,
-            merchant_id,
-            branch_id,
-            merchant_branches:branch_id (
-              name,
-              address_text
-            )
-          ''')
-          .eq('is_active', true)
-          .inFilter('status', ['approved', 'active'])
-          .order('name');
+  final rows = await _client
+      .from('pickup_points')
+      .select('''
+        id,
+        name,
+        address_text,
+        lat,
+        lng,
+        city,
+        area,
+        is_active,
+        status,
+        branch_id,
+        merchant_branches:branch_id (
+          name,
+          address_text
+        )
+      ''')
+      .eq('is_active', true)
+      .inFilter('status', ['approved', 'active'])
+      .order('created_at', ascending: false);
 
-      final orderRows = await _client
-          .from('orders')
-          .select('pickup_point_id')
-          .not('pickup_point_id', 'is', null);
+  final raw = List<Map<String, dynamic>>.from(rows);
 
-      final raw = List<Map<String, dynamic>>.from(rows);
-      final pickupPointIds = raw
-          .map((row) => row['id']?.toString())
-          .whereType<String>()
-          .where((id) => id.isNotEmpty)
-          .toList();
-      final ratingSummaries = await _authService.getPickupPointRatingSummaries(
-        pickupPointIds,
-      );
-      final usageByPickupPointId = <String, int>{};
-      for (final row in List<Map<String, dynamic>>.from(orderRows)) {
-        final pickupPointId = row['pickup_point_id']?.toString();
-        if (pickupPointId == null || pickupPointId.isEmpty) continue;
-        usageByPickupPointId[pickupPointId] =
-            (usageByPickupPointId[pickupPointId] ?? 0) + 1;
-      }
+  final options = raw
+      .map((row) {
+        final pickupName = (row['name']?.toString() ?? '').trim();
+        final pickupAddress = (row['address_text']?.toString() ?? '').trim();
+        final city = (row['city']?.toString() ?? '').trim();
+        final area = (row['area']?.toString() ?? '').trim();
+        final lat = _asDouble(row['lat']);
+        final lng = _asDouble(row['lng']);
 
-      final options = raw
-          .map((row) {
-            final pickupName = (row['name']?.toString() ?? '').trim();
-            final pickupAddress = (row['address_text']?.toString() ?? '')
-                .trim();
-            final city = (row['city']?.toString() ?? '').trim();
-            final area = (row['area']?.toString() ?? '').trim();
-            final lat = _asDouble(row['lat']);
-            final lng = _asDouble(row['lng']);
+        String branchName = '';
+        final branch = row['merchant_branches'];
 
-            final branch = row['merchant_branches'];
-            String branchName = '';
+        if (branch is Map<String, dynamic>) {
+          branchName = (branch['name']?.toString() ?? '').trim();
+        } else if (branch is List && branch.isNotEmpty) {
+          final first = branch.first;
+          if (first is Map<String, dynamic>) {
+            branchName = (first['name']?.toString() ?? '').trim();
+          }
+        }
 
-            if (branch is Map<String, dynamic>) {
-              branchName = (branch['name']?.toString() ?? '').trim();
-            } else if (branch is List && branch.isNotEmpty) {
-              final first = branch.first;
-              if (first is Map<String, dynamic>) {
-                branchName = (first['name']?.toString() ?? '').trim();
-              }
-            }
+        final title = branchName.isNotEmpty
+            ? '$pickupName — $branchName'
+            : pickupName;
 
-            final title = branchName.isNotEmpty
-                ? '$pickupName — $branchName'
-                : pickupName;
-
-            return _PickupPointOption(
-              id: row['id']?.toString() ?? '',
-              name: title,
-              subtitle: pickupAddress.isEmpty ? null : pickupAddress,
-              addressText: pickupAddress,
-              lat: lat,
-              lng: lng,
-              city: city,
-              area: area,
-              usageCount:
-                  usageByPickupPointId[row['id']?.toString() ?? ''] ?? 0,
-              averageRating:
-                  (ratingSummaries[row['id']?.toString() ?? '']?['average']
-                          as num?)
-                      ?.toDouble() ??
-                  0.0,
-              reviewCount:
-                  (ratingSummaries[row['id']?.toString() ?? '']?['count']
-                          as num?)
-                      ?.toInt() ??
-                  0,
-            );
-          })
-          .where(
-            (option) =>
-                option.id.isNotEmpty &&
-                option.name.isNotEmpty &&
-                option.lat != null &&
-                option.lng != null,
-          )
-          .toList();
-
-      options.sort((a, b) {
-        final ratingCompare = b.averageRating.compareTo(a.averageRating);
-        if (ratingCompare != 0) return ratingCompare;
-        final reviewCompare = b.reviewCount.compareTo(a.reviewCount);
-        if (reviewCompare != 0) return reviewCompare;
-        final usageCompare = b.usageCount.compareTo(a.usageCount);
-        if (usageCompare != 0) return usageCompare;
-        return a.displayName.toLowerCase().compareTo(
-          b.displayName.toLowerCase(),
+        return _PickupPointOption(
+          id: row['id']?.toString() ?? '',
+          name: title,
+          subtitle: pickupAddress.isEmpty ? null : pickupAddress,
+          addressText: pickupAddress,
+          lat: lat,
+          lng: lng,
+          city: city,
+          area: area,
         );
-      });
+      })
+      .where(
+        (option) =>
+            option.id.isNotEmpty &&
+            option.name.isNotEmpty &&
+            option.lat != null &&
+            option.lng != null,
+      )
+      .toList();
 
-      return options;
-    } catch (_) {
-      return const [];
-    }
-  }
+  return options;
+}
 
   Future<List<_DeliveryCompanyOption>> _loadDeliveryCompanies(
     String merchantId,
@@ -521,8 +470,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   }
 
   bool get _requiresCustomerMap {
-    return _dropoffType == _dropoffHome ||
-        _dropoffType == _dropoffPickupNearest;
+    return _dropoffType == _dropoffHome;
   }
 
   bool get _canSubmit {
@@ -534,11 +482,11 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         _selectedSourcePickupPointId != null;
 
     final destinationOk = switch (_dropoffType) {
-      _dropoffHome => _addressCtrl.text.trim().isNotEmpty,
+      _dropoffHome =>
+        _addressCtrl.text.trim().isNotEmpty &&
+        _selectedCustomerLat != null &&
+        _selectedCustomerLng != null,
       _dropoffPickupSpecific => _selectedDestinationPickupPointId != null,
-      _dropoffPickupNearest =>
-        _selectedDestinationPickupPointId != null &&
-            _addressCtrl.text.trim().isNotEmpty,
       _ => false,
     };
 
@@ -606,10 +554,11 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     setState(() {
       _dropoffType = value;
 
-      if (_dropoffType == _dropoffHome) {
+      if (_dropoffType == _dropoffPickupSpecific) {
         _selectedDestinationPickupPointId = null;
-      } else if (_dropoffType == _dropoffPickupNearest) {
-        _selectedDestinationPickupPointId = null;
+        _addressCtrl.clear();
+        _selectedCustomerLat = null;
+        _selectedCustomerLng = null;
       }
     });
 
@@ -633,10 +582,12 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     final nextSourcePickupPoints = _computeSourcePickupCandidates(
       merchantLocation: merchantLocation,
     );
-    final nextDestinationPickupPoints = _computeDestinationPickupCandidates(
-      customerLat: _selectedCustomerLat,
-      customerLng: _selectedCustomerLng,
-    );
+    final nextDestinationPickupPoints = _dropoffType == _dropoffHome
+        ? _computeBackupPickupCandidates(
+            customerLat: _selectedCustomerLat,
+            customerLng: _selectedCustomerLng,
+          )
+        : _computeSpecificPickupCandidates();
 
     String? nextSourcePickupId = _selectedSourcePickupPointId;
     String? nextDestinationPickupId = _selectedDestinationPickupPointId;
@@ -654,43 +605,26 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       nextSourcePickupId = null;
     }
 
-    final sourceLocation = _resolveSourceLocation(
-      sourcePickupId: nextSourcePickupId,
-      sourceCandidates: nextSourcePickupPoints,
-    );
-
-    if (_dropoffType == _dropoffPickupSpecific) {
-      if (!_containsPickup(
-        nextDestinationPickupPoints,
-        nextDestinationPickupId,
-      )) {
+    if (_dropoffType == _dropoffHome) {
+      if (!_containsPickup(nextDestinationPickupPoints, nextDestinationPickupId)) {
         nextDestinationPickupId = nextDestinationPickupPoints.isNotEmpty
             ? nextDestinationPickupPoints.first.id
             : null;
       }
-    } else if (_dropoffType == _dropoffPickupNearest) {
-      final nearest = _findNearestPickupFromList(
-        points: nextDestinationPickupPoints,
-        lat: _selectedCustomerLat,
-        lng: _selectedCustomerLng,
-      );
-
-      nextDestinationPickupId = nearest?.id;
-      if (nearest == null) {
-        info =
-            'Nearest pickup automation needs a customer map location and nearby pickup points.';
+    } else if (_dropoffType == _dropoffPickupSpecific) {
+      if (!_containsPickup(nextDestinationPickupPoints, nextDestinationPickupId)) {
+        nextDestinationPickupId = null;
       }
     } else {
       nextDestinationPickupId = null;
     }
 
     final destinationLocation = _resolveDestinationLocation(
-      overrideNearestPickupId: nextDestinationPickupId,
       destinationCandidates: nextDestinationPickupPoints,
     );
 
     final rankedCompanies = _rankDeliveryCompaniesForMerchant(
-      merchantLocation: sourceLocation,
+      merchantLocation: merchantLocation,
       destination: destinationLocation,
     );
 
@@ -700,34 +634,32 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           .take(_maxRecommendedCompanies)
           .toList();
 
-      nextRecommendedCompanyId = topCompanies.first.id;
+      nextRecommendedCompanyId = rankedCompanies.first.company.id;
       final currentStillValid = topCompanies.any(
         (company) => company.id == _selectedDeliveryCompanyId,
       );
 
       nextSelectedCompanyId = currentStillValid
           ? _selectedDeliveryCompanyId
-          : topCompanies.first.id;
+          : rankedCompanies.first.company.id;
 
-      final best = rankedCompanies.first;
       final sourceLabel = _sourceLabel(
         sourcePickupId: nextSourcePickupId,
         sourceCandidates: nextSourcePickupPoints,
       );
       final destinationLabel = _destinationLabel(
-        overrideNearestPickupId: nextDestinationPickupId,
         destinationCandidates: nextDestinationPickupPoints,
       );
 
       info =
-          'Top ${topCompanies.length} companies are filtered by merchant location first, then capacity. '
-          'Best match: ${best.company.name}'
-          '${best.bestHub == null || best.bestHub!.name.isEmpty ? '' : ' via ${best.bestHub!.name}'} '
-          'for merchant area around ${_merchantBranchName ?? 'store'} and route $sourceLabel → $destinationLabel.';
+          'Companies are fixed from the 3 nearest linked companies to the merchant location, then ranked by capacity. '
+          '${_pickupSourceType == _pickupFromPickupPoint && nextSourcePickupPoints.isNotEmpty ? 'Recommended source pickup: ${nextSourcePickupPoints.first.displayName}. ' : ''}'
+          '${_dropoffType == _dropoffHome && nextDestinationPickupPoints.isNotEmpty ? 'Backup pickup priority is based on the customer location. ' : _dropoffType == _dropoffPickupSpecific ? 'Specific pickup is selected manually from all pickup points. ' : ''}'
+          'Current route: $sourceLabel → $destinationLabel.';
+    } else {
+      info =
+          'Automation needs merchant location for company filtering. Home delivery backup pickup priority uses the customer location.';
     }
-
-    info ??=
-        'Automation needs merchant location for company filtering and customer location for destination pickup suggestions when applicable.';
 
     if (!mounted) return;
     setState(() {
@@ -794,27 +726,30 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       return da.compareTo(db);
     });
 
-    return points.take(_maxSourcePickupSuggestions).toList();
+    return points;
   }
 
-  List<_PickupPointOption> _computeDestinationPickupCandidates({
+  List<_PickupPointOption> _computeBackupPickupCandidates({
     required double? customerLat,
     required double? customerLng,
   }) {
-    if (customerLat == null || customerLng == null) return const [];
-
     final points = List<_PickupPointOption>.from(_allPickupPoints);
+    if (customerLat == null || customerLng == null) return points;
+
     points.sort((a, b) {
       final da = _distanceKm(customerLat, customerLng, a.lat!, a.lng!);
       final db = _distanceKm(customerLat, customerLng, b.lat!, b.lng!);
       return da.compareTo(db);
     });
 
-    return points.take(_maxDestinationPickupSuggestions).toList();
+    return points;
+  }
+
+  List<_PickupPointOption> _computeSpecificPickupCandidates() {
+    return List<_PickupPointOption>.from(_allPickupPoints);
   }
 
   _LatLngOption? _resolveDestinationLocation({
-    String? overrideNearestPickupId,
     List<_PickupPointOption>? destinationCandidates,
   }) {
     switch (_dropoffType) {
@@ -829,17 +764,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
       case _dropoffPickupSpecific:
         final point = _pickupPointByIdFrom(
-          _selectedDestinationPickupPointId,
-          destinationCandidates ?? _destinationPickupPoints,
-        );
-        if (point == null) return null;
-        return _LatLngOption(lat: point.lat!, lng: point.lng!);
-
-      case _dropoffPickupNearest:
-        final point = _pickupPointByIdFrom(
-          overrideNearestPickupId,
-          destinationCandidates ?? _destinationPickupPoints,
-        );
+              _selectedDestinationPickupPointId,
+              destinationCandidates ?? _destinationPickupPoints,
+            ) ??
+            _pickupPointById(_selectedDestinationPickupPointId);
         if (point == null) return null;
         return _LatLngOption(lat: point.lat!, lng: point.lng!);
 
@@ -908,9 +836,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       (a, b) => a.merchantDistanceKm.compareTo(b.merchantDistanceKm),
     );
 
-    final topNearest = nearestToMerchant
-        .take(_maxRecommendedCompanies)
-        .toList();
+    final topNearest = nearestToMerchant.take(_maxRecommendedCompanies).toList();
 
     final feasible = topNearest
         .where((entry) => _companyHasAvailableCapacity(entry.company))
@@ -939,19 +865,13 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         .toList();
 
     feasible.sort((a, b) {
-      final activeCompare = b.remainingActiveOrders.compareTo(
-        a.remainingActiveOrders,
-      );
+      final activeCompare = b.remainingActiveOrders.compareTo(a.remainingActiveOrders);
       if (activeCompare != 0) return activeCompare;
 
-      final dailyCompare = b.remainingDailyOrders.compareTo(
-        a.remainingDailyOrders,
-      );
+      final dailyCompare = b.remainingDailyOrders.compareTo(a.remainingDailyOrders);
       if (dailyCompare != 0) return dailyCompare;
 
-      final destinationCompare = a.destinationDistanceKm.compareTo(
-        b.destinationDistanceKm,
-      );
+      final destinationCompare = a.destinationDistanceKm.compareTo(b.destinationDistanceKm);
       if (destinationCompare != 0) return destinationCompare;
 
       return a.merchantDistanceKm.compareTo(b.merchantDistanceKm);
@@ -998,15 +918,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     if (_dropoffType == _dropoffPickupSpecific &&
         _selectedDestinationPickupPointId == null) {
       _showSnackBar('Please select a destination pickup point.', isError: true);
-      return;
-    }
-
-    if (_dropoffType == _dropoffPickupNearest &&
-        _selectedDestinationPickupPointId == null) {
-      _showSnackBar(
-        'Could not determine the nearest pickup point. Please pick a valid map location.',
-        isError: true,
-      );
       return;
     }
 
@@ -1102,11 +1013,10 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   Future<void> _saveOrderExtras(String orderId) async {
     if (orderId.trim().isEmpty || orderId == '-') return;
 
-    final destinationPickupId = switch (_dropoffType) {
-      _dropoffPickupSpecific => _selectedDestinationPickupPointId,
-      _dropoffPickupNearest => _selectedDestinationPickupPointId,
-      _ => null,
-    };
+    final destinationPickupId =
+        _dropoffType == _dropoffPickupSpecific
+            ? _selectedDestinationPickupPointId
+            : null;
 
     await _client
         .from('orders')
@@ -1142,8 +1052,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         return 'home';
       case _dropoffPickupSpecific:
         return 'pickup_point_specific';
-      case _dropoffPickupNearest:
-        return 'pickup_point_nearest';
       default:
         return 'home';
     }
@@ -1154,7 +1062,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       case _dropoffHome:
         return _addressCtrl.text.trim();
       case _dropoffPickupSpecific:
-      case _dropoffPickupNearest:
         return _destinationPickupPoint()?.addressText.trim().isNotEmpty == true
             ? _destinationPickupPoint()!.addressText
             : _addressCtrl.text.trim();
@@ -1169,14 +1076,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         return _addressCtrl.text.trim().isEmpty
             ? null
             : _addressCtrl.text.trim();
-      case _dropoffPickupNearest:
-        return _addressCtrl.text.trim().isEmpty
-            ? null
-            : _addressCtrl.text.trim();
       case _dropoffPickupSpecific:
-        return _addressCtrl.text.trim().isEmpty
-            ? null
-            : _addressCtrl.text.trim();
+        return null;
       default:
         return _addressCtrl.text.trim().isEmpty
             ? null
@@ -1318,7 +1219,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         return address.isEmpty ? null : address;
 
       case _dropoffPickupSpecific:
-      case _dropoffPickupNearest:
         final destinationPickup = _destinationPickupPoint();
         final pickupAddress = destinationPickup?.addressText.trim();
         if (pickupAddress != null && pickupAddress.isNotEmpty) {
@@ -1346,7 +1246,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         return null;
 
       case _dropoffPickupSpecific:
-      case _dropoffPickupNearest:
         final destinationPickup = _destinationPickupPoint();
         if (destinationPickup?.lat != null && destinationPickup?.lng != null) {
           return _formatCoordinates(
@@ -1393,7 +1292,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   }
 
   String _destinationLabel({
-    String? overrideNearestPickupId,
     List<_PickupPointOption>? destinationCandidates,
   }) {
     switch (_dropoffType) {
@@ -1407,18 +1305,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
             ) ??
             _pickupPointById(_selectedDestinationPickupPointId);
         return point?.displayName ?? 'Specific Pickup Point';
-      case _dropoffPickupNearest:
-        final selectedId =
-            overrideNearestPickupId ?? _selectedDestinationPickupPointId;
-        final point =
-            _pickupPointByIdFrom(
-              selectedId,
-              destinationCandidates ?? _destinationPickupPoints,
-            ) ??
-            _pickupPointById(selectedId);
-        return point == null
-            ? 'Nearest Pickup Point'
-            : 'Nearest Pickup Point (${point.displayName})';
       default:
         return _dropoffHome;
     }
@@ -1653,10 +1539,6 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         _selectedDestinationPickupPointId == null) {
       return 'Select a destination pickup point to continue.';
     }
-    if (_dropoffType == _dropoffPickupNearest &&
-        (_selectedCustomerLat == null || _selectedCustomerLng == null)) {
-      return 'Pick the customer location on the map to find the nearest pickup point.';
-    }
     if (_filteredDeliveryCompanies.isNotEmpty &&
         _selectedDeliveryCompanyId == null) {
       return 'Select a delivery company to continue.';
@@ -1705,13 +1587,11 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     final showSourcePickupSelector =
         _pickupSourceType == _pickupFromPickupPoint;
     final showDestinationPickupSelector =
-        _dropoffType == _dropoffPickupSpecific ||
-        _dropoffType == _dropoffPickupNearest;
+        _dropoffType == _dropoffPickupSpecific;
 
-    final showAddressField =
-        _dropoffType == _dropoffHome || _dropoffType == _dropoffPickupNearest;
+    final showAddressField = _dropoffType == _dropoffHome;
 
-    final nearestPickup = _dropoffType == _dropoffPickupNearest
+    final backupPickup = _dropoffType == _dropoffHome
         ? _destinationPickupPoint()
         : null;
 
@@ -1858,7 +1738,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       _InfoBox(
                         icon: Icons.near_me_outlined,
                         text:
-                            'Source pickup points are filtered near the merchant location.',
+                            'All pickup points are shown. The closest one to the merchant is recommended first.',
                         color: _W.blue,
                         background: _W.blueLt,
                       ),
@@ -1866,7 +1746,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       if (_sourcePickupPoints.isEmpty)
                         const _InfoBox(
                           icon: Icons.info_outline,
-                          text: 'No active pickup points found on Wasle.',
+                          text: 'No approved pickup points found in the system.',
                           color: _W.amber,
                           background: _W.amberLt,
                         )
@@ -1997,27 +1877,18 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                           onTap: () =>
                               _onDropoffTypeChanged(_dropoffPickupSpecific),
                         ),
-                        _ChoiceChipButton(
-                          label: _dropoffPickupNearest,
-                          selected: _dropoffType == _dropoffPickupNearest,
-                          onTap: () =>
-                              _onDropoffTypeChanged(_dropoffPickupNearest),
-                        ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     if (showAddressField) ...[
                       _FormField(
                         controller: _addressCtrl,
-                        label: _dropoffType == _dropoffHome
-                            ? 'Customer Address'
-                            : 'Customer Address (used to find nearest pickup)',
+                        label: 'Customer Address',
                         hint: 'Beirut, Hamra St.',
                         icon: Icons.location_on_outlined,
                         validator: (value) {
                           if (!showAddressField) return null;
-                          if (_dropoffType == _dropoffHome ||
-                              _dropoffType == _dropoffPickupNearest) {
+                          if (_dropoffType == _dropoffHome) {
                             return (value == null || value.trim().isEmpty)
                                 ? 'Address is required'
                                 : null;
@@ -2049,77 +1920,108 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                       ],
                       const SizedBox(height: 12),
                     ],
-                    if (showDestinationPickupSelector) ...[
-                      if (_dropoffType == _dropoffPickupSpecific) ...[
-                        _InfoBox(
-                          icon: Icons.near_me_outlined,
-                          text:
-                              'Destination pickup points are filtered near the customer location.',
-                          color: _W.blue,
-                          background: _W.blueLt,
-                        ),
-                        const SizedBox(height: 10),
-                        if (_destinationPickupPoints.isEmpty)
-                          const _InfoBox(
-                            icon: Icons.info_outline,
-                            text:
-                                'No approved pickup points found in the system.',
-                            color: _W.amber,
-                            background: _W.amberLt,
-                          )
-                        else
-                          DropdownButtonFormField<String>(
-                            key: ValueKey(
-                              'destination-pickup-${_selectedDestinationPickupPointId ?? 'none'}',
-                            ),
-                            initialValue: _selectedDestinationPickupPointId,
-                            isExpanded: true,
-                            decoration: _inputDecor(
-                              label: 'Destination Pickup Point',
-                              hint: 'Choose destination pickup point',
-                              icon: Icons.pin_drop_outlined,
-                            ),
-                            items: _destinationPickupPoints
-                                .map(
-                                  (point) => DropdownMenuItem<String>(
-                                    value: point.id,
-                                    child: Text(
-                                      point.displayName,
-                                      overflow: TextOverflow.ellipsis,
-                                      maxLines: 2,
-                                      style: _t(14, FontWeight.w500),
-                                    ),
-                                  ),
-                                )
-                                .toList(),
-                            validator: (value) =>
-                                _dropoffType == _dropoffPickupSpecific &&
-                                    value == null
-                                ? 'Please select a destination pickup point'
-                                : null,
-                            onChanged: _loadingFormData
-                                ? null
-                                : _onDestinationPickupChanged,
-                          ),
-                      ],
-                      if (_dropoffType == _dropoffPickupNearest) ...[
-                        if (nearestPickup == null)
-                          const _InfoBox(
-                            icon: Icons.info_outline,
-                            text:
-                                'Nearest pickup point will appear after selecting a valid customer map location.',
-                            color: _W.amber,
-                            background: _W.amberLt,
-                          )
-                        else
+                    if (_dropoffType == _dropoffHome) ...[
+                      _InfoBox(
+                        icon: Icons.pin_drop_outlined,
+                        text:
+                            'Backup Pickup Point if Customer is Unavailable. All pickup points are shown, and the closest one to the customer is recommended first.',
+                        color: _W.blue,
+                        background: _W.blueLt,
+                      ),
+                      const SizedBox(height: 10),
+                      if (_destinationPickupPoints.isEmpty)
+                        const _InfoBox(
+                          icon: Icons.info_outline,
+                          text: 'No approved pickup points found in the system.',
+                          color: _W.amber,
+                          background: _W.amberLt,
+                        )
+                      else ...[
+                        if (backupPickup != null)
                           _InfoBox(
-                            icon: Icons.pin_drop_outlined,
-                            text:
-                                'Nearest pickup point: ${nearestPickup.displayName}',
-                            color: _W.blue,
-                            background: _W.blueLt,
+                            icon: Icons.auto_awesome_outlined,
+                            text: 'Recommended backup pickup: ${backupPickup.displayName}',
+                            color: _W.green,
+                            background: _W.greenLt,
                           ),
+                        const SizedBox(height: 10),
+                        DropdownButtonFormField<String>(
+                          key: ValueKey(
+                            'backup-pickup-${_selectedDestinationPickupPointId ?? 'none'}',
+                          ),
+                          initialValue: _selectedDestinationPickupPointId,
+                          isExpanded: true,
+                          decoration: _inputDecor(
+                            label: 'Backup Pickup Point if Customer is Unavailable',
+                            hint: 'Choose backup pickup point',
+                            icon: Icons.pin_drop_outlined,
+                          ),
+                          items: _destinationPickupPoints
+                              .map(
+                                (point) => DropdownMenuItem<String>(
+                                  value: point.id,
+                                  child: Text(
+                                    point.id == _destinationPickupPoints.first.id
+                                        ? 'Recommended • ${point.displayName}'
+                                        : point.displayName,
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 2,
+                                    style: _t(14, FontWeight.w500),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _loadingFormData ? null : _onDestinationPickupChanged,
+                        ),
                       ],
+                    ],
+                    if (showDestinationPickupSelector) ...[
+                      _InfoBox(
+                        icon: Icons.pin_drop_outlined,
+                        text:
+                            'All pickup points are shown. The merchant selects the specific destination pickup point manually.',
+                        color: _W.blue,
+                        background: _W.blueLt,
+                      ),
+                      const SizedBox(height: 10),
+                      if (_destinationPickupPoints.isEmpty)
+                        const _InfoBox(
+                          icon: Icons.info_outline,
+                          text: 'No approved pickup points found in the system.',
+                          color: _W.amber,
+                          background: _W.amberLt,
+                        )
+                      else
+                        DropdownButtonFormField<String>(
+                          key: ValueKey(
+                            'destination-pickup-${_selectedDestinationPickupPointId ?? 'none'}',
+                          ),
+                          initialValue: _selectedDestinationPickupPointId,
+                          isExpanded: true,
+                          decoration: _inputDecor(
+                            label: 'Specific Pickup Point Destination',
+                            hint: 'Choose destination pickup point',
+                            icon: Icons.pin_drop_outlined,
+                          ),
+                          items: _destinationPickupPoints
+                              .map(
+                                (point) => DropdownMenuItem<String>(
+                                  value: point.id,
+                                  child: Text(
+                                    point.displayName,
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 2,
+                                    style: _t(14, FontWeight.w500),
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          validator: (value) =>
+                              _dropoffType == _dropoffPickupSpecific && value == null
+                              ? 'Please select a destination pickup point'
+                              : null,
+                          onChanged: _loadingFormData ? null : _onDestinationPickupChanged,
+                        ),
                     ],
                     const SizedBox(height: 12),
                     _FormField(
