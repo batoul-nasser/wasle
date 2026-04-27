@@ -1028,6 +1028,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
   Future<void> _saveOrderExtras(String orderId) async {
     if (orderId.trim().isEmpty || orderId == '-') return;
 
+<<<<<<< Updated upstream
     final destinationPickupId =
         (_dropoffType == _dropoffHome ||
             _dropoffType == _dropoffPickupSpecific)
@@ -1060,6 +1061,101 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', orderId);
+=======
+    final destinationPickupId = switch (_dropoffType) {
+      _dropoffPickupSpecific => _selectedDestinationPickupPointId,
+      _dropoffPickupNearest => _selectedDestinationPickupPointId,
+      _ => null,
+    };
+    final pickupLocation = _resolveSourceLocation(
+      sourcePickupId: _selectedSourcePickupPointId,
+      sourceCandidates: _sourcePickupPoints,
+    );
+    final dropoffLocation = _resolveDestinationLocation(
+      overrideNearestPickupId: destinationPickupId,
+      destinationCandidates: _destinationPickupPoints,
+    );
+    final preferredWindow = _parsePreferredTimeWindow(
+      _timeWindowCtrl.text.trim(),
+    );
+    final preferredFromUtc = preferredWindow?.$1.toUtc().toIso8601String();
+    final preferredUntilUtc = preferredWindow?.$2.toUtc().toIso8601String();
+
+    final payload = <String, dynamic>{
+      'branch_id': _merchantBranchId,
+      'company_id': _selectedDeliveryCompanyId,
+      'pickup_source_type': _pickupSourceType == _pickupFromPickupPoint
+          ? 'pickup_point'
+          : 'store',
+      'pickup_point_id': _pickupSourceType == _pickupFromPickupPoint
+          ? _selectedSourcePickupPointId
+          : null,
+      'destination_pickup_point_id': destinationPickupId,
+      'dropoff_type': _normalizedDropoffType(),
+      'parcel_description': _parcelDescriptionCtrl.text.trim().isEmpty
+          ? null
+          : _parcelDescriptionCtrl.text.trim(),
+      'item_count': _parseItemCount(),
+      'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
+      'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
+      'pickup_location_lat': pickupLocation?.lat,
+      'pickup_location_lng': pickupLocation?.lng,
+      'dropoff_location_lat': dropoffLocation?.lat,
+      'dropoff_location_lng': dropoffLocation?.lng,
+      'customer_address_text': _customerAddressForStorage(),
+      'customer_lat': _selectedCustomerLat,
+      'customer_lng': _selectedCustomerLng,
+      'delivery_company_id': _selectedDeliveryCompanyId,
+      'assignment_status': 'pending_assignment',
+      'assigned_driver_id': null,
+      'assignment_failure_reason': null,
+      'preferred_delivery_from': preferredFromUtc,
+      'preferred_delivery_until': preferredUntilUtc,
+      'notes': _mergedNotes(),
+      'updated_at': DateTime.now().toUtc().toIso8601String(),
+    };
+
+    await _updateOrderWithSchemaFallback(orderId: orderId, payload: payload);
+  }
+
+  Future<void> _updateOrderWithSchemaFallback({
+    required String orderId,
+    required Map<String, dynamic> payload,
+  }) async {
+    final mutable = Map<String, dynamic>.from(payload);
+    for (var attempt = 0; attempt < 6; attempt++) {
+      try {
+        await _client.from('orders').update(mutable).eq('id', orderId);
+        return;
+      } on PostgrestException catch (error) {
+        final missingColumn = _extractMissingColumn(error);
+        if (missingColumn == null || !mutable.containsKey(missingColumn)) {
+          rethrow;
+        }
+        mutable.remove(missingColumn);
+      }
+    }
+    throw Exception('Failed to update order due to schema mismatch.');
+  }
+
+  String? _extractMissingColumn(PostgrestException error) {
+    final message = error.message.toLowerCase();
+    final code = error.code?.toLowerCase();
+    final isMissingColumn =
+        code == '42703' ||
+        code == 'pgrst204' ||
+        message.contains('does not exist') ||
+        message.contains('could not find');
+    if (!isMissingColumn) return null;
+
+    final singleQuoted = RegExp(r"'([^']+)'").allMatches(message).toList();
+    for (final match in singleQuoted) {
+      final value = match.group(1);
+      if (value == null || value == 'orders') continue;
+      return value;
+    }
+    return null;
+>>>>>>> Stashed changes
   }
 
   String _normalizedDropoffType() {
@@ -1106,6 +1202,9 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
     final merchantNotes = _notesCtrl.text.trim();
     final timeWindow = _timeWindowCtrl.text.trim();
+    final normalizedWindowLabel = _normalizedPreferredTimeWindowLabel(
+      timeWindow,
+    );
     final selectedCompany = _selectedCompany();
     final customerName = _customerNameCtrl.text.trim();
     final customerPhone = _phoneCtrl.text.trim();
@@ -1220,8 +1319,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
       );
     }
 
-    if (timeWindow.isNotEmpty) {
-      parts.add('Preferred time window: $timeWindow');
+    if (normalizedWindowLabel != null) {
+      parts.add('Preferred time window: $normalizedWindowLabel');
     }
 
     if (merchantNotes.isNotEmpty) {
@@ -1231,6 +1330,109 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
 
     return parts.isEmpty ? null : parts.join('\n');
+  }
+
+  String? _normalizedPreferredTimeWindowLabel(String raw) {
+    final parsed = _parsePreferredTimeWindow(raw);
+    if (parsed == null) {
+      final fallback = raw.trim();
+      return fallback.isEmpty ? null : fallback;
+    }
+    final start = parsed.$1.toLocal();
+    final end = parsed.$2.toLocal();
+    return '${_fmtLocalDateTime(start)} - ${_fmtLocalDateTime(end)}';
+  }
+
+  (DateTime, DateTime)? _parsePreferredTimeWindow(String raw) {
+    final text = raw.trim().toLowerCase();
+    if (text.isEmpty) return null;
+
+    final nowLocal = DateTime.now();
+    final rangePattern = RegExp(
+      r'(.+?)\s*(?:-|to|until|->|–)\s*(.+)',
+      caseSensitive: false,
+    );
+    final rangeMatch = rangePattern.firstMatch(text);
+    if (rangeMatch != null) {
+      final startMinutes = _parseClockMinutes(rangeMatch.group(1)!);
+      final endMinutes = _parseClockMinutes(rangeMatch.group(2)!);
+      if (startMinutes == null || endMinutes == null) return null;
+      final start = _nextLocalDateTimeForClock(nowLocal, startMinutes);
+      var end = _localDateTimeForClock(start, endMinutes);
+      if (!end.isAfter(start)) end = end.add(const Duration(days: 1));
+      return (start, end);
+    }
+
+    final singleMinutes = _parseClockMinutes(text);
+    if (singleMinutes == null) return null;
+    final when = _nextLocalDateTimeForClock(nowLocal, singleMinutes);
+    return (when, when.add(const Duration(minutes: 30)));
+  }
+
+  int? _parseClockMinutes(String raw) {
+    final text = raw.trim().toLowerCase();
+    if (text.isEmpty) return null;
+
+    final ampmPattern = RegExp(r'^(\d{1,2})(?::(\d{2}))?\s*([ap])\.?m?\.?$');
+    final ampm = ampmPattern.firstMatch(text);
+    if (ampm != null) {
+      final hourRaw = int.tryParse(ampm.group(1)!);
+      final minuteRaw = int.tryParse(ampm.group(2) ?? '0');
+      final marker = ampm.group(3);
+      if (hourRaw == null ||
+          minuteRaw == null ||
+          hourRaw < 1 ||
+          hourRaw > 12 ||
+          minuteRaw < 0 ||
+          minuteRaw > 59 ||
+          marker == null) {
+        return null;
+      }
+      var hour24 = hourRaw % 12;
+      if (marker == 'p') hour24 += 12;
+      return hour24 * 60 + minuteRaw;
+    }
+
+    final hhmmPattern = RegExp(r'^(\d{1,2})(?::(\d{2}))$');
+    final hhmm = hhmmPattern.firstMatch(text);
+    if (hhmm != null) {
+      final hour = int.tryParse(hhmm.group(1)!);
+      final minute = int.tryParse(hhmm.group(2)!);
+      if (hour == null ||
+          minute == null ||
+          hour < 0 ||
+          hour > 23 ||
+          minute < 0 ||
+          minute > 59) {
+        return null;
+      }
+      return hour * 60 + minute;
+    }
+
+    final hourOnly = int.tryParse(text);
+    if (hourOnly == null || hourOnly < 0 || hourOnly > 23) return null;
+    return hourOnly * 60;
+  }
+
+  DateTime _nextLocalDateTimeForClock(DateTime nowLocal, int minutes) {
+    final candidate = _localDateTimeForClock(nowLocal, minutes);
+    if (!candidate.isBefore(nowLocal)) return candidate;
+    return candidate.add(const Duration(days: 1));
+  }
+
+  DateTime _localDateTimeForClock(DateTime date, int minutes) {
+    final hour = minutes ~/ 60;
+    final minute = minutes % 60;
+    return DateTime(date.year, date.month, date.day, hour, minute);
+  }
+
+  String _fmtLocalDateTime(DateTime dt) {
+    final yyyy = dt.year.toString().padLeft(4, '0');
+    final mm = dt.month.toString().padLeft(2, '0');
+    final dd = dt.day.toString().padLeft(2, '0');
+    final hh = dt.hour.toString().padLeft(2, '0');
+    final min = dt.minute.toString().padLeft(2, '0');
+    return '$yyyy-$mm-$dd $hh:$min';
   }
 
   String? _sourceAddressLabel() {
