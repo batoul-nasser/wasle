@@ -435,60 +435,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     }
   }
 
-<<<<<<< Updated upstream
-=======
-  Future<void> _redirectCustomerNotAvailableFlow() async {
-    if (details == null || _isBusy) return;
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Drop At Pickup Point'),
-        content: const Text(
-          'The system will automatically redirect this home delivery to the nearest pickup point for the same delivery company.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('Drop At Pickup Point'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true) return;
-
-    try {
-      setState(() => isUpdating = true);
-      await _repository.redirectHomeDeliveryToNearestPickupPoint(
-        orderId: widget.orderId,
-      );
-
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text(
-            'Customer unavailable. Order redirected to the nearest pickup point.',
-          ),
-        ),
-      );
-      await _loadDetails();
-    } catch (e) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to redirect order: $e')));
-    } finally {
-      if (mounted) {
-        setState(() => isUpdating = false);
-      }
-    }
-  }
-
->>>>>>> Stashed changes
   @override
   Widget build(BuildContext context) {
     if (isLoading) {
@@ -538,9 +484,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 tone: StatusChip.fromStatus(delivery.status),
               ),
               child: Text(
-                delivery.estimatedArrivalAt == null
-                    ? 'Order ID: ${delivery.orderId}'
-                    : 'Order ID: ${delivery.orderId}\nETA: ${_etaLabel(delivery.estimatedArrivalAt!)}',
+                'Order ID: ${delivery.orderId}',
                 style: AppTextStyles.bodyMuted,
               ),
             ),
@@ -727,11 +671,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         return 'Delivered';
       case 'dropped_at_pickup_point':
         return 'Drop At Pickup Point';
-<<<<<<< Updated upstream
-=======
-      case 'customer_not_available':
-        return 'Drop At Pickup Point';
->>>>>>> Stashed changes
       case 'failed':
         return 'Delivery Failed';
       case 'rescheduled':
@@ -750,13 +689,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
               : '${part[0].toUpperCase()}${part.substring(1)}',
         )
         .join(' ');
-  }
-
-  String _etaLabel(DateTime eta) {
-    final local = eta.toLocal();
-    final hh = local.hour.toString().padLeft(2, '0');
-    final mm = local.minute.toString().padLeft(2, '0');
-    return '$hh:$mm';
   }
 
   IconData _actionIcon(String action) {

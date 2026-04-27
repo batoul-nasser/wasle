@@ -45,8 +45,6 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         return;
       }
 
-      await _authService.syncDriverCompanyLinkFromApprovedRequest();
-
       final profile = await _authService.getProfileById(user.id);
       final driver = await _authService.getDriverByProfileId(user.id);
 

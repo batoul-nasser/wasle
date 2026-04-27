@@ -76,6 +76,9 @@ class DriverDeliveriesRepository {
     'picked_up': ['in_transit'],
     'in_transit': ['delivered', 'failed'],
     'failed': [
+      'rescheduled',
+      'assigned',
+      'dropped_at_pickup_point',
       'returning_to_store',
     ],
     'rescheduled': ['pending_driver_receipt', 'assigned'],
@@ -90,13 +93,8 @@ class DriverDeliveriesRepository {
     'assigned': ['pending_driver_receipt'],
     'pending_driver_receipt': ['driver_received_order'],
     'driver_received_order': ['in_transit'],
-<<<<<<< Updated upstream
     'in_transit': ['delivered', 'failed'],
     'failed': ['rescheduled', 'dropped_at_pickup_point', 'returning_to_store'],
-=======
-    'in_transit': ['delivered', 'customer_not_available', 'failed'],
-    'failed': ['returning_to_store'],
->>>>>>> Stashed changes
     'rescheduled': [],
     'returning_to_store': ['returned_to_store'],
     'delivered': [],
@@ -550,25 +548,6 @@ class DriverDeliveriesRepository {
       } catch (_) {}
     }
 
-    // Delivery failed means the trip ended for capacity/route purposes.
-    if (normalizedNewStatus == 'failed') {
-      try {
-        final now = DateTime.now().toUtc().toIso8601String();
-        await _client
-            .from('assignments')
-            .update({'completed_at': now})
-            .eq('order_id', orderId)
-            .eq('driver_id', driverId);
-
-        await _client
-            .from('driver_route_stops')
-            .update({'completed_at': now, 'updated_at': now})
-            .eq('order_id', orderId)
-            .eq('driver_id', driverId)
-            .isFilter('completed_at', null);
-      } catch (_) {}
-    }
-
     // "Rescheduled" sends the order back to company/assignment queue.
     if (requestedStatus == 'rescheduled') {
       try {
@@ -738,25 +717,6 @@ class DriverDeliveriesRepository {
     final branchById = _keyById(branches);
 
     final result = <DriverDelivery>[];
-    final orderIdToEta = <String, DateTime?>{};
-    try {
-      final routeStopRows = await _client
-          .from('driver_route_stops')
-          .select('order_id, stop_type, eta_at, completed_at')
-          .inFilter('order_id', orderIds)
-          .eq('stop_type', 'dropoff')
-          .isFilter('completed_at', null);
-      for (final row in List<Map<String, dynamic>>.from(routeStopRows)) {
-        final id = row['order_id']?.toString();
-        if (id == null || id.isEmpty) continue;
-        final eta = _parseDate(row['eta_at']);
-        if (eta == null) continue;
-        final current = orderIdToEta[id];
-        if (current == null || eta.isBefore(current)) {
-          orderIdToEta[id] = eta;
-        }
-      }
-    } catch (_) {}
 
     for (final assignment in assignments) {
       final orderId = assignment['order_id']?.toString();
@@ -845,7 +805,6 @@ class DriverDeliveriesRepository {
           driverId: assignment['driver_id']?.toString(),
           assignedAt: _parseDate(assignment['assigned_at']),
           completedAt: _parseDate(assignment['completed_at']),
-          estimatedArrivalAt: orderIdToEta[orderId],
           trackingCode: order['tracking_code']?.toString() ?? orderId,
           status: _normalizeDriverVisibleStatus(order['status']?.toString()),
           notes: order['notes']?.toString(),

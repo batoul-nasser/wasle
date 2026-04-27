@@ -601,21 +601,10 @@ class AuthService {
     final user = _client.auth.currentUser;
     if (user == null) return null;
 
-    Map<String, dynamic>? response;
-    try {
-      response = await _client
-          .from('drivers')
-          .select('verification_status')
-          .eq('profile_id', user.id)
-          .maybeSingle();
-    } catch (_) {
-      response = null;
-    }
-
-    response ??= await _client
+    final response = await _client
         .from('drivers')
         .select('verification_status')
-        .eq('id', user.id)
+        .eq('profile_id', user.id)
         .maybeSingle();
 
     if (response == null) return null;
@@ -624,112 +613,6 @@ class AuthService {
     return raw.trim().toLowerCase();
   }
 
-<<<<<<< Updated upstream
-=======
-  Future<String?> getLatestDriverRequestStatus() async {
-    final user = _client.auth.currentUser;
-    if (user == null) return null;
-
-    final request = await _client
-        .from('driver_company_requests')
-        .select('request_status')
-        .eq('driver_profile_id', user.id)
-        .order('updated_at', ascending: false)
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-
-    final raw = request?['request_status']?.toString();
-    if (raw == null) return null;
-    return raw.trim().toLowerCase();
-  }
-
-  Future<Map<String, dynamic>?> getLatestDriverRequestSummary() async {
-    final user = _client.auth.currentUser;
-    if (user == null) return null;
-
-    final request = await _client
-        .from('driver_company_requests')
-        .select('id, company_id, request_status, created_at')
-        .eq('driver_profile_id', user.id)
-        .order('updated_at', ascending: false)
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-
-    if (request == null) return null;
-
-    Map<String, dynamic>? company;
-    final companyId = request['company_id']?.toString();
-    if (companyId != null && companyId.isNotEmpty) {
-      company = await getCompanyById(companyId);
-    }
-
-    return {
-      'id': request['id'],
-      'company_id': companyId,
-      'request_status': request['request_status']?.toString(),
-      'created_at': request['created_at'],
-      'company_name': company?['name']?.toString(),
-    };
-  }
-
-  Future<void> syncDriverCompanyLinkFromApprovedRequest() async {
-    final user = _client.auth.currentUser;
-    if (user == null) return;
-
-    final driver = await getDriverByProfileId(user.id);
-    final companyId = driver?['company_id']?.toString();
-    final status = driver?['verification_status']?.toString().trim().toLowerCase();
-
-    // Already linked and approved, nothing to repair.
-    if (companyId != null &&
-        companyId.isNotEmpty &&
-        status == 'approved') {
-      return;
-    }
-
-    final latestRequest = await _client
-        .from('driver_company_requests')
-        .select('company_id, request_status')
-        .eq('driver_profile_id', user.id)
-        .order('updated_at', ascending: false)
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-
-    final requestStatus = latestRequest?['request_status']
-        ?.toString()
-        .trim()
-        .toLowerCase();
-    final requestCompanyId = latestRequest?['company_id']?.toString();
-
-    if (requestStatus != 'approved' ||
-        requestCompanyId == null ||
-        requestCompanyId.isEmpty) {
-      return;
-    }
-
-    final now = DateTime.now().toUtc().toIso8601String();
-    await _updateDriverRowsWithSchemaFallback(
-      profileId: user.id,
-      values: {
-        'verification_status': 'approved',
-        'company_id': requestCompanyId,
-        'updated_at': now,
-      },
-    );
-    await _updateDriverRowsWithSchemaFallback(
-      driverId: user.id,
-      values: {
-        'verification_status': 'approved',
-        'company_id': requestCompanyId,
-        'updated_at': now,
-      },
-    );
-  }
-
->>>>>>> Stashed changes
   Future<String?> uploadPickupPointStorageAreaImage({
     required String fileName,
     required Uint8List bytes,
@@ -1021,95 +904,10 @@ class AuthService {
     required String driverProfileId,
     required String companyId,
   }) async {
-<<<<<<< Updated upstream
     await _client.from('driver_company_requests').insert({
       'driver_profile_id': driverProfileId,
       'company_id': companyId,
     });
-=======
-    final driver = await _client
-        .from('drivers')
-        .select('id, company_id, verification_status')
-        .eq('profile_id', driverProfileId)
-        .maybeSingle();
-
-    final linkedCompanyId = driver?['company_id']?.toString();
-    final verificationStatus = driver?['verification_status']
-        ?.toString()
-        .trim()
-        .toLowerCase();
-
-    if (linkedCompanyId != null && linkedCompanyId.isNotEmpty) {
-      if (linkedCompanyId == companyId && verificationStatus == 'approved') {
-        throw Exception('You are already linked to this delivery company.');
-      }
-      throw Exception(
-        'You are already linked to a delivery company. Leave or get removed before requesting another one.',
-      );
-    }
-
-    final existingSameCompany = await _client
-        .from('driver_company_requests')
-        .select('id, request_status')
-        .eq('driver_profile_id', driverProfileId)
-        .eq('company_id', companyId)
-        .maybeSingle();
-
-    final sameCompanyStatus = existingSameCompany?['request_status']
-        ?.toString()
-        .trim()
-        .toLowerCase();
-    if (sameCompanyStatus == 'pending') {
-      throw Exception('You already sent a request to this delivery company.');
-    }
-    if (sameCompanyStatus == 'approved') {
-      throw Exception('You are already approved for this delivery company.');
-    }
-
-    final existingPending = await _client
-        .from('driver_company_requests')
-        .select('id')
-        .eq('driver_profile_id', driverProfileId)
-        .eq('request_status', 'pending')
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-
-    if (existingPending != null) {
-      throw Exception('You already have a pending company request.');
-    }
-
-    final createdAt = DateTime.now().toUtc().toIso8601String();
-    if (existingSameCompany != null) {
-      await _client
-          .from('driver_company_requests')
-          .update({'request_status': 'pending', 'created_at': createdAt})
-          .eq('id', existingSameCompany['id'].toString());
-    } else {
-      await _client.from('driver_company_requests').insert({
-        'driver_profile_id': driverProfileId,
-        'company_id': companyId,
-        'request_status': 'pending',
-        'created_at': createdAt,
-      });
-    }
-
-    await _client
-        .from('drivers')
-        .update({
-          'verification_status': 'pending',
-          // Driver remains unlinked until company explicitly accepts request.
-          'company_id': null,
-        })
-        .eq('profile_id', driverProfileId);
-    await _client
-        .from('drivers')
-        .update({
-          'verification_status': 'pending',
-          'company_id': null,
-        })
-        .eq('id', driverProfileId);
->>>>>>> Stashed changes
   }
 
   Future<List<Map<String, dynamic>>>
@@ -1173,35 +971,10 @@ class AuthService {
         .update({'request_status': 'approved'})
         .eq('id', requestId);
 
-<<<<<<< Updated upstream
     await _client
         .from('drivers')
         .update({'verification_status': 'approved', 'company_id': user.id})
         .eq('profile_id', driverProfileId);
-=======
-    await _updateDriverRowsWithSchemaFallback(
-      profileId: driverProfileId,
-      values: {
-        'verification_status': 'approved',
-        'company_id': requestCompanyId,
-        'availability_status': 'unavailable',
-        'is_available': false,
-        'is_active_shift': false,
-        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
-      },
-    );
-    await _updateDriverRowsWithSchemaFallback(
-      driverId: driverProfileId,
-      values: {
-        'verification_status': 'approved',
-        'company_id': requestCompanyId,
-        'availability_status': 'unavailable',
-        'is_available': false,
-        'is_active_shift': false,
-        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
-      },
-    );
->>>>>>> Stashed changes
   }
 
   Future<void> rejectDriverRequest({
@@ -1213,63 +986,6 @@ class AuthService {
         .update({'request_status': 'rejected'})
         .eq('id', requestId);
 
-<<<<<<< Updated upstream
-=======
-    await _updateDriverRowsWithSchemaFallback(
-      profileId: driverProfileId,
-      values: {
-        'verification_status': 'rejected',
-        'company_id': null,
-        'availability_status': 'unavailable',
-        'is_available': false,
-        'is_active_shift': false,
-        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
-      },
-    );
-    await _updateDriverRowsWithSchemaFallback(
-      driverId: driverProfileId,
-      values: {
-        'verification_status': 'rejected',
-        'company_id': null,
-        'availability_status': 'unavailable',
-        'is_available': false,
-        'is_active_shift': false,
-        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
-      },
-    );
-  }
-
-  Future<void> cancelLatestPendingDriverRequest() async {
-    final user = _client.auth.currentUser;
-    if (user == null) throw Exception('User not logged in');
-
-    final driver = await _client
-        .from('drivers')
-        .select('id, company_id, verification_status')
-        .eq('profile_id', user.id)
-        .maybeSingle();
-
-    final linkedCompanyId = driver?['company_id']?.toString();
-    if (linkedCompanyId != null && linkedCompanyId.isNotEmpty) {
-      throw Exception(
-        'You are already linked to a delivery company. This request cannot be cancelled from here.',
-      );
-    }
-
-    final latestPendingRequest = await _client
-        .from('driver_company_requests')
-        .select('id, request_status')
-        .eq('driver_profile_id', user.id)
-        .eq('request_status', 'pending')
-        .order('created_at', ascending: false)
-        .limit(1)
-        .maybeSingle();
-
-    if (latestPendingRequest == null) {
-      throw Exception('No pending delivery company request was found.');
-    }
-
->>>>>>> Stashed changes
     await _client
         .from('drivers')
         .update({'verification_status': 'rejected'})

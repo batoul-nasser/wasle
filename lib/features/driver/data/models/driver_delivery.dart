@@ -5,7 +5,6 @@ class DriverDelivery {
   final String? driverId;
   final DateTime? assignedAt;
   final DateTime? completedAt;
-  final DateTime? estimatedArrivalAt;
 
   final String trackingCode;
   final String status;
@@ -35,7 +34,6 @@ class DriverDelivery {
     required this.driverId,
     required this.assignedAt,
     required this.completedAt,
-    required this.estimatedArrivalAt,
     required this.trackingCode,
     required this.status,
     required this.notes,

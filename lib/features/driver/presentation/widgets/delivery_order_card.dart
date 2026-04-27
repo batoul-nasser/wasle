@@ -48,13 +48,6 @@ class DeliveryOrderCard extends StatelessWidget {
             icon: Icons.person_outline_rounded,
             text: '${delivery.customerName} - ${delivery.customerPhone}',
           ),
-          if (delivery.estimatedArrivalAt != null) ...[
-            const SizedBox(height: AppSpacing.xs),
-            _InfoLine(
-              icon: Icons.schedule_outlined,
-              text: 'ETA: ${_etaLabel(delivery.estimatedArrivalAt!)}',
-            ),
-          ],
           if ((delivery.customerEmail ?? '').trim().isNotEmpty) ...[
             const SizedBox(height: AppSpacing.xs),
             _InfoLine(
@@ -108,13 +101,6 @@ class DeliveryOrderCard extends StatelessWidget {
           return part[0].toUpperCase() + part.substring(1);
         })
         .join(' ');
-  }
-
-  String _etaLabel(DateTime eta) {
-    final local = eta.toLocal();
-    final hh = local.hour.toString().padLeft(2, '0');
-    final mm = local.minute.toString().padLeft(2, '0');
-    return '$hh:$mm';
   }
 }
 
