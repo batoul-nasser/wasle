@@ -422,17 +422,108 @@ class DriverDeliveriesRepository {
     required String orderId,
     String? pickupLabel,
   }) async {
-    await _ensureCanAcceptOrder(orderId: orderId);
+    final driverId = await _resolveCurrentDriverId();
+    final latestOrder = await _client
+        .from('orders')
+        .select('id, tracking_code, status')
+        .eq('id', orderId)
+        .maybeSingle();
+    if (latestOrder == null) {
+      throw Exception('Order not found');
+    }
+    final assignment = await _client
+        .from('assignments')
+        .select('accepted_at')
+        .eq('order_id', orderId)
+        .eq('driver_id', driverId)
+        .maybeSingle();
+    final status = (latestOrder['status']?.toString() ?? '').toLowerCase();
+    final acceptedAt = assignment?['accepted_at'];
+    final canAccept = (status == 'assigned' || status == 'pending_driver_receipt') &&
+        acceptedAt == null;
+    if (!canAccept) {
+      throw Exception(
+        'Order cannot be accepted in current state (status=$status accepted_at=$acceptedAt).',
+      );
+    }
+    debugPrint(
+      '[ACCEPT_ATTEMPT] tracking=${latestOrder['tracking_code']} order=$orderId driver=$driverId auth=${_client.auth.currentUser?.id}',
+    );
+
+    await _ensureCanAcceptOrder(
+      orderId: orderId,
+      trackingCode: latestOrder['tracking_code']?.toString(),
+      driverId: driverId,
+      status: status,
+      acceptedAt: acceptedAt,
+    );
     final trimmedLabel = pickupLabel?.trim();
     final note = trimmedLabel == null || trimmedLabel.isEmpty
         ? 'Driver accepted the order.'
         : 'Driver accepted the order. Picked up from $trimmedLabel';
+
+    final acceptedAtNow = DateTime.now().toUtc().toIso8601String();
+    try {
+      await _client
+          .from('assignments')
+          .update({'accepted_at': acceptedAtNow})
+          .eq('order_id', orderId)
+          .eq('driver_id', driverId);
+    } catch (_) {}
 
     await updateOrderStatus(
       orderId: orderId,
       newStatus: 'driver_received_order',
       note: note,
     );
+
+    try {
+      final acceptedOrder = await _client
+          .from('orders')
+          .select('item_count, estimated_weight, estimated_volume')
+          .eq('id', orderId)
+          .maybeSingle();
+      final driverLoad = await _client
+          .from('drivers')
+          .select('current_load_item_count, current_load_weight, current_load_volume')
+          .eq('id', driverId)
+          .maybeSingle();
+      final orderItems = _toInt(acceptedOrder?['item_count']) ?? 1;
+      final orderWeight = _toDouble(acceptedOrder?['estimated_weight']) ?? 0.0;
+      final orderVolume = _toDouble(acceptedOrder?['estimated_volume']) ?? 0.0;
+      final baseItems = _toInt(driverLoad?['current_load_item_count']) ?? 0;
+      final baseWeight = _toDouble(driverLoad?['current_load_weight']) ?? 0.0;
+      final baseVolume = _toDouble(driverLoad?['current_load_volume']) ?? 0.0;
+      await _client.from('order_events').insert({
+        'order_id': orderId,
+        'event_type': 'note_added',
+        'created_by': currentUser?.id,
+        'note': 'Driver accepted the order.',
+        'metadata': {
+          'driver_id': driverId,
+          'accepted_at': acceptedAtNow,
+          'order_item_count': orderItems,
+          'order_weight': orderWeight,
+          'order_volume': orderVolume,
+          'load_after_accept': {
+            'items': baseItems + orderItems,
+            'weight': baseWeight + orderWeight,
+            'volume': baseVolume + orderVolume,
+          },
+        },
+      });
+    } catch (_) {}
+
+    try {
+      final latestAfter = await _client
+          .from('orders')
+          .select('id, tracking_code, status')
+          .eq('id', orderId)
+          .maybeSingle();
+      debugPrint(
+        '[ACCEPT_REFRESH] tracking=${latestAfter?['tracking_code']} order=$orderId status=${latestAfter?['status']}',
+      );
+    } catch (_) {}
   }
 
   Future<void> confirmDropoffAtPickupPoint({required String orderId}) async {
@@ -994,11 +1085,16 @@ class DriverDeliveriesRepository {
 
   double _degreesToRadians(double degrees) => degrees * (math.pi / 180.0);
 
-  Future<void> _ensureCanAcceptOrder({required String orderId}) async {
-    final driverId = await _resolveCurrentDriverId();
+  Future<void> _ensureCanAcceptOrder({
+    required String orderId,
+    required String? trackingCode,
+    required String driverId,
+    required String status,
+    required dynamic acceptedAt,
+  }) async {
     final orderRows = await _client
         .from('orders')
-        .select('id, item_count, estimated_weight, estimated_volume, status')
+        .select('id, tracking_code, item_count, estimated_weight, estimated_volume, status')
         .eq('id', orderId)
         .limit(1);
     final orderList = List<Map<String, dynamic>>.from(orderRows);
@@ -1007,62 +1103,112 @@ class DriverDeliveriesRepository {
 
     final driverRows = await _client
         .from('drivers')
-        .select('capacity_item_count, capacity_weight, capacity_volume')
+        .select(
+          'capacity_item_count, capacity_weight, capacity_volume, '
+          'current_load_item_count, current_load_weight, current_load_volume',
+        )
         .eq('id', driverId)
         .limit(1);
     final driverList = List<Map<String, dynamic>>.from(driverRows);
     if (driverList.isEmpty) throw Exception('Driver profile not found');
     final driver = driverList.first;
 
-    final assignmentRows = await _client
-        .from('assignments')
-        .select('order_id, completed_at')
-        .eq('driver_id', driverId)
-        .isFilter('completed_at', null);
-    final activeAssignments = List<Map<String, dynamic>>.from(assignmentRows);
-    final activeOrderIds = activeAssignments
-        .map((row) => row['order_id']?.toString())
-        .whereType<String>()
-        .where((id) => id.isNotEmpty && id != orderId)
-        .toSet()
-        .toList();
+    final orderItems = _toInt(order['item_count']) ?? 1;
+    final orderWeight = _toDouble(order['estimated_weight']) ?? 0.0;
+    final orderVolume = _toDouble(order['estimated_volume']) ?? 0.0;
+    final maxItems = _toInt(driver['capacity_item_count']);
+    final maxWeight = _toDouble(driver['capacity_weight']);
+    final maxVolume = _toDouble(driver['capacity_volume']);
+
+    final dbCurrentItems = _toInt(driver['current_load_item_count']);
+    final dbCurrentWeight = _toDouble(driver['current_load_weight']);
+    final dbCurrentVolume = _toDouble(driver['current_load_volume']);
+    final useCurrentLoadFields =
+        dbCurrentItems != null && dbCurrentWeight != null && dbCurrentVolume != null;
 
     var currentItems = 0;
     var currentWeight = 0.0;
     var currentVolume = 0.0;
-    if (activeOrderIds.isNotEmpty) {
-      final activeOrdersRows = await _client
-          .from('orders')
-          .select('id, status, item_count, estimated_weight, estimated_volume')
-          .inFilter('id', activeOrderIds);
-      final activeOrders = List<Map<String, dynamic>>.from(activeOrdersRows);
-      const inactiveStatuses = {
-        'delivered',
-        'cancelled',
-        'dropped_at_pickup_point',
-        'returned_to_store',
-        'returning_to_store',
-      };
-      for (final active in activeOrders) {
-        final status = (active['status']?.toString() ?? '').toLowerCase();
-        if (inactiveStatuses.contains(status)) continue;
-        currentItems += _toInt(active['item_count']) ?? 1;
-        currentWeight += _toDouble(active['estimated_weight']) ?? 0.0;
-        currentVolume += _toDouble(active['estimated_volume']) ?? 0.0;
+    if (useCurrentLoadFields) {
+      currentItems = dbCurrentItems;
+      currentWeight = dbCurrentWeight;
+      currentVolume = dbCurrentVolume;
+    } else {
+      final assignmentRows = await _client
+          .from('assignments')
+          .select('order_id, completed_at')
+          .eq('driver_id', driverId)
+          .isFilter('completed_at', null);
+      final activeAssignments = List<Map<String, dynamic>>.from(assignmentRows);
+      final activeOrderIds = activeAssignments
+          .map((row) => row['order_id']?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty && id != orderId)
+          .toSet()
+          .toList();
+
+      if (activeOrderIds.isNotEmpty) {
+        final activeOrdersRows = await _client
+            .from('orders')
+            .select('id, status, item_count, estimated_weight, estimated_volume')
+            .inFilter('id', activeOrderIds);
+        final activeOrders = List<Map<String, dynamic>>.from(activeOrdersRows);
+        const activeAcceptedStatuses = {
+          'driver_received_order',
+          'picked_up',
+          'in_transit',
+          'pending_pickup_point_delivery',
+        };
+        for (final active in activeOrders) {
+          final activeStatus = (active['status']?.toString() ?? '').toLowerCase();
+          if (!activeAcceptedStatuses.contains(activeStatus)) continue;
+          currentItems += _toInt(active['item_count']) ?? 1;
+          currentWeight += _toDouble(active['estimated_weight']) ?? 0.0;
+          currentVolume += _toDouble(active['estimated_volume']) ?? 0.0;
+        }
       }
     }
 
-    final orderItems = _toInt(order['item_count']) ?? 1;
-    final orderWeight = _toDouble(order['estimated_weight']) ?? 0.0;
-    final orderVolume = _toDouble(order['estimated_volume']) ?? 0.0;
-    final capItems = _toInt(driver['capacity_item_count']) ?? 0;
-    final capWeight = _toDouble(driver['capacity_weight']) ?? 0.0;
-    final capVolume = _toDouble(driver['capacity_volume']) ?? 0.0;
+    final afterItems = currentItems + orderItems;
+    final afterWeight = currentWeight + orderWeight;
+    final afterVolume = currentVolume + orderVolume;
 
-    final exceeds = (currentItems + orderItems > capItems) ||
-        (currentWeight + orderWeight > capWeight) ||
-        (currentVolume + orderVolume > capVolume);
-    if (exceeds) {
+    debugPrint(
+      '[ACCEPT_CAPACITY_CHECK] tracking=$trackingCode order=$orderId driver=$driverId status=$status acceptedAt=$acceptedAt',
+    );
+    debugPrint(
+      '[ACCEPT_ORDER_DATA] status=$status acceptedAt=$acceptedAt items=$orderItems weight=$orderWeight volume=$orderVolume',
+    );
+    debugPrint(
+      '[ACCEPT_CAPACITY_DRIVER] maxItems=$maxItems maxWeight=$maxWeight maxVolume=$maxVolume',
+    );
+    debugPrint(
+      '[ACCEPT_CAPACITY_CURRENT] items=$currentItems weight=$currentWeight volume=$currentVolume',
+    );
+    debugPrint(
+      '[ACCEPT_CAPACITY_ORDER] items=$orderItems weight=$orderWeight volume=$orderVolume',
+    );
+    debugPrint(
+      '[ACCEPT_CAPACITY_AFTER] items=$afterItems weight=$afterWeight volume=$afterVolume',
+    );
+    debugPrint(
+      '[ACCEPT_DRIVER_CAPACITY] maxItems=$maxItems maxWeight=$maxWeight maxVolume=$maxVolume currentItems=$currentItems currentWeight=$currentWeight currentVolume=$currentVolume',
+    );
+    debugPrint(
+      '[ACCEPT_AFTER] afterItems=$afterItems afterWeight=$afterWeight afterVolume=$afterVolume',
+    );
+
+    String? rejectReason;
+    if (maxItems != null && maxItems > 0 && afterItems > maxItems) {
+      rejectReason = 'item_capacity_exceeded';
+    } else if (maxWeight != null && maxWeight > 0 && afterWeight > maxWeight) {
+      rejectReason = 'weight_capacity_exceeded';
+    } else if (maxVolume != null && maxVolume > 0 && afterVolume > maxVolume) {
+      rejectReason = 'volume_capacity_exceeded';
+    }
+    if (rejectReason != null) {
+      debugPrint('[ACCEPT_CAPACITY_REJECT] reason=$rejectReason');
+      debugPrint('[ACCEPT_REJECT] reason=$rejectReason');
       throw Exception('Cannot accept this order. Driver capacity would be exceeded.');
     }
   }
