@@ -1273,15 +1273,29 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
 
     await _verifyPersistedOrder(orderId);
+    final savedOrder = await _client
+        .from('orders')
+        .select(
+          'pickup_location_lat, pickup_location_lng, '
+          'dropoff_location_lat, dropoff_location_lng, '
+          'customer_address_text, dropoff_type',
+        )
+        .eq('id', orderId)
+        .maybeSingle();
+    if (savedOrder == null) {
+      throw Exception(
+        'Order was updated but could not be read back to sync order_addresses.',
+      );
+    }
 
     await _syncOrderAddressesRow(
       orderId: orderId,
       pickupAddressText: _pickupAddressTextForOrderAddresses(),
       dropoffAddressText: _dropoffAddressTextForOrderAddresses(),
-      pickupLat: pickupCoords.$1,
-      pickupLng: pickupCoords.$2,
-      dropoffLat: dropoffCoordsForOrder.$1,
-      dropoffLng: dropoffCoordsForOrder.$2,
+      pickupLat: _asDouble(savedOrder['pickup_location_lat']),
+      pickupLng: _asDouble(savedOrder['pickup_location_lng']),
+      dropoffLat: _asDouble(savedOrder['dropoff_location_lat']),
+      dropoffLng: _asDouble(savedOrder['dropoff_location_lng']),
     );
   }
 

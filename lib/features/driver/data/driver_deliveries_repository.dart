@@ -245,7 +245,7 @@ class DriverDeliveriesRepository {
         .from('orders')
         .select(
           'pickup_point_id, destination_pickup_point_id, '
-          'dropoff_type, customer_address_text, '
+          'dropoff_type, status, customer_address_text, '
           'customer_lat, customer_lng, '
           'dropoff_location_lat, dropoff_location_lng',
         )
@@ -325,32 +325,52 @@ class DriverDeliveriesRepository {
       );
     }).toList();
 
+    final orderStatus = (pickupPointId?['status']?.toString() ?? '')
+        .trim()
+        .toLowerCase();
+    final movedToBackupStatuses = const {
+      'pending_pickup_point_delivery',
+      'dropped_at_pickup_point',
+    };
+    final backupIsActiveDropoff = hasBackupPickupPoint &&
+        movedToBackupStatuses.contains(orderStatus) &&
+        destinationPickup != null;
+    final activeDropoffLat = backupIsActiveDropoff
+        ? _toDouble(destinationPickup['lat'])
+        : (_toDouble(pickupPointId?['dropoff_location_lat']) ??
+              _toDouble(orderAddress?['dropoff_lat']) ??
+              _toDouble(pickupPointId?['customer_lat']));
+    final activeDropoffLng = backupIsActiveDropoff
+        ? _toDouble(destinationPickup['lng'])
+        : (_toDouble(pickupPointId?['dropoff_location_lng']) ??
+              _toDouble(orderAddress?['dropoff_lng']) ??
+              _toDouble(pickupPointId?['customer_lng']));
+    final activeDropoffAddress = backupIsActiveDropoff
+        ? _firstNonEmpty([
+            destinationPickup['address_text'],
+            destinationPickup['name'],
+          ])
+        : _firstNonEmpty([
+            pickupPointId?['customer_address_text'],
+            orderAddress?['dropoff_address_text'],
+            orderAddress?['dropoff_address'],
+            delivery.dropoffAddress,
+          ]);
+
     return DriverOrderDetails(
       delivery: delivery,
       orderNotes: delivery.notes,
-      dropoffAddress: _firstNonEmpty([
-        orderAddress?['dropoff_address_text'],
-        orderAddress?['dropoff_address'],
-        delivery.dropoffAddress,
-      ]),
-      dropoffLat:
-          _toDouble(orderAddress?['dropoff_lat']) ??
-          delivery.dropoffLat ??
-          _toDouble(pickupPointId?['dropoff_location_lat']) ??
-          _toDouble(pickupPointId?['customer_lat']),
-      dropoffLng:
-          _toDouble(orderAddress?['dropoff_lng']) ??
-          delivery.dropoffLng ??
-          _toDouble(pickupPointId?['dropoff_location_lng']) ??
-          _toDouble(pickupPointId?['customer_lng']),
+      dropoffAddress: activeDropoffAddress,
+      dropoffLat: activeDropoffLat,
+      dropoffLng: activeDropoffLng,
       hasBackupPickupPoint: hasBackupPickupPoint,
       backupPickupPointName: destinationPickup?['name']?.toString(),
       backupPickupPointAddress: destinationPickup?['address_text']?.toString(),
       backupPickupPointLat: _toDouble(destinationPickup?['lat']),
       backupPickupPointLng: _toDouble(destinationPickup?['lng']),
       homeDropoffAddress: _firstNonEmpty([
-        orderAddress?['dropoff_address_text'],
         pickupPointId?['customer_address_text'],
+        orderAddress?['dropoff_address_text'],
       ]),
       homeDropoffLat: _toDouble(pickupPointId?['customer_lat']),
       homeDropoffLng: _toDouble(pickupPointId?['customer_lng']),
@@ -484,13 +504,13 @@ class DriverDeliveriesRepository {
     }
 
     final customerLat =
-        _toDouble(address?['dropoff_lat']) ??
         _toDouble(order['dropoff_location_lat']) ??
-        _toDouble(order['customer_lat']);
+        _toDouble(order['customer_lat']) ??
+        _toDouble(address?['dropoff_lat']);
     final customerLng =
-        _toDouble(address?['dropoff_lng']) ??
         _toDouble(order['dropoff_location_lng']) ??
-        _toDouble(order['customer_lng']);
+        _toDouble(order['customer_lng']) ??
+        _toDouble(address?['dropoff_lng']);
     if (customerLat == null || customerLng == null) {
       throw Exception('Customer home coordinates are missing.');
     }
@@ -537,6 +557,15 @@ class DriverDeliveriesRepository {
           })
           .eq('id', orderId)
           .eq('status', currentStatus);
+      await _client.from('order_addresses').upsert(
+        {
+          'order_id': orderId,
+          'dropoff_address_text': pickupPointAddress ?? pickupPointName,
+          'dropoff_lat': backupLat,
+          'dropoff_lng': backupLng,
+        },
+        onConflict: 'order_id',
+      );
     } on PostgrestException catch (e) {
       debugPrint(
         '[OPTION2_REDIRECT_RLS_ERROR] code=${e.code} message=${e.message} '
@@ -1259,13 +1288,15 @@ class DriverDeliveriesRepository {
           ]) ??
           'Not provided';
       final pickupLat =
-          _toDouble(pickup?['lat']) ??
+          _toDouble(order['pickup_location_lat']) ??
           _toDouble(orderAddress?['pickup_lat']) ??
+          _toDouble(pickup?['lat']) ??
           _toDouble(order['pickup_lat']) ??
           _toDouble(branch?['lat']);
       final pickupLng =
-          _toDouble(pickup?['lng']) ??
+          _toDouble(order['pickup_location_lng']) ??
           _toDouble(orderAddress?['pickup_lng']) ??
+          _toDouble(pickup?['lng']) ??
           _toDouble(order['pickup_lng']) ??
           _toDouble(branch?['lng']);
       final destinationPickupName = destinationPickup == null
@@ -1300,10 +1331,10 @@ class DriverDeliveriesRepository {
           (isPickupPointDropoff ? 'Pickup point dropoff' : 'Dropoff location');
       final dropoffAddress = _firstNonEmpty([
         pickupPointDropoffAddress,
-        orderAddress?['dropoff_address_text'],
-        orderAddress?['dropoff_address'],
         order['customer_address_text'],
         order['dropoff_address_text'],
+        orderAddress?['dropoff_address_text'],
+        orderAddress?['dropoff_address'],
         order['dropoff_address'],
         order['delivery_address'],
         order['address'],
@@ -1311,31 +1342,31 @@ class DriverDeliveriesRepository {
       double? dropoffLat = _toDouble(
         isHomeOption2Active
             ? (destinationPickupLat ??
-                  orderAddress?['dropoff_lat'] ??
                   order['dropoff_location_lat'] ??
+                  orderAddress?['dropoff_lat'] ??
                   order['customer_lat'])
             : (isPickupPointDropoff
-                ? ((destinationPickupLat ?? pickup?['lat']) ??
+                ? (order['dropoff_location_lat'] ??
                       orderAddress?['dropoff_lat'] ??
-                      order['dropoff_location_lat'] ??
+                      (destinationPickupLat ?? pickup?['lat']) ??
                       order['customer_lat'])
-                : (orderAddress?['dropoff_lat'] ??
-                      order['dropoff_location_lat'] ??
+                : (order['dropoff_location_lat'] ??
+                      orderAddress?['dropoff_lat'] ??
                       order['customer_lat'])),
       );
       double? dropoffLng = _toDouble(
         isHomeOption2Active
             ? (destinationPickupLng ??
-                  orderAddress?['dropoff_lng'] ??
                   order['dropoff_location_lng'] ??
+                  orderAddress?['dropoff_lng'] ??
                   order['customer_lng'])
             : (isPickupPointDropoff
-                ? ((destinationPickupLng ?? pickup?['lng']) ??
+                ? (order['dropoff_location_lng'] ??
                       orderAddress?['dropoff_lng'] ??
-                      order['dropoff_location_lng'] ??
+                      (destinationPickupLng ?? pickup?['lng']) ??
                       order['customer_lng'])
-                : (orderAddress?['dropoff_lng'] ??
-                      order['dropoff_location_lng'] ??
+                : (order['dropoff_location_lng'] ??
+                      orderAddress?['dropoff_lng'] ??
                       order['customer_lng'])),
       );
       debugPrint(
@@ -1415,7 +1446,9 @@ class DriverDeliveriesRepository {
 
   bool _isPickupPointDropoff(Map<String, dynamic> order) {
     final dropoffType = order['dropoff_type']?.toString().toLowerCase();
-    return dropoffType == 'pickup_point' || dropoffType == 'pickup point';
+    return dropoffType == 'pickup_point' ||
+        dropoffType == 'pickup point' ||
+        dropoffType == 'pickup_point_specific';
   }
 
   Map<String, Map<String, dynamic>> _keyById(List<Map<String, dynamic>> rows) {

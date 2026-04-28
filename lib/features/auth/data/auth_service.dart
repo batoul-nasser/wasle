@@ -1893,27 +1893,29 @@ class AuthService {
             ])
           : (backupIsActiveDropoff
                 ? _firstNonEmpty([
-                    destinationPickup?['address_text'],
+                    destinationPickup['address_text'],
                     _destinationPickupPointDropoffLabel(destinationPickup),
                   ])
                 : _firstNonEmpty([
-                    address?['dropoff_address_text'],
-                    address?['dropoff_address'],
                     order['customer_address_text'],
                     order['dropoff_address_text'],
+                    address?['dropoff_address_text'],
+                    address?['dropoff_address'],
                   ]));
       final activeDropoffLat = dropoffType == 'pickup_point_specific'
           ? _toDouble(destinationPickup?['lat'])
           : _toDouble(order['dropoff_location_lat']) ??
+                _toDouble(address?['dropoff_lat']) ??
                 _toDouble(order['customer_lat']);
       final activeDropoffLng = dropoffType == 'pickup_point_specific'
           ? _toDouble(destinationPickup?['lng'])
           : _toDouble(order['dropoff_location_lng']) ??
+                _toDouble(address?['dropoff_lng']) ??
                 _toDouble(order['customer_lng']);
       final activeDropoffName = dropoffType == 'pickup_point_specific'
           ? (_firstNonEmpty([destinationPickup?['name']]) ?? 'Pickup point')
           : (backupIsActiveDropoff
-                ? (_firstNonEmpty([destinationPickup?['name']]) ??
+                ? (_firstNonEmpty([destinationPickup['name']]) ??
                       'Backup pickup point')
                 : 'Customer Home');
       final backupPickupId =

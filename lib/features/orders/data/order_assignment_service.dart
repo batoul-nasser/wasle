@@ -1482,13 +1482,13 @@ class OrderAssignmentService {
           address?['pickup_address_text']?.toString() ??
           order['pickup_address_text']?.toString(),
       lat: _toDouble(
-        address?['pickup_lat'] ??
-            order['pickup_location_lat'] ??
+        order['pickup_location_lat'] ??
+            address?['pickup_lat'] ??
             order['pickup_lat'],
       ),
       lng: _toDouble(
-        address?['pickup_lng'] ??
-            order['pickup_location_lng'] ??
+        order['pickup_location_lng'] ??
+            address?['pickup_lng'] ??
             order['pickup_lng'],
       ),
     );
@@ -1500,7 +1500,16 @@ class OrderAssignmentService {
     Map<String, dynamic>? pickupPoint,
     DropoffType dropoffType,
   ) {
-    if (dropoffType == DropoffType.pickupPoint && pickupPoint != null) {
+    final status = order['status']?.toString().trim().toLowerCase() ?? '';
+    final backupIsActive = dropoffType == DropoffType.home &&
+        pickupPoint != null &&
+        const {
+          'pending_pickup_point_delivery',
+          'dropped_at_pickup_point',
+        }.contains(status);
+
+    if ((dropoffType == DropoffType.pickupPoint || backupIsActive) &&
+        pickupPoint != null) {
       return AssignmentLocation(
         name: pickupPoint['name']?.toString() ?? 'Pickup point dropoff',
         address: pickupPoint['address_text']?.toString(),
@@ -1512,20 +1521,20 @@ class OrderAssignmentService {
     return AssignmentLocation(
       name: order['customer_name']?.toString() ?? 'Customer dropoff',
       address: _firstNonEmpty([
-        address?['dropoff_address_text'],
-        address?['dropoff_address'],
         order['customer_address_text'],
         order['dropoff_address_text'],
+        address?['dropoff_address_text'],
+        address?['dropoff_address'],
       ]),
       lat: _toDouble(
-        address?['dropoff_lat'] ??
-            order['dropoff_location_lat'] ??
+        order['dropoff_location_lat'] ??
+            address?['dropoff_lat'] ??
             order['customer_lat'] ??
             order['dropoff_lat'],
       ),
       lng: _toDouble(
-        address?['dropoff_lng'] ??
-            order['dropoff_location_lng'] ??
+        order['dropoff_location_lng'] ??
+            address?['dropoff_lng'] ??
             order['customer_lng'] ??
             order['dropoff_lng'],
       ),
