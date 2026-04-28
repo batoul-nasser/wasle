@@ -354,6 +354,15 @@ class PickupPointService {
             ' Amount: \$${amount.toStringAsFixed(2)}'
             '${note != null && note.trim().isNotEmpty ? '. Note: ${note.trim()}' : ''}',
       });
+      await _db
+          .from('agent_collections')
+          .update({'status': 'pickup_confirmed'})
+          .eq('order_id', orderId)
+          .eq('pickup_point_id', pp['id'].toString())
+          .eq('status', 'collected');
+      debugPrint(
+        '[AGENT_COLLECTION] tracking=$orderId paymentId=$paymentId pickupPointId=${pp['id']} status=pickup_confirmed collectedAt=${DateTime.now().toUtc().toIso8601String()}',
+      );
 
       // If the agent already collected cash, finalize payment now.
       final agentCollected = await _db
@@ -386,34 +395,79 @@ class PickupPointService {
   Future<List<Map<String, dynamic>>> getCollectedOrdersHistory({
     int limit = 30,
   }) async {
-    final agentEvents = await getRecentAgentCollections(limit: limit);
-    final whishRows = await getRecentRemittedOrders(limit: limit);
-    final merged = <Map<String, dynamic>>[
-      ...agentEvents.map(
-        (row) => {
-          'tracking_code': row['tracking_code'],
-          'amount': row['amount'],
-          'payment_status': row['payment_status'],
-          'event_type': row['event_type'],
-          'created_at': row['created_at'],
-          'collector_name': row['collector_name'],
-          'collector_phone': row['collector_phone'],
-          'source': 'agent_collection',
-        },
-      ),
-      ...whishRows.map(
-        (row) => {
-          'tracking_code': row['tracking_code'],
-          'amount': row['amount'],
-          'payment_status': row['status'] ?? row['payment_status'],
-          'event_type': 'remittance_sent',
-          'created_at': row['sent_at'],
-          'collector_name': '',
-          'collector_phone': '',
-          'source': 'whish_remittance',
-        },
-      ),
-    ];
+    final pp = await getMyPickupPoint();
+    if (pp == null) return [];
+    final ppId = pp['id'].toString();
+    final agentRows = List<Map<String, dynamic>>.from(
+      await _db
+          .from('agent_collections')
+          .select(
+            'order_id, amount, status, collected_at, created_at, agent_id',
+          )
+          .eq('pickup_point_id', ppId)
+          .inFilter('status', ['collected', 'pickup_confirmed'])
+          .order('collected_at', ascending: false)
+          .limit(limit),
+    );
+    final orderIds = agentRows
+        .map((r) => r['order_id']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toList();
+    final orders = orderIds.isEmpty
+        ? <Map<String, dynamic>>[]
+        : List<Map<String, dynamic>>.from(
+            await _db
+                .from('orders')
+                .select('id, tracking_code, status')
+                .inFilter('id', orderIds),
+          );
+    final payments = orderIds.isEmpty
+        ? <Map<String, dynamic>>[]
+        : List<Map<String, dynamic>>.from(
+            await _db
+                .from('payments')
+                .select('order_id, status, method')
+                .inFilter('order_id', orderIds),
+          );
+    final agentIds = agentRows
+        .map((r) => r['agent_id']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList();
+    final agents = agentIds.isEmpty
+        ? <Map<String, dynamic>>[]
+        : List<Map<String, dynamic>>.from(
+            await _db
+                .from('profiles')
+                .select('id, full_name, phone')
+                .inFilter('id', agentIds),
+          );
+    final orderById = {for (final o in orders) o['id'].toString(): o};
+    final paymentByOrderId = {
+      for (final p in payments) p['order_id'].toString(): p,
+    };
+    final agentById = {for (final a in agents) a['id'].toString(): a};
+    final merged = agentRows.map((row) {
+      final oid = row['order_id']?.toString() ?? '';
+      final order = orderById[oid] ?? const <String, dynamic>{};
+      final payment = paymentByOrderId[oid] ?? const <String, dynamic>{};
+      final agent = agentById[row['agent_id']?.toString()] ?? const <String, dynamic>{};
+      return {
+        'tracking_code': order['tracking_code']?.toString() ?? oid,
+        'amount': (row['amount'] as num?)?.toDouble() ?? 0.0,
+        'payment_status': payment['status']?.toString() ?? '',
+        'payment_method': payment['method']?.toString() ?? '',
+        'event_type': 'agent_collection',
+        'created_at': row['collected_at'] ?? row['created_at'],
+        'collector_name': agent['full_name']?.toString() ?? '',
+        'collector_phone': agent['phone']?.toString() ?? '',
+        'source': 'agent_collection',
+        'collection_status': row['status']?.toString() ?? '',
+      };
+    }).toList();
+    debugPrint('[PICKUP_HISTORY] pickupPointId=$ppId rows=${merged.length}');
     merged.sort((a, b) {
       final ad = DateTime.tryParse(a['created_at']?.toString() ?? '') ??
           DateTime.fromMillisecondsSinceEpoch(0);

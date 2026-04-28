@@ -591,7 +591,6 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
   );
 
   Widget _buildDeliveryInfo(Map<String, dynamic> parcel) {
-    final assignedAt = parcel['delivery_assigned_at']?.toString();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -632,9 +631,9 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
         _buildInfoTile(
           icon: Icons.local_shipping_outlined,
           label: 'Delivery Status',
-          value: assignedAt == null || assignedAt.isEmpty
-              ? 'Not available'
-              : 'Assigned',
+          value:
+              parcel['delivery_status']?.toString() ??
+              _formatStatusLabel(parcel['status']?.toString() ?? '') ,
           color: AppColors.primary,
         ),
       ],
@@ -1111,9 +1110,10 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
                           ),
                           StatusChip(
                             label:
-                                (parcel['payment_can_collect_here'] == true)
-                                ? 'Payment eligible here'
-                                : 'No payment collection',
+                                parcel['payment_collection_label']?.toString() ??
+                                ((parcel['payment_can_collect_here'] == true)
+                                    ? 'Payment eligible here'
+                                    : 'No payment collection'),
                             tone: (parcel['payment_can_collect_here'] == true)
                                 ? StatusChipTone.success
                                 : StatusChipTone.warning,
