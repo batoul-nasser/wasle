@@ -591,7 +591,6 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
   );
 
   Widget _buildDeliveryInfo(Map<String, dynamic> parcel) {
-    final assignedAt = parcel['delivery_assigned_at']?.toString();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -632,9 +631,11 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
         _buildInfoTile(
           icon: Icons.local_shipping_outlined,
           label: 'Delivery Status',
-          value: assignedAt == null || assignedAt.isEmpty
-              ? 'Not available'
-              : 'Assigned',
+          value:
+              parcel['delivery_status']?.toString() ??
+              parcel['status']?.toString().replaceAll('_', ' ') ??
+              parcel['assignment_status']?.toString().replaceAll('_', ' ') ??
+              'Not available',
           color: AppColors.primary,
         ),
       ],
