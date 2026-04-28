@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter_map/flutter_map.dart' as fm;
+import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
+import 'package:latlong2/latlong.dart' as latlng;
 import 'package:wasle/core/ui/ui.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
 import 'package:wasle/features/auth/presentation/pages/otp_verification_screen.dart';
@@ -276,14 +279,15 @@ class _MerchantLocationPickerScreen extends StatefulWidget {
 class _MerchantLocationPickerScreenState
     extends State<_MerchantLocationPickerScreen> {
   late final TextEditingController _addressController;
-  late LatLng _selectedLatLng;
-  GoogleMapController? _mapController;
+  late gmaps.LatLng _selectedLatLng;
+  gmaps.GoogleMapController? _mapController;
+  final fm.MapController _flutterMapController = fm.MapController();
 
   @override
   void initState() {
     super.initState();
     _addressController = TextEditingController(text: widget.initialAddress);
-    _selectedLatLng = LatLng(
+    _selectedLatLng = gmaps.LatLng(
       widget.initialLat ?? 33.8938,
       widget.initialLng ?? 35.5018,
     );
@@ -298,13 +302,13 @@ class _MerchantLocationPickerScreenState
   Future<void> _zoomIn() async {
     final controller = _mapController;
     if (controller == null) return;
-    await controller.animateCamera(CameraUpdate.zoomIn());
+    await controller.animateCamera(gmaps.CameraUpdate.zoomIn());
   }
 
   Future<void> _zoomOut() async {
     final controller = _mapController;
     if (controller == null) return;
-    await controller.animateCamera(CameraUpdate.zoomOut());
+    await controller.animateCamera(gmaps.CameraUpdate.zoomOut());
   }
 
   void _confirm() {
@@ -319,6 +323,10 @@ class _MerchantLocationPickerScreenState
 
   @override
   Widget build(BuildContext context) {
+    final supportsGoogleMap =
+        !kIsWeb &&
+        (defaultTargetPlatform == TargetPlatform.android ||
+            defaultTargetPlatform == TargetPlatform.iOS);
     return Scaffold(
       appBar: AppBar(
         title: const Text('Pick Branch Location'),
@@ -338,50 +346,94 @@ class _MerchantLocationPickerScreenState
           Expanded(
             child: Stack(
               children: [
-                GoogleMap(
-                  initialCameraPosition: CameraPosition(
-                    target: _selectedLatLng,
-                    zoom: 16,
-                  ),
-                  onMapCreated: (controller) {
-                    _mapController = controller;
-                  },
-                  markers: {
-                    Marker(
-                      markerId: const MarkerId('merchant_branch'),
-                      position: _selectedLatLng,
+                if (supportsGoogleMap)
+                  gmaps.GoogleMap(
+                    initialCameraPosition: gmaps.CameraPosition(
+                      target: _selectedLatLng,
+                      zoom: 16,
                     ),
-                  },
-                  onTap: (latLng) {
-                    setState(() {
-                      _selectedLatLng = latLng;
-                    });
-                  },
-                  myLocationButtonEnabled: false,
-                  zoomControlsEnabled: false,
-                  zoomGesturesEnabled: true,
-                  scrollGesturesEnabled: true,
-                  rotateGesturesEnabled: true,
-                  tiltGesturesEnabled: true,
-                  mapToolbarEnabled: true,
-                ),
-                Positioned(
-                  top: 12,
-                  right: 12,
-                  child: Column(
-                    children: [
-                      _MapZoomButton(
-                        icon: Icons.add,
-                        onTap: _zoomIn,
+                    onMapCreated: (controller) {
+                      _mapController = controller;
+                    },
+                    markers: {
+                      gmaps.Marker(
+                        markerId: const gmaps.MarkerId('merchant_branch'),
+                        position: _selectedLatLng,
                       ),
-                      const SizedBox(height: 8),
-                      _MapZoomButton(
-                        icon: Icons.remove,
-                        onTap: _zoomOut,
+                    },
+                    onTap: (latLng) {
+                      setState(() {
+                        _selectedLatLng = latLng;
+                      });
+                    },
+                    myLocationButtonEnabled: false,
+                    zoomControlsEnabled: false,
+                    zoomGesturesEnabled: true,
+                    scrollGesturesEnabled: true,
+                    rotateGesturesEnabled: true,
+                    tiltGesturesEnabled: true,
+                    mapToolbarEnabled: true,
+                  ),
+                if (!supportsGoogleMap)
+                  fm.FlutterMap(
+                    mapController: _flutterMapController,
+                    options: fm.MapOptions(
+                      initialCenter: latlng.LatLng(
+                        _selectedLatLng.latitude,
+                        _selectedLatLng.longitude,
+                      ),
+                      initialZoom: 16,
+                      onTap: (_, point) {
+                        setState(() {
+                          _selectedLatLng = gmaps.LatLng(
+                            point.latitude,
+                            point.longitude,
+                          );
+                        });
+                      },
+                    ),
+                    children: [
+                      fm.TileLayer(
+                        urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                        userAgentPackageName: 'com.wasle.app',
+                      ),
+                      fm.MarkerLayer(
+                        markers: [
+                          fm.Marker(
+                            point: latlng.LatLng(
+                              _selectedLatLng.latitude,
+                              _selectedLatLng.longitude,
+                            ),
+                            width: 44,
+                            height: 44,
+                            child: const Icon(
+                              Icons.location_pin,
+                              color: Colors.red,
+                              size: 40,
+                            ),
+                          ),
+                        ],
                       ),
                     ],
                   ),
-                ),
+                if (supportsGoogleMap)
+                  Positioned(
+                    top: 12,
+                    right: 12,
+                    child: Column(
+                      children: [
+                        _MapZoomButton(
+                          icon: Icons.add,
+                          onTap: _zoomIn,
+                        ),
+                        const SizedBox(height: 8),
+                        _MapZoomButton(
+                          icon: Icons.remove,
+                          onTap: _zoomOut,
+                        ),
+                      ],
+                    ),
+                  ),
               ],
             ),
           ),

@@ -1054,11 +1054,16 @@ class AuthService {
       'role': 'merchant',
     }, onConflict: 'id');
 
-    final existingMerchantUser = await _client
-        .from('merchant_users')
-        .select('merchant_id')
-        .eq('profile_id', userId)
-        .maybeSingle();
+    Map<String, dynamic>? existingMerchantUser;
+    try {
+      existingMerchantUser = await _client
+          .from('merchant_users')
+          .select('merchant_id')
+          .eq('profile_id', userId)
+          .maybeSingle();
+    } catch (_) {
+      existingMerchantUser = null;
+    }
 
     String merchantId;
 
@@ -1081,7 +1086,6 @@ class AuthService {
           'profile_id': userId,
           'merchant_id': merchantId,
           'role': 'owner',
-          'business_name': businessName,
         });
       } on PostgrestException catch (e) {
         debugPrint(
@@ -1092,12 +1096,17 @@ class AuthService {
       }
     }
 
-    final existingBranch = await _client
-        .from('merchant_branches')
-        .select('id')
-        .eq('merchant_id', merchantId)
-        .limit(1)
-        .maybeSingle();
+    Map<String, dynamic>? existingBranch;
+    try {
+      existingBranch = await _client
+          .from('merchant_branches')
+          .select('id')
+          .eq('merchant_id', merchantId)
+          .limit(1)
+          .maybeSingle();
+    } catch (_) {
+      existingBranch = null;
+    }
 
     if (existingBranch == null) {
       await _client.from('merchant_branches').insert({
