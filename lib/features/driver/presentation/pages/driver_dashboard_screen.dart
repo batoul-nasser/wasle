@@ -166,6 +166,8 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
 
   bool get _isActiveShift => driverData?['is_active_shift'] == true;
 
+  bool get _isWorkingNow => _isActiveShift || _isAvailableForAssignment;
+
   String? _stringOrNull(Map<String, dynamic>? row, String key) {
     final value = row?[key];
     if (value == null) return null;
@@ -521,15 +523,14 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
                   ),
                   const SizedBox(height: AppSpacing.md),
                   PrimaryButton(
-                    label: _isAvailableForAssignment
+                    label: _isWorkingNow
                         ? 'Unavailable / End Shift'
                         : 'Available / Start Shift',
-                    icon: _isAvailableForAssignment
+                    icon: _isWorkingNow
                         ? Icons.pause_circle_outline_rounded
                         : Icons.play_circle_outline_rounded,
                     isLoading: isUpdatingAvailability,
-                    onPressed: () =>
-                        _setAvailability(!_isAvailableForAssignment),
+                    onPressed: () => _setAvailability(!_isWorkingNow),
                   ),
                   const SizedBox(height: AppSpacing.xl),
                   const SectionHeader(

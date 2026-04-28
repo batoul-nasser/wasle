@@ -84,6 +84,10 @@ class _ApprovedDriversScreenState extends State<ApprovedDriversScreen> {
                           final name = driver['full_name']?.toString() ?? 'Unknown Driver';
                           final phone = driver['phone']?.toString() ?? '-';
                           final status = driver['verification_status']?.toString() ?? 'approved';
+                          final availabilityStatus =
+                              driver['availability_status']?.toString() ??
+                              'unavailable';
+                          final isActiveShift = driver['is_active_shift'] == true;
 
                           return InfoCard(
                             title: name,
@@ -105,17 +109,43 @@ class _ApprovedDriversScreenState extends State<ApprovedDriversScreen> {
                               label: status,
                               tone: StatusChip.fromStatus(status),
                             ),
-                            child: Row(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                const Icon(
-                                  Icons.phone_outlined,
-                                  size: 18,
-                                  color: AppColors.textSecondary,
+                                Row(
+                                  children: [
+                                    const Icon(
+                                      Icons.phone_outlined,
+                                      size: 18,
+                                      color: AppColors.textSecondary,
+                                    ),
+                                    const SizedBox(width: AppSpacing.xs),
+                                    Expanded(
+                                      child: Text(
+                                        phone,
+                                        style: AppTextStyles.body,
+                                      ),
+                                    ),
+                                  ],
                                 ),
-                                const SizedBox(width: AppSpacing.xs),
-                                Text(
-                                  phone,
-                                  style: AppTextStyles.body,
+                                const SizedBox(height: AppSpacing.sm),
+                                Wrap(
+                                  spacing: AppSpacing.xs,
+                                  runSpacing: AppSpacing.xs,
+                                  children: [
+                                    StatusChip(
+                                      label: isActiveShift
+                                          ? 'active shift'
+                                          : 'inactive shift',
+                                      tone: StatusChip.fromStatus(
+                                        isActiveShift ? 'active' : 'inactive',
+                                      ),
+                                    ),
+                                    StatusChip(
+                                      label: availabilityStatus,
+                                      tone: StatusChip.fromStatus(availabilityStatus),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),

@@ -1351,14 +1351,14 @@ class AuthService {
       Map<String, dynamic>? driver = await _client
           .from('drivers')
           .select(
-            'id, profile_id, verification_status, vehicle_type, capacity_weight, capacity_volume, capacity_item_count',
+            'id, profile_id, verification_status, vehicle_type, capacity_weight, capacity_volume, capacity_item_count, availability_status, is_available, is_active_shift',
           )
           .eq('profile_id', driverProfileId)
           .maybeSingle();
       driver ??= await _client
           .from('drivers')
           .select(
-            'id, profile_id, verification_status, vehicle_type, capacity_weight, capacity_volume, capacity_item_count',
+            'id, profile_id, verification_status, vehicle_type, capacity_weight, capacity_volume, capacity_item_count, availability_status, is_available, is_active_shift',
           )
           .eq('id', driverProfileId)
           .maybeSingle();
@@ -1372,6 +1372,9 @@ class AuthService {
         'phone': profile?['phone'],
         'role': profile?['role'],
         'verification_status': driver?['verification_status'],
+        'availability_status': driver?['availability_status'],
+        'is_available': driver?['is_available'],
+        'is_active_shift': driver?['is_active_shift'],
         'vehicle_type': driver?['vehicle_type'],
         'capacity_weight': driver?['capacity_weight'],
         'capacity_volume': driver?['capacity_volume'],
@@ -1541,10 +1544,54 @@ class AuthService {
   }
 
   Future<void> startDriverShift({required String driverId}) async {
+    final driver = await _client
+        .from('drivers')
+        .select('id, profile_id, company_id, verification_status')
+        .eq('id', driverId)
+        .maybeSingle();
+
+    final profileId = driver?['profile_id']?.toString();
+    var companyId = driver?['company_id']?.toString();
+    var verificationStatus = driver?['verification_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+
+    if ((companyId == null || companyId.isEmpty) &&
+        profileId != null &&
+        profileId.isNotEmpty) {
+      companyId = await _resolveLatestApprovedCompanyForDriverProfile(profileId);
+    }
+
+    if (verificationStatus != 'approved' &&
+        profileId != null &&
+        profileId.isNotEmpty &&
+        companyId != null &&
+        companyId.isNotEmpty) {
+      final hasApprovedRequest = await _hasApprovedDriverCompanyRequest(
+        driverProfileId: profileId,
+        companyId: companyId,
+      );
+      if (hasApprovedRequest) {
+        await _updateDriverRowsWithSchemaFallback(
+          driverId: driverId,
+          values: {
+            'verification_status': 'approved',
+            'company_id': companyId,
+            'updated_at': DateTime.now().toUtc().toIso8601String(),
+          },
+        );
+        verificationStatus = 'approved';
+      }
+    }
+
+    if (verificationStatus != 'approved') {
+      throw Exception('Driver is not approved yet');
+    }
+
     final now = DateTime.now().toUtc().toIso8601String();
     await _updateDriverRowsWithSchemaFallback(
       driverId: driverId,
-      requireApprovedStatus: true,
       values: {
         'availability_status': 'available',
         'is_available': true,
@@ -1556,6 +1603,27 @@ class AuthService {
         'updated_at': now,
       },
     );
+  }
+
+  Future<String?> _resolveLatestApprovedCompanyForDriverProfile(
+    String profileId,
+  ) async {
+    if (profileId.trim().isEmpty) return null;
+    try {
+      final request = await _client
+          .from('driver_company_requests')
+          .select('company_id')
+          .eq('driver_profile_id', profileId)
+          .eq('request_status', 'approved')
+          .order('created_at', ascending: false)
+          .limit(1)
+          .maybeSingle();
+      final companyId = request?['company_id']?.toString();
+      if (companyId == null || companyId.trim().isEmpty) return null;
+      return companyId;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> endDriverShift({required String driverId}) async {
