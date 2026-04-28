@@ -418,6 +418,21 @@ class AuthService {
         .maybeSingle();
   }
 
+  Future<Map<String, dynamic>?> getPickupPointApplicationByEmail(
+    String email,
+  ) async {
+    final normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail.isEmpty) return null;
+
+    return await _client
+        .from('pickup_point_applications')
+        .select()
+        .eq('email', normalizedEmail)
+        .order('submitted_at', ascending: false)
+        .limit(1)
+        .maybeSingle();
+  }
+
   Future<List<Map<String, dynamic>>> getPickupPointApplications({
     String status = 'pending',
   }) async {
@@ -760,6 +775,22 @@ class AuthService {
       return '/select-company';
     }
 
+    final pickupApplication = await getMyPickupPointApplication();
+    final pickupApplicationStatus = pickupApplication?['verification_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+
+    if (pickupApplicationStatus == 'rejected') {
+      return '/pickup-application-rejected';
+    }
+    if (pickupApplicationStatus == 'pending') {
+      return '/pickup-application-pending';
+    }
+    if (pickupApplicationStatus == 'approved') {
+      return '/pickup-dashboard';
+    }
+
     final role = await getCurrentRole();
 
     switch (role) {
@@ -773,18 +804,6 @@ class AuthService {
         return '/merchant-dashboard';
 
       case 'pickup_point_applicant':
-        final application = await getMyPickupPointApplication();
-        final status = application?['verification_status']
-            ?.toString()
-            .trim()
-            .toLowerCase();
-
-        if (status == 'approved') {
-          return '/pickup-dashboard';
-        }
-        if (status == 'rejected') {
-          return '/pickup-application-rejected';
-        }
         return '/pickup-application-pending';
 
       case 'pickup_point_operator':

@@ -55,8 +55,10 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
   TimeOfDay? opensAt;
   TimeOfDay? closesAt;
 
-  String preferredPaymentMethod = 'customer_pays_at_pickup';
-  String paymentHandlingMethod = 'customer_pays_at_pickup';
+  String preferredPaymentMethod = 'wish_money';
+  String paymentHandlingMethod = 'wish_money';
+
+  
   String commissionType = 'custom';
   String storageTier = 'medium';
   bool hasShelves = false;
@@ -238,17 +240,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
     final commissionValue =
         double.tryParse(commissionValueController.text.trim());
 
-    if (ownerName.isEmpty ||
-        pickupPointName.isEmpty ||
-        phone.isEmpty ||
-        email.isEmpty ||
-        address.isEmpty ||
-        confirmAddress.isEmpty ||
-        city.isEmpty ||
-        area.isEmpty ||
-        password.isEmpty ||
-        confirmPassword.isEmpty) {
-      setState(() => errorText = 'Please fill all required fields.');
+    if (email.isEmpty) {
+      setState(() => errorText = 'Email is still required.');
       return;
     }
 
@@ -257,31 +250,25 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
       return;
     }
 
-    if (address != confirmAddress) {
+    if (address.isNotEmpty &&
+        confirmAddress.isNotEmpty &&
+        address != confirmAddress) {
       setState(() => errorText = 'Address and confirm address do not match.');
       return;
     }
 
-    if (opensAt == null || closesAt == null) {
-      setState(() => errorText = 'Please select working hours.');
-      return;
+    if (opensAt != null && closesAt != null) {
+      final openMinutes = opensAt!.hour * 60 + opensAt!.minute;
+      final closeMinutes = closesAt!.hour * 60 + closesAt!.minute;
+      if (openMinutes >= closeMinutes) {
+        setState(() {
+          errorText = 'Opening time must be earlier than closing time.';
+        });
+        return;
+      }
     }
 
-    if (selectedWorkingDays.isEmpty) {
-      setState(() => errorText = 'Please select at least one working day.');
-      return;
-    }
-
-    final openMinutes = opensAt!.hour * 60 + opensAt!.minute;
-    final closeMinutes = closesAt!.hour * 60 + closesAt!.minute;
-    if (openMinutes >= closeMinutes) {
-      setState(() {
-        errorText = 'Opening time must be earlier than closing time.';
-      });
-      return;
-    }
-
-    if (maxOrdersPerDay == null || maxOrdersPerDay <= 0) {
+    if (maxOrdersPerDay != null && maxOrdersPerDay <= 0) {
       setState(() => errorText = 'Max orders per day must be greater than 0.');
       return;
     }
@@ -303,30 +290,22 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
       return;
     }
 
-    if (commissionType == 'custom') {
+    if (commissionType == 'custom' &&
+        commissionValueController.text.trim().isNotEmpty) {
       if (commissionValue == null || commissionValue < 0 || commissionValue > 100) {
         setState(() => errorText = 'Commission value must be between 0 and 100.');
         return;
       }
     }
 
-    if (shopImageBytes == null ||
-        idImageBytes == null ||
-        storageAreaImageBytes == null ||
-        shelvesImageBytes == null) {
-      setState(() {
-        errorText =
-            'Please upload shop, ID, storage area, and shelves images.';
-      });
-      return;
-    }
-
-    if (password.length < 6) {
+    if (password.isNotEmpty && password.length < 6) {
       setState(() => errorText = 'Password must be at least 6 characters.');
       return;
     }
 
-    if (password != confirmPassword) {
+    if (password.isNotEmpty &&
+        confirmPassword.isNotEmpty &&
+        password != confirmPassword) {
       setState(() => errorText = 'Password and confirm password do not match.');
       return;
     }
@@ -336,6 +315,37 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
         isLoading = true;
         errorText = null;
       });
+
+      final existingApplication = await _authService
+          .getPickupPointApplicationByEmail(email);
+      final existingStatus = existingApplication?['verification_status']
+          ?.toString()
+          .trim()
+          .toLowerCase();
+
+      if (existingStatus == 'rejected') {
+        setState(() {
+          errorText =
+              'This pickup point application was already rejected. Please sign in with this account to view the rejected status.';
+        });
+        return;
+      }
+
+      if (existingStatus == 'pending') {
+        setState(() {
+          errorText =
+              'This pickup point application is already pending review. Please sign in to view its status.';
+        });
+        return;
+      }
+
+      if (existingStatus == 'approved') {
+        setState(() {
+          errorText =
+              'This pickup point account is already approved. Please sign in instead of signing up again.';
+        });
+        return;
+      }
 
       await _authService.sendOtp(
         email: email,
@@ -364,8 +374,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
             branchLng: longitude,
             maxOrdersPerDay: maxOrdersPerDay,
             workingDays: selectedWorkingDays.toList(),
-            opensAt: _formatTimeOfDay(opensAt!),
-            closesAt: _formatTimeOfDay(closesAt!),
+            opensAt: opensAt == null ? null : _formatTimeOfDay(opensAt!),
+            closesAt: closesAt == null ? null : _formatTimeOfDay(closesAt!),
             preferredPaymentMethod: preferredPaymentMethod,
             paymentHandlingMethod: paymentHandlingMethod,
             commissionType: commissionType,
@@ -683,24 +693,20 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  DropdownButtonFormField<String>(
+                    DropdownButtonFormField<String>(
                     initialValue: paymentHandlingMethod,
                     decoration: const InputDecoration(
-                      labelText: 'Payment Handling Method',
+                      labelText: 'How will this pickup point send money to Wasle?',
                       prefixIcon: Icon(Icons.payments_outlined),
                     ),
                     items: const [
                       DropdownMenuItem(
-                        value: 'customer_pays_at_pickup',
-                        child: Text('Customer Pays At Pickup'),
+                        value: 'wish_money',
+                        child: Text('Pickup Point Sends by Whish'),
                       ),
                       DropdownMenuItem(
-                        value: 'customer_pays_online',
-                        child: Text('Customer Pays Online (Whish)'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'hybrid',
-                        child: Text('Hybrid'),
+                        value: 'agent_collection',
+                        child: Text('Wasle Agent Collects from Pickup Point'),
                       ),
                     ],
                     onChanged: (value) {
@@ -711,6 +717,7 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
                       });
                     },
                   ),
+                  
                   const SizedBox(height: AppSpacing.md),
                   ListTile(
                     contentPadding: EdgeInsets.zero,

@@ -10,7 +10,9 @@ class AgentService {
     try {
       final pickupPoints = await _db
           .from('pickup_points')
-          .select('id, name, address_text, city, area, phone, email, owner_name, preferred_payment_method, status')
+          .select(
+            'id, name, address_text, city, area, phone, email, owner_name, preferred_payment_method, status',
+          )
           .or('preferred_payment_method.is.null,preferred_payment_method.neq.wish_money')
           .eq('is_active', true);
 
@@ -83,7 +85,6 @@ class AgentService {
       final agentId = _uid;
       if (agentId == null) throw Exception('Agent not logged in');
 
-      // Update payment status only — no extra columns
       final token =
           Supabase.instance.client.auth.currentSession?.accessToken ?? '';
       final response = await Supabase.instance.client.functions.invoke(
@@ -98,7 +99,6 @@ class AgentService {
         );
       }
 
-      // Record the collection
       await _db.from('agent_collections').insert({
         'agent_id': agentId,
         'order_id': orderId,
@@ -110,7 +110,6 @@ class AgentService {
         'collected_at': DateTime.now().toUtc().toIso8601String(),
       });
 
-      // Log the event
       await _db.from('order_events').insert({
         'order_id': orderId,
         'event_type': 'agent_cash_collected',
@@ -138,12 +137,15 @@ class AgentService {
     }
   }
 
-  Future<List<Map<String, dynamic>>> getCollectionHistory({String? agentId}) async {
+  Future<List<Map<String, dynamic>>> getCollectionHistory({
+    String? agentId,
+  }) async {
     try {
       var query = _db.from('agent_collections').select(
-          'id, agent_id, order_id, amount, status, note, collected_at, '
-          'profiles!agent_collections_agent_id_fkey(full_name, phone), '
-          'pickup_points(name, address_text)');
+            'id, agent_id, order_id, amount, status, note, collected_at, '
+            'profiles!agent_collections_agent_id_fkey(full_name, phone), '
+            'pickup_points(name, address_text)',
+          );
 
       if (agentId != null) {
         query = query.eq('agent_id', agentId);
@@ -167,7 +169,9 @@ class AgentService {
     try {
       final pps = await getPickupPointsWithPendingCash();
       return pps.fold<double>(
-          0.0, (sum, pp) => sum + ((pp['total_pending'] as num?)?.toDouble() ?? 0.0));
+        0.0,
+        (sum, pp) => sum + ((pp['total_pending'] as num?)?.toDouble() ?? 0.0),
+      );
     } catch (e) {
       return 0.0;
     }

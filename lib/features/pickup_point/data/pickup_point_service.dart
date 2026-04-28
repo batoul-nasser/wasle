@@ -37,9 +37,7 @@ class PickupPointService {
         .trim()
         .toLowerCase();
 
-    return preferred == 'wish_money' ||
-        preferred == 'customer_pays_online' ||
-        handling == 'customer_pays_online';
+    return preferred == 'wish_money' || handling == 'wish_money';
   }
 
   bool usesAgentCollection(Map<String, dynamic>? pickupPoint) {
@@ -54,8 +52,8 @@ class PickupPointService {
         .trim()
         .toLowerCase();
 
-    return preferred == 'customer_pays_at_pickup' ||
-        handling == 'customer_pays_at_pickup';
+    return preferred == 'agent_collection' ||
+        handling == 'agent_collection';
   }
 
   Future<List<String>> _ordersOwnedByDestinationPickup(String ppId) async {
@@ -255,8 +253,8 @@ class PickupPointService {
           .select('order_id, event_type, note, created_at, created_by')
           .inFilter('order_id', orderIds)
           .inFilter('event_type', [
+            'pickup_point_cash_ready_for_collection',
             'agent_cash_collected',
-            'agent_cash_collected_pickup_point_confirmed',
           ])
           .gte('created_at', effectiveSince.toIso8601String())
           .order('created_at', ascending: false)
@@ -346,27 +344,12 @@ class PickupPointService {
         orderId: orderId,
         pickupPointId: pp['id'].toString(),
       );
-
-      final token =
-          Supabase.instance.client.auth.currentSession?.accessToken ?? '';
-      final response = await Supabase.instance.client.functions.invoke(
-        'mark_cash_paid',
-        headers: {'Authorization': 'Bearer $token'},
-        body: {'order_id': orderId},
-      );
-
-      if (response.status != 200) {
-        throw Exception(
-          response.data['error'] ?? 'Failed to mark payment as paid',
-        );
-      }
-
       await _db.from('order_events').insert({
         'order_id': orderId,
-        'event_type': 'agent_cash_collected_pickup_point_confirmed',
+        'event_type': 'pickup_point_cash_ready_for_collection',
         'created_by': _uid,
         'note':
-            'Pickup point confirmed the agent collected cash.'
+            'Pickup point marked cash as ready for Wasle agent collection.'
             ' Amount: \$${amount.toStringAsFixed(2)}'
             '${note != null && note.trim().isNotEmpty ? '. Note: ${note.trim()}' : ''}',
       });
@@ -390,7 +373,6 @@ class PickupPointService {
         pickupPointId: pp['id'].toString(),
       );
 
-      // Call Edge Function instead of writing directly to payments
       final token =
           Supabase.instance.client.auth.currentSession?.accessToken ?? '';
       final response = await Supabase.instance.client.functions.invoke(

@@ -28,7 +28,7 @@ class PickupApplicationPendingScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 Text(
-                  'We received your documents and details. An admin must approve your application before your pickup point becomes active.',
+                  'Your request is still pending. You cannot access your pickup point account until an admin reviews and approves your application.',
                   style: AppTextStyles.bodyMuted,
                   textAlign: TextAlign.center,
                 ),

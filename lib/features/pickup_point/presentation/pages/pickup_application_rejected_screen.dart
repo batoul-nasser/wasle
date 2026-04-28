@@ -28,7 +28,7 @@ class PickupApplicationRejectedScreen extends StatelessWidget {
                 ),
                 const SizedBox(height: AppSpacing.sm),
                 Text(
-                  'Please contact support or resubmit your application with clearer business and identity documents.',
+                  'Your account cannot be accessed because the application was rejected. Please contact support or resubmit your application with updated information.',
                   style: AppTextStyles.bodyMuted,
                   textAlign: TextAlign.center,
                 ),

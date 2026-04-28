@@ -49,7 +49,7 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Text('Confirm Agent Collection'),
+        title: const Text('Confirm Cash Ready for Agent'),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -60,7 +60,7 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              'Cash collected: \$${amount.toStringAsFixed(2)}',
+              'Cash ready for collection: \$${amount.toStringAsFixed(2)}',
               style: const TextStyle(color: Color(0xFFD4800A)),
             ),
             const SizedBox(height: 16),
@@ -69,7 +69,7 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
               maxLines: 2,
               decoration: InputDecoration(
                 labelText: 'Note (optional)',
-                hintText: 'Agent name or any comment',
+                hintText: 'Any note for the agent',
                 border: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -85,7 +85,7 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
           ElevatedButton.icon(
             onPressed: () => Navigator.pop(ctx, true),
             icon: const Icon(Icons.check_circle_outline),
-            label: const Text('Agent collected'),
+            label: const Text('Cash ready for agent'),
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.green,
               foregroundColor: Colors.white,
@@ -114,7 +114,9 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Marked $tracking as collected by a Wasle agent.'),
+          content: Text(
+            'Marked $tracking as ready for Wasle agent collection.',
+          ),
           backgroundColor: Colors.green,
         ),
       );
@@ -146,7 +148,7 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
           ? Center(
               child: Text(
                 _showsAgentCollection
-                    ? 'No orders are waiting for an agent collection.'
+                    ? 'No orders are currently waiting for agent collection.'
                     : 'No orders waiting for cash payment.',
                 style: const TextStyle(color: Colors.black54),
               ),
@@ -209,7 +211,7 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
                                   Icons.handshake_outlined,
                                   size: 16,
                                 ),
-                                label: const Text('Agent collected'),
+                                label: const Text('Cash ready for agent'),
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: Colors.green,
                                   side: const BorderSide(color: Colors.green),

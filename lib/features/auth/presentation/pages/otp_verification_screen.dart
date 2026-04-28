@@ -116,6 +116,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   final AuthService _authService = AuthService();
   final TextEditingController _otpController = TextEditingController();
   int get _otpLength => 6;
+  static const String _pickupPlaceholderImageUrl =
+      'https://placehold.co/1200x800/png';
 
 
   int _secondsRemaining = 60;
@@ -171,6 +173,11 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       throw Exception('$fieldName is required');
     }
     return value;
+  }
+
+  String _fallbackText(String? value, String fallback) {
+    final text = value?.trim();
+    return (text == null || text.isEmpty) ? fallback : text;
   }
 
   String _fileExtension(String? fileName) {
@@ -359,38 +366,44 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           final timestamp = DateTime.now().millisecondsSinceEpoch;
           final safeEmail = _safeEmail();
 
-          final shopFileName =
-              '${safeEmail}_shop_$timestamp.${_fileExtension(widget.shopImageFileName)}';
-          final idFileName =
-              '${safeEmail}_id_$timestamp.${_fileExtension(widget.idImageFileName)}';
-          final storageAreaFileName =
-              '${safeEmail}_storage_$timestamp.${_fileExtension(widget.storageAreaImageFileName)}';
-          final shelvesFileName =
-              '${safeEmail}_shelves_$timestamp.${_fileExtension(widget.shelvesImageFileName)}';
+          final shopUrl =
+              widget.shopImageBytes == null || widget.shopImageBytes!.isEmpty
+              ? _pickupPlaceholderImageUrl
+              : await _authService.uploadPickupPointShopImage(
+                  fileName:
+                      '${safeEmail}_shop_$timestamp.${_fileExtension(widget.shopImageFileName)}',
+                  bytes: _requiredBytes(widget.shopImageBytes, 'Shop image'),
+                );
 
-          final shopUrl = await _authService.uploadPickupPointShopImage(
-            fileName: shopFileName,
-            bytes: _requiredBytes(widget.shopImageBytes, 'Shop image'),
-          );
+          final idUrl =
+              widget.idImageBytes == null || widget.idImageBytes!.isEmpty
+              ? _pickupPlaceholderImageUrl
+              : await _authService.uploadPickupPointIdImage(
+                  fileName:
+                      '${safeEmail}_id_$timestamp.${_fileExtension(widget.idImageFileName)}',
+                  bytes: _requiredBytes(widget.idImageBytes, 'ID image'),
+                );
 
-          final idUrl = await _authService.uploadPickupPointIdImage(
-            fileName: idFileName,
-            bytes: _requiredBytes(widget.idImageBytes, 'ID image'),
-          );
+          final storageAreaUrl = widget.storageAreaImageBytes == null ||
+                  widget.storageAreaImageBytes!.isEmpty
+              ? _pickupPlaceholderImageUrl
+              : await _authService.uploadPickupPointStorageAreaImage(
+                  fileName:
+                      '${safeEmail}_storage_$timestamp.${_fileExtension(widget.storageAreaImageFileName)}',
+                  bytes: _requiredBytes(
+                    widget.storageAreaImageBytes,
+                    'Storage area image',
+                  ),
+                );
 
-          final storageAreaUrl = await _authService
-              .uploadPickupPointStorageAreaImage(
-                fileName: storageAreaFileName,
-                bytes: _requiredBytes(
-                  widget.storageAreaImageBytes,
-                  'Storage area image',
-                ),
-              );
-
-          final shelvesUrl = await _authService.uploadPickupPointShelvesImage(
-            fileName: shelvesFileName,
-            bytes: _requiredBytes(widget.shelvesImageBytes, 'Shelves image'),
-          );
+          final shelvesUrl =
+              widget.shelvesImageBytes == null || widget.shelvesImageBytes!.isEmpty
+              ? _pickupPlaceholderImageUrl
+              : await _authService.uploadPickupPointShelvesImage(
+                  fileName:
+                      '${safeEmail}_shelves_$timestamp.${_fileExtension(widget.shelvesImageFileName)}',
+                  bytes: _requiredBytes(widget.shelvesImageBytes, 'Shelves image'),
+                );
 
           if (shopUrl == null ||
               idUrl == null ||
@@ -406,27 +419,35 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             email: normalizedEmail,
             pickupPointName: _required(
               widget.pickupPointName,
-              'Pickup point name',
+              'Pickup Point',
             ),
-            addressText: _required(widget.addressText, 'Address'),
-            confirmAddressText: _required(
+            addressText: _fallbackText(widget.addressText, 'Beirut, Lebanon'),
+            confirmAddressText: _fallbackText(
               widget.confirmAddressText,
-              'Confirm address',
+              widget.addressText?.trim().isNotEmpty == true
+                  ? widget.addressText!
+                  : 'Beirut, Lebanon',
             ),
             lat: widget.branchLat,
             lng: widget.branchLng,
             city: _required(widget.city, 'City'),
             area: _required(widget.area, 'Area'),
+            lat: widget.branchLat,
+            lng: widget.branchLng,
+            city: _required(widget.city, 'City'),
+            area: _required(widget.area, 'Area'),
             maxOrdersPerDay: widget.maxOrdersPerDay,
-            workingDays: widget.workingDays,
-            opensAt: _required(widget.opensAt, 'Opening time'),
-            closesAt: _required(widget.closesAt, 'Closing time'),
+            workingDays: widget.workingDays == null || widget.workingDays!.isEmpty
+                ? const ['Monday', 'Tuesday', 'Wednesday']
+                : widget.workingDays,
+            opensAt: _fallbackText(widget.opensAt, '08:00:00'),
+            closesAt: _fallbackText(widget.closesAt, '18:00:00'),
             commissionType: widget.commissionType ?? 'custom',
             commissionValue: widget.commissionValue,
             commissionPlan: widget.commissionPlan,
-            preferredPaymentMethod: _required(
+            preferredPaymentMethod: _fallbackText(
               widget.preferredPaymentMethod,
-              'Preferred payment method',
+              'customer_pays_at_pickup',
             ),
             paymentHandlingMethod: widget.paymentHandlingMethod,
             storageTier: widget.storageTier,
