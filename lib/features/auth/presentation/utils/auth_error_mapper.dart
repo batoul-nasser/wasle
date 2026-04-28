@@ -28,10 +28,29 @@ class AuthErrorMapper {
 
     switch (context) {
       case AuthErrorContext.passwordLogin:
+        if (code == 'email_not_confirmed' ||
+            message.contains('email not confirmed') ||
+            message.contains('email_not_confirmed')) {
+          return 'Your email is not confirmed yet. Open the confirmation link '
+              'from your inbox, then try again—or use Log in with OTP.';
+        }
+        if (code == 'user_banned' || message.contains('user_banned')) {
+          return 'This account is disabled. Contact support if you need help.';
+        }
+        if (code == 'user_not_found') {
+          return 'No account found for this email. Check spelling or sign up.';
+        }
+        if (code == 'over_request_rate_limit' ||
+            code == 'too_many_requests' ||
+            message.contains('rate limit') ||
+            message.contains('too many requests')) {
+          return 'Too many attempts. Wait a minute and try again.';
+        }
         if (code == 'invalid_credentials' ||
             message.contains('invalid login credentials') ||
             message.contains('invalid_credentials')) {
-          return 'Invalid email or password.';
+          return 'Invalid email or password. If you signed up with a code only, '
+              'use Log in with OTP—or reset your password from your email.';
         }
         return 'Unable to log in right now. Please try again.';
 
@@ -89,8 +108,9 @@ class AuthErrorMapper {
   }
 
   static String _extractCode(Object error) {
-    if (error is AuthApiException) {
-      return (error.code ?? '').toLowerCase();
+    if (error is AuthException) {
+      final c = error.code;
+      if (c != null && c.isNotEmpty) return c.toLowerCase();
     }
 
     final raw = error.toString();

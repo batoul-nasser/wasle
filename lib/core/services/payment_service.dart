@@ -59,6 +59,12 @@ class PaymentService {
     String? pickupPointId,
     String? deliveryCompanyId,
     String? notes,
+    double? customerLat,
+    double? customerLng,
+    double? pickupLat,
+    double? pickupLng,
+    double? dropoffLat,
+    double? dropoffLng,
     int itemCount = 1,
     double estimatedWeightKg = 1.0,
     double estimatedVolumeCm3 = 5000.0,
@@ -88,6 +94,12 @@ class PaymentService {
           if (deliveryCompanyId != null && deliveryCompanyId.isNotEmpty)
             'delivery_company_id': deliveryCompanyId,
           if (notes != null && notes.isNotEmpty) 'notes': notes,
+          if (customerLat != null) 'customer_lat': customerLat,
+          if (customerLng != null) 'customer_lng': customerLng,
+          if (pickupLat != null) 'pickup_location_lat': pickupLat,
+          if (pickupLng != null) 'pickup_location_lng': pickupLng,
+          if (dropoffLat != null) 'dropoff_location_lat': dropoffLat,
+          if (dropoffLng != null) 'dropoff_location_lng': dropoffLng,
           'item_count': normalizedDemand.itemCount,
           'estimated_weight': normalizedDemand.weightKg,
           'estimated_volume': normalizedDemand.volumeCm3,
@@ -97,14 +109,19 @@ class PaymentService {
       debugPrint('[PaymentService] create_order status: ${response.status}');
       debugPrint('[PaymentService] create_order data: ${response.data}');
 
-      if (response.status != 200) {
+      if (response.status < 200 || response.status >= 300) {
         final errorMsg = response.data is Map
             ? (response.data['error'] ?? response.data.toString())
             : response.data?.toString() ?? 'Unknown error';
         throw Exception('Order creation failed: $errorMsg');
       }
-
-      return Map<String, dynamic>.from(response.data as Map);
+      final raw = response.data;
+      if (raw is Map<String, dynamic>) return raw;
+      if (raw is Map) return Map<String, dynamic>.from(raw);
+      throw Exception(
+        'Order creation failed: create_order returned unexpected payload type '
+        '(${raw.runtimeType}).',
+      );
     } catch (e, st) {
       debugPrint('[PaymentService] createOrderWithPayment error: $e');
       debugPrint('$st');

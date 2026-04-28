@@ -71,6 +71,7 @@ class _CustomerSignUpScreenState extends State<CustomerSignUpScreen> {
             email: email,
             title: 'Verify Customer Account',
             mode: AuthFlowMode.customerSignup,
+            password: password,
             fullName: fullName,
             phone: phone,
           ),

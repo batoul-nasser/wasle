@@ -1,7 +1,10 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart' as fm;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:latlong2/latlong.dart' as latlong;
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/services/payment_service.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
@@ -467,6 +470,15 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     final value = raw.trim();
     if (value.isEmpty) return null;
     return double.tryParse(value);
+  }
+
+  double? _parseEstimatedVolumeCm3(String raw) {
+    final parsed = _parsePositiveDouble(raw);
+    if (parsed == null) return null;
+    // Backward compatibility: the old UI used m³ labels.
+    // Small values are treated as m³ then converted to cm³.
+    if (parsed > 0 && parsed <= 10) return parsed * 1000000;
+    return parsed;
   }
 
   bool get _requiresCustomerMap {
@@ -966,7 +978,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
     try {
       final effectiveAddress = _effectiveOrderAddressForCreation();
-
+      final customerCoords = _customerCoordinatesForStorage();
+      final pickupCoords = _pickupCoordinatesForStorage();
       final result = await _paymentService.createOrderWithPayment(
         merchantId: merchantId,
         branchId: _merchantBranchId,
@@ -982,10 +995,22 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
             ? _selectedSourcePickupPointId
             : null,
         deliveryCompanyId: _selectedDeliveryCompanyId,
+        customerLat: customerCoords.$1,
+        customerLng: customerCoords.$2,
+        pickupLat: pickupCoords.$1,
+        pickupLng: pickupCoords.$2,
+        dropoffLat: customerCoords.$1,
+        dropoffLng: customerCoords.$2,
         notes: _mergedNotes(),
       );
 
       final orderId = _resultValue(result, ['id', 'orderId', 'order_id']);
+      if (orderId == '-') {
+        throw Exception(
+          'Order created but create_order response did not return an order id. '
+          'Operational fields could not be persisted.',
+        );
+      }
       await _saveOrderExtras(orderId);
 
       if (!mounted) return;
@@ -1025,8 +1050,162 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
     }
   }
 
+  String _newUuidV4() {
+    final b = List<int>.generate(16, (_) => math.Random.secure().nextInt(256));
+    b[6] = (b[6] & 0x0f) | 0x40;
+    b[8] = (b[8] & 0x3f) | 0x80;
+    const h = '0123456789abcdef';
+    String x(int i) => '${h[b[i] >> 4]}${h[b[i] & 0xf]}';
+    return '${x(0)}${x(1)}${x(2)}${x(3)}-${x(4)}${x(5)}-${x(6)}${x(7)}-'
+        '${x(8)}${x(9)}-${x(10)}${x(11)}${x(12)}${x(13)}${x(14)}${x(15)}';
+  }
+
+  /// Pickup map coordinates for [orders.pickup_location_lat/lng] when available.
+  (double?, double?) _pickupCoordinatesForStorage() {
+    if (_pickupSourceType == _pickupFromStore) {
+      if (_merchantBranchLat != null && _merchantBranchLng != null) {
+        return (_merchantBranchLat, _merchantBranchLng);
+      }
+      return (null, null);
+    }
+    final p = _selectedSourcePickupPoint();
+    if (p?.lat != null && p?.lng != null) {
+      return (p!.lat, p.lng);
+    }
+    return (null, null);
+  }
+
+  String _pickupAddressTextForOrderAddresses() {
+    final fromLabel = _sourceAddressLabel()?.trim();
+    if (fromLabel != null && fromLabel.isNotEmpty) return fromLabel;
+    final name = _merchantBranchName?.trim();
+    if (name != null && name.isNotEmpty) return name;
+    return 'Pickup';
+  }
+
+  String _dropoffAddressTextForOrderAddresses() {
+    final stored = _customerAddressForStorage()?.trim();
+    if (stored != null && stored.isNotEmpty) return stored;
+    final typed = _addressCtrl.text.trim();
+    if (typed.isNotEmpty) return typed;
+    if (_dropoffType == _dropoffPickupSpecific) {
+      final n = _destinationPickupPoint()?.displayName.trim();
+      if (n != null && n.isNotEmpty) return n;
+    }
+    return 'Dropoff';
+  }
+
+  Future<void> _syncOrderAddressesRow({
+    required String orderId,
+    required String pickupAddressText,
+    required String dropoffAddressText,
+    required double? pickupLat,
+    required double? pickupLng,
+    required double? dropoffLat,
+    required double? dropoffLng,
+  }) async {
+    final existing = await _client
+        .from('order_addresses')
+        .select('id')
+        .eq('order_id', orderId)
+        .maybeSingle();
+    final existingId = existing?['id']?.toString().trim();
+    final id = (existingId != null && existingId.isNotEmpty)
+        ? existingId
+        : _newUuidV4();
+
+    await _client.from('order_addresses').upsert(
+      {
+        'id': id,
+        'order_id': orderId,
+        'pickup_address_text': pickupAddressText,
+        'pickup_lat': pickupLat,
+        'pickup_lng': pickupLng,
+        'dropoff_address_text': dropoffAddressText,
+        'dropoff_lat': dropoffLat,
+        'dropoff_lng': dropoffLng,
+      },
+      onConflict: 'order_id',
+    );
+  }
+
+  Future<void> _verifyPersistedOrder(String orderId) async {
+    final row = await _client
+        .from('orders')
+        .select(
+          'pickup_point_id, destination_pickup_point_id, '
+          'customer_lat, customer_lng, dropoff_location_lat, dropoff_location_lng, '
+          'pickup_location_lat, pickup_location_lng, delivery_company_id, '
+          'company_id, assignment_status',
+        )
+        .eq('id', orderId)
+        .maybeSingle();
+
+    if (row == null) {
+      throw Exception(
+        'Could not verify order save: order $orderId is missing or not visible.',
+      );
+    }
+
+    if (_requiresCustomerMap) {
+      final clat = _asDouble(row['customer_lat']);
+      final clng = _asDouble(row['customer_lng']);
+      final dlat = _asDouble(row['dropoff_location_lat']);
+      final dlng = _asDouble(row['dropoff_location_lng']);
+      if (clat == null ||
+          clng == null ||
+          dlat == null ||
+          dlng == null) {
+        throw Exception(
+          'Could not verify order save: map coordinates were not stored '
+          '(customer_lat/lng or dropoff_location_lat/lng is null). '
+          'Check database columns and RLS policies for table orders.',
+        );
+      }
+    }
+
+    if (_dropoffType == _dropoffPickupSpecific) {
+      final dest = row['destination_pickup_point_id']?.toString().trim();
+      if (dest == null || dest.isEmpty) {
+        throw Exception(
+          'Could not verify order save: destination_pickup_point_id is missing.',
+        );
+      }
+      final dlat = _asDouble(row['dropoff_location_lat']);
+      final dlng = _asDouble(row['dropoff_location_lng']);
+      if (dlat == null || dlng == null) {
+        throw Exception(
+          'Could not verify order save: destination pickup coordinates were not stored '
+          '(dropoff_location_lat/lng is null).',
+        );
+      }
+    }
+
+    if (_allDeliveryCompanies.isNotEmpty) {
+      final cid = row['delivery_company_id']?.toString().trim();
+      if (cid == null || cid.isEmpty) {
+        throw Exception(
+          'Could not verify order save: delivery_company_id was not stored.',
+        );
+      }
+    }
+    debugPrint(
+      '[merchant-create] verify order=$orderId '
+      'pickup_point_id=${row['pickup_point_id']} '
+      'destination_pickup_point_id=${row['destination_pickup_point_id']} '
+      'pickup=(${row['pickup_location_lat']},${row['pickup_location_lng']}) '
+      'dropoff=(${row['dropoff_location_lat']},${row['dropoff_location_lng']}) '
+      'customer=(${row['customer_lat']},${row['customer_lng']}) '
+      'delivery_company_id=${row['delivery_company_id']} '
+      'company_id=${row['company_id']} '
+      'assignment_status=${row['assignment_status']}',
+    );
+  }
+
   Future<void> _saveOrderExtras(String orderId) async {
-    if (orderId.trim().isEmpty || orderId == '-') return;
+    if (orderId.trim().isEmpty || orderId == '-') {
+      throw Exception('Missing order id, cannot persist operational fields.');
+    }
 
     final destinationPickupId =
         (_dropoffType == _dropoffHome ||
@@ -1034,7 +1213,19 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
         ? _selectedDestinationPickupPointId
         : null;
 
-    await _client
+    final coords = _customerCoordinatesForStorage();
+    final pickupCoords = _pickupCoordinatesForStorage();
+    final destinationPickup = _destinationPickupPoint();
+    final dropoffCoordsForOrder = _dropoffType == _dropoffPickupSpecific
+        ? (destinationPickup?.lat, destinationPickup?.lng)
+        : coords;
+    final companyId = _selectedDeliveryCompanyId;
+
+    // [notes] from create_order already includes human-readable coordinates;
+    // these columns are the source of truth for routing (see
+    // [OrderAssignmentService._dropoffLocation] which prefers dropoff_* then
+    // customer_*).
+    final rows = await _client
         .from('orders')
         .update({
           'branch_id': _merchantBranchId,
@@ -1051,15 +1242,47 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
               : _parcelDescriptionCtrl.text.trim(),
           'item_count': _parseItemCount(),
           'estimated_weight': _parsePositiveDouble(_estimatedWeightCtrl.text),
-          'estimated_volume': _parsePositiveDouble(_estimatedVolumeCtrl.text),
+          'estimated_volume': _parseEstimatedVolumeCm3(_estimatedVolumeCtrl.text),
           'customer_address_text': _customerAddressForStorage(),
-          'customer_lat': _selectedCustomerLat,
-          'customer_lng': _selectedCustomerLng,
-          'delivery_company_id': _selectedDeliveryCompanyId,
+          'customer_lat': coords.$1,
+          'customer_lng': coords.$2,
+          if (dropoffCoordsForOrder.$1 != null && dropoffCoordsForOrder.$2 != null) ...{
+            'dropoff_location_lat': dropoffCoordsForOrder.$1,
+            'dropoff_location_lng': dropoffCoordsForOrder.$2,
+          },
+          if (pickupCoords.$1 != null && pickupCoords.$2 != null) ...{
+            'pickup_location_lat': pickupCoords.$1,
+            'pickup_location_lng': pickupCoords.$2,
+          },
+          // Keep both in sync — RLS and some queries use [company_id].
+          if (companyId != null && companyId.isNotEmpty) 'company_id': companyId,
+          'delivery_company_id': companyId,
+          'assignment_status': 'pending_assignment',
           'notes': _mergedNotes(),
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
-        .eq('id', orderId);
+        .eq('id', orderId)
+        .select('id');
+
+    final updated = List<Map<String, dynamic>>.from(rows);
+    if (updated.isEmpty) {
+      throw Exception(
+        'Order was created but details could not be saved (order id or access). '
+        'Try again or contact support.',
+      );
+    }
+
+    await _verifyPersistedOrder(orderId);
+
+    await _syncOrderAddressesRow(
+      orderId: orderId,
+      pickupAddressText: _pickupAddressTextForOrderAddresses(),
+      dropoffAddressText: _dropoffAddressTextForOrderAddresses(),
+      pickupLat: pickupCoords.$1,
+      pickupLng: pickupCoords.$2,
+      dropoffLat: dropoffCoordsForOrder.$1,
+      dropoffLng: dropoffCoordsForOrder.$2,
+    );
   }
 
   String _normalizedDropoffType() {
@@ -1093,12 +1316,31 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
             ? null
             : _addressCtrl.text.trim();
       case _dropoffPickupSpecific:
+        final p = _destinationPickupPoint();
+        if (p == null) return null;
+        final label = p.displayName.trim();
+        final addr = p.addressText.trim();
+        if (label.isNotEmpty && addr.isNotEmpty) return '$label — $addr';
+        if (addr.isNotEmpty) return addr;
+        if (label.isNotEmpty) return label;
         return null;
       default:
         return _addressCtrl.text.trim().isEmpty
             ? null
             : _addressCtrl.text.trim();
     }
+  }
+
+  /// Coordinates stored on [orders] for routing; home uses map pin, specific
+  /// pickup uses the destination point so company/driver UIs stay consistent.
+  (double?, double?) _customerCoordinatesForStorage() {
+    if (_dropoffType == _dropoffPickupSpecific) {
+      final p = _destinationPickupPoint();
+      if (p?.lat != null && p?.lng != null) {
+        return (p!.lat, p.lng);
+      }
+    }
+    return (_selectedCustomerLat, _selectedCustomerLng);
   }
 
   String? _mergedNotes() {
@@ -1529,7 +1771,7 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
 
   String get _summaryVolume {
     final value = _estimatedVolumeCtrl.text.trim();
-    return value.isEmpty ? '-' : '$value m³';
+    return value.isEmpty ? '-' : '$value cm³';
   }
 
   String get _summaryMapLocation {
@@ -2057,8 +2299,8 @@ class _MerchantCreateOrderScreenState extends State<MerchantCreateOrderScreen> {
                         Expanded(
                           child: _FormField(
                             controller: _estimatedVolumeCtrl,
-                            label: 'Volume (m³)',
-                            hint: '0.02',
+                            label: 'Volume (cm³)',
+                            hint: '20000',
                             icon: Icons.straighten_outlined,
                             keyboardType: const TextInputType.numberWithOptions(
                               decimal: true,
@@ -2452,6 +2694,15 @@ class _MapPickerScreenState extends State<_MapPickerScreen> {
   late final TextEditingController _addressController;
   late LatLng _selectedLatLng;
   GoogleMapController? _mapController;
+  final fm.MapController _desktopMapController = fm.MapController();
+  double _desktopZoom = 16;
+
+  bool get _useGoogleMapsPlugin =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  latlong.LatLng get _desktopLatLng =>
+      latlong.LatLng(_selectedLatLng.latitude, _selectedLatLng.longitude);
 
   @override
   void initState() {
@@ -2470,15 +2721,27 @@ class _MapPickerScreenState extends State<_MapPickerScreen> {
   }
 
   Future<void> _zoomIn() async {
-    final controller = _mapController;
-    if (controller == null) return;
-    await controller.animateCamera(CameraUpdate.zoomIn());
+    if (_useGoogleMapsPlugin) {
+      final controller = _mapController;
+      if (controller == null) return;
+      await controller.animateCamera(CameraUpdate.zoomIn());
+      return;
+    }
+    final nextZoom = (_desktopZoom + 1).clamp(3.0, 19.0).toDouble();
+    setState(() => _desktopZoom = nextZoom);
+    _desktopMapController.move(_desktopLatLng, nextZoom);
   }
 
   Future<void> _zoomOut() async {
-    final controller = _mapController;
-    if (controller == null) return;
-    await controller.animateCamera(CameraUpdate.zoomOut());
+    if (_useGoogleMapsPlugin) {
+      final controller = _mapController;
+      if (controller == null) return;
+      await controller.animateCamera(CameraUpdate.zoomOut());
+      return;
+    }
+    final nextZoom = (_desktopZoom - 1).clamp(3.0, 19.0).toDouble();
+    setState(() => _desktopZoom = nextZoom);
+    _desktopMapController.move(_desktopLatLng, nextZoom);
   }
 
   void _confirm() {
@@ -2488,6 +2751,71 @@ class _MapPickerScreenState extends State<_MapPickerScreen> {
         lng: _selectedLatLng.longitude,
         address: _addressController.text.trim(),
       ),
+    );
+  }
+
+  Widget _buildMap() {
+    if (_useGoogleMapsPlugin) {
+      return GoogleMap(
+        initialCameraPosition: CameraPosition(
+          target: _selectedLatLng,
+          zoom: 16,
+        ),
+        onMapCreated: (controller) {
+          _mapController = controller;
+        },
+        markers: {
+          Marker(
+            markerId: const MarkerId('selected_location'),
+            position: _selectedLatLng,
+          ),
+        },
+        onTap: (latLng) {
+          setState(() {
+            _selectedLatLng = latLng;
+          });
+        },
+        myLocationButtonEnabled: false,
+        zoomControlsEnabled: false,
+        zoomGesturesEnabled: true,
+        scrollGesturesEnabled: true,
+        rotateGesturesEnabled: true,
+        tiltGesturesEnabled: true,
+        mapToolbarEnabled: true,
+      );
+    }
+
+    return fm.FlutterMap(
+      mapController: _desktopMapController,
+      options: fm.MapOptions(
+        initialCenter: _desktopLatLng,
+        initialZoom: _desktopZoom,
+        onTap: (_, point) {
+          setState(() {
+            _selectedLatLng = LatLng(point.latitude, point.longitude);
+          });
+        },
+      ),
+      children: [
+        fm.TileLayer(
+          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          userAgentPackageName: 'com.wasle.app',
+        ),
+        fm.MarkerLayer(
+          markers: [
+            fm.Marker(
+              width: 46,
+              height: 46,
+              point: _desktopLatLng,
+              child: const Icon(
+                Icons.location_on_rounded,
+                color: _W.red,
+                size: 44,
+              ),
+            ),
+          ],
+        ),
+      ],
     );
   }
 
@@ -2519,33 +2847,7 @@ class _MapPickerScreenState extends State<_MapPickerScreen> {
             Expanded(
               child: Stack(
                 children: [
-                  GoogleMap(
-                    initialCameraPosition: CameraPosition(
-                      target: _selectedLatLng,
-                      zoom: 16,
-                    ),
-                    onMapCreated: (controller) {
-                      _mapController = controller;
-                    },
-                    markers: {
-                      Marker(
-                        markerId: const MarkerId('selected_location'),
-                        position: _selectedLatLng,
-                      ),
-                    },
-                    onTap: (latLng) {
-                      setState(() {
-                        _selectedLatLng = latLng;
-                      });
-                    },
-                    myLocationButtonEnabled: false,
-                    zoomControlsEnabled: false,
-                    zoomGesturesEnabled: true,
-                    scrollGesturesEnabled: true,
-                    rotateGesturesEnabled: true,
-                    tiltGesturesEnabled: true,
-                    mapToolbarEnabled: true,
-                  ),
+                  _buildMap(),
                   Positioned(
                     top: 12,
                     right: 12,

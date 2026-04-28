@@ -12,7 +12,6 @@ import 'routing_service.dart';
 
 class OrderAssignmentService {
   static const Duration _freshLocationWindow = Duration(minutes: 3);
-  static const String _preferredTimeWindowPrefix = 'preferred time window:';
 
   final SupabaseClient _db;
   final RoutingService _routingService;
@@ -76,7 +75,11 @@ class OrderAssignmentService {
         );
       }
 
-      final drivers = await _loadCandidateDrivers(order.companyId);
+      final load = await _loadCandidateDrivers(
+        order.companyId,
+        orderPickup: order.pickupLocation,
+      );
+      final drivers = load.drivers;
       testedDrivers = drivers.length;
       _debug(
         'Auto-assign start order=${order.id} company=${order.companyId} '
@@ -85,19 +88,37 @@ class OrderAssignmentService {
         'candidates=$testedDrivers',
       );
       if (drivers.isEmpty) {
-        await _recordUnassignedEvent(
-          order.id,
-          'No approved available drivers for company.',
-        );
+        final reason = load.emptyPoolDetail == null
+            ? 'No approved drivers are linked to this company (or none passed verification).'
+            : 'No driver is ready for automatic assignment. ${load.emptyPoolDetail} '
+                'Tip: auto-assign uses driver GPS when present, otherwise company base or '
+                'order pickup for routing; drivers with active deliveries are still considered '
+                'as long as route/capacity insertion is feasible. '
+                'You can still assign manually from the list.';
+        await _recordUnassignedEvent(order.id, reason);
         return AssignmentResult.unassigned(
           orderId: order.id,
-          reason: 'No approved available drivers for company.',
+          reason: reason,
           testedDrivers: testedDrivers,
           feasibleInsertions: 0,
         );
       }
 
       RouteInsertion? bestInsertion;
+      final candidateFailureNotes = <String>[];
+
+      void noteCandidateFailure(String line) {
+        const maxNotes = 4;
+        const maxLen = 120;
+        if (candidateFailureNotes.length >= maxNotes) return;
+        final trimmed =
+            line.length > maxLen ? '${line.substring(0, maxLen - 1)}…' : line;
+        candidateFailureNotes.add(trimmed);
+      }
+
+      String shortDriverId(String id) =>
+          id.length <= 10 ? id : '${id.substring(0, 10)}…';
+
       for (final driver in drivers) {
         try {
           final route = await _loadDriverRoute(driver);
@@ -111,6 +132,14 @@ class OrderAssignmentService {
                     'order=${order.demand.itemCount}/${order.demand.weightKg.toStringAsFixed(1)}kg '
                     'capacity=${driver.capacity.itemCount}/${driver.capacity.weightKg.toStringAsFixed(1)}kg',
               ),
+            );
+            noteCandidateFailure(
+              '${shortDriverId(driver.id)}: capacity — current load '
+              '${route.initialLoad.itemCount} items / '
+              '${route.initialLoad.weightKg.toStringAsFixed(1)} kg + order '
+              '${order.demand.itemCount} / ${order.demand.weightKg.toStringAsFixed(1)} kg '
+              'vs vehicle cap ${driver.capacity.itemCount} / '
+              '${driver.capacity.weightKg.toStringAsFixed(1)} kg',
             );
             continue;
           }
@@ -145,7 +174,23 @@ class OrderAssignmentService {
               explainDriverRejection(
                 driverId: driver.id,
                 reason: 'route_insertion_not_feasible',
+                details:
+                    'shift_start=${driver.shiftStartAt?.toIso8601String()} '
+                    'shift_end=${driver.shiftEndAt?.toIso8601String()} '
+                    'stops=${route.stops.length} '
+                    'demand=${order.demand.itemCount}i/${order.demand.weightKg.toStringAsFixed(1)}kg '
+                    '${order.demand.volumeCm3.toStringAsFixed(0)}cm3 '
+                    'cap=${driver.capacity.itemCount}i/${driver.capacity.weightKg.toStringAsFixed(1)}kg/'
+                    '${driver.capacity.volumeCm3.toStringAsFixed(0)}cm3',
               ),
+            );
+            final shiftLabel = (driver.shiftStartAt == null &&
+                    driver.shiftEndAt == null)
+                ? 'open'
+                : '${driver.shiftStartAt?.toIso8601String() ?? "?"}→${driver.shiftEndAt?.toIso8601String() ?? "?"}';
+            noteCandidateFailure(
+              '${shortDriverId(driver.id)}: no route slot — '
+              'shifts $shiftLabel stops=${route.stops.length}',
             );
             continue;
           }
@@ -162,24 +207,33 @@ class OrderAssignmentService {
             bestInsertion = insertion;
           }
         } catch (error) {
+          final classified = _classifyAutoAssignDriverLoopError(error);
           _debug(
             explainDriverRejection(
               driverId: driver.id,
-              reason: 'google_maps_failed',
+              reason: classified,
               details: error.toString(),
             ),
+          );
+          final errBrief = error.toString();
+          noteCandidateFailure(
+            '${shortDriverId(driver.id)}: $classified — '
+            '${errBrief.length > 90 ? "${errBrief.substring(0, 90)}…" : errBrief}',
           );
           continue;
         }
       }
 
       if (bestInsertion == null) {
-        const reason =
+        const base =
             'No feasible driver found after capacity, shift, and route checks.';
+        final reason = candidateFailureNotes.isEmpty
+            ? base
+            : '$base Notes: ${candidateFailureNotes.join(' | ')}';
         await _recordUnassignedEvent(order.id, reason);
         return AssignmentResult.unassigned(
           orderId: order.id,
-          reason: reason,
+          reason: reason.length > 420 ? '${reason.substring(0, 417)}...' : reason,
           testedDrivers: testedDrivers,
           feasibleInsertions: feasibleInsertions,
         );
@@ -219,6 +273,10 @@ class OrderAssignmentService {
     String orderId, {
     String? merchantIdHint,
     String? companyIdHint,
+    /// When building a driver's route from older [assignments], skip bad rows
+    /// instead of throwing so one incomplete legacy order does not block
+    /// auto-assign for a new order.
+    bool allowIncomplete = false,
   }) async {
     final orderRows = await _db
         .from('orders')
@@ -254,6 +312,7 @@ class OrderAssignmentService {
     final dropoffType = _parseDropoffType(order);
     final demand = _tryOrderDemand(order);
     if (demand == null) {
+      if (allowIncomplete) return null;
       throw const _AutoAssignmentFailure(
         'Auto assignment failed: missing package demand',
       );
@@ -267,6 +326,7 @@ class OrderAssignmentService {
       dropoffType,
     );
     if (!pickupLocation.hasCoordinates || !dropoffLocation.hasCoordinates) {
+      if (allowIncomplete) return null;
       throw const _AutoAssignmentFailure(
         'Auto assignment failed: missing pickup/dropoff coordinates',
       );
@@ -306,31 +366,12 @@ class OrderAssignmentService {
       return (explicitStart, explicitEnd);
     }
 
-    final preferredText = _extractPreferredTimeWindowText(order);
-    if (preferredText == null) return null;
-
-    return _parsePreferredTimeWindow(preferredText);
-  }
-
-  String? _extractPreferredTimeWindowText(Map<String, dynamic> order) {
     final direct = _firstNonEmpty([
       order['preferred_time_window'],
       order['preferredTimeWindow'],
     ]);
-    if (direct != null) return direct;
-
-    final notes = order['notes']?.toString();
-    if (notes == null || notes.trim().isEmpty) return null;
-
-    for (final rawLine in notes.split('\n')) {
-      final line = rawLine.trim();
-      if (line.isEmpty) continue;
-      final normalized = line.toLowerCase();
-      if (!normalized.startsWith(_preferredTimeWindowPrefix)) continue;
-      final value = line.substring(_preferredTimeWindowPrefix.length).trim();
-      if (value.isNotEmpty) return value;
-    }
-    return null;
+    if (direct == null) return null;
+    return _parsePreferredTimeWindow(direct);
   }
 
   (DateTime?, DateTime?)? _parsePreferredTimeWindow(String raw) {
@@ -426,14 +467,75 @@ class OrderAssignmentService {
     );
   }
 
-  Future<List<CandidateDriver>> _loadCandidateDrivers(String companyId) async {
+  Future<AssignmentLocation?> _companyDepotLocation(String companyId) async {
+    try {
+      final row = await _db
+          .from('delivery_companies')
+          .select('lat,lng,latitude,longitude,name')
+          .eq('id', companyId)
+          .maybeSingle();
+      if (row == null) return null;
+      final lat = _toDouble(row['lat']) ?? _toDouble(row['latitude']);
+      final lng = _toDouble(row['lng']) ?? _toDouble(row['longitude']);
+      if (lat == null || lng == null) return null;
+      final rawName = row['name']?.toString().trim();
+      final label = (rawName != null && rawName.isNotEmpty)
+          ? '$rawName (company base)'
+          : 'Company base';
+      return AssignmentLocation(
+        name: label,
+        address: null,
+        lat: lat,
+        lng: lng,
+      );
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// Matches [AuthService.getApprovedDriversForCurrentCompany]: rows without a
+  /// [profile_id] never appear in the company UI. Duplicate [drivers] rows for
+  /// the same profile (re-signups) collapse to the newest row so auto-assign
+  /// does not count one person as four drivers.
+  ({List<Map<String, dynamic>> rows, int skippedMissingProfile})
+  _dedupeDriverRowsForAutoAssignPool(List<Map<String, dynamic>> merged) {
+    var skippedMissingProfile = 0;
+    final byProfile = <String, Map<String, dynamic>>{};
+    for (final row in merged) {
+      final profileKey = row['profile_id']?.toString().trim();
+      if (profileKey == null || profileKey.isEmpty) {
+        skippedMissingProfile++;
+        continue;
+      }
+      final existing = byProfile[profileKey];
+      if (existing == null) {
+        byProfile[profileKey] = row;
+        continue;
+      }
+      final tExisting = _firstDate([existing['updated_at']]) ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+      final tRow = _firstDate([row['updated_at']]) ??
+          DateTime.fromMillisecondsSinceEpoch(0, isUtc: true);
+      byProfile[profileKey] = tRow.isAfter(tExisting) ? row : existing;
+    }
+    return (rows: byProfile.values.toList(), skippedMissingProfile: skippedMissingProfile);
+  }
+
+  Future<
+      ({
+        List<CandidateDriver> drivers,
+        String? emptyPoolDetail,
+      })> _loadCandidateDrivers(
+    String companyId, {
+    required AssignmentLocation orderPickup,
+  }) async {
     final approvedRequestRows = await _db
         .from('driver_company_requests')
         .select('driver_profile_id')
         .eq('company_id', companyId)
         .eq('request_status', 'approved');
     final approvedProfileIds = List<Map<String, dynamic>>.from(approvedRequestRows)
-        .map((row) => row['driver_profile_id']?.toString())
+        .map((row) => row['driver_profile_id']?.toString().trim())
         .whereType<String>()
         .where((id) => id.isNotEmpty)
         .toSet()
@@ -450,25 +552,38 @@ class OrderAssignmentService {
                 .select('*')
                 .inFilter('profile_id', approvedProfileIds),
           );
-    final rowsById = approvedProfileIds.isEmpty
-        ? <Map<String, dynamic>>[]
-        : List<Map<String, dynamic>>.from(
-            await _db.from('drivers').select('*').inFilter('id', approvedProfileIds),
-          );
 
     final rowByDriverId = <String, Map<String, dynamic>>{};
-    for (final row in [...rowsByCompany, ...rowsByProfile, ...rowsById]) {
+    for (final row in [...rowsByCompany, ...rowsByProfile]) {
       final id = row['id']?.toString();
       if (id == null || id.isEmpty) continue;
       rowByDriverId[id] = row;
     }
-    final rows = rowByDriverId.values.toList();
+    final merged = rowByDriverId.values.toList();
+    final deduped = _dedupeDriverRowsForAutoAssignPool(merged);
+    final rows = deduped.rows;
+    final skippedMissingProfile = deduped.skippedMissingProfile;
     _debug(
       'Candidate pool for company=$companyId: '
       'linked=${rowsByCompany.length}, approved_profile_matches=${rowsByProfile.length}, '
-      'approved_id_matches=${rowsById.length}, unique_total=${rows.length}',
+      'merged_driver_rows=${merged.length}, unique_profiles=${rows.length}, '
+      'skipped_missing_profile=$skippedMissingProfile',
     );
     final drivers = <CandidateDriver>[];
+    var skippedCompanyMismatch = 0;
+    var skippedNotApproved = 0;
+    var skippedAvailability = 0;
+    var skippedNoFreshLocation = 0;
+
+    final companyDepot = await _companyDepotLocation(companyId);
+    final pickupRoutingProxy = orderPickup.hasCoordinates
+        ? AssignmentLocation(
+            name: 'Order pickup (driver location unknown)',
+            address: orderPickup.address,
+            lat: orderPickup.lat,
+            lng: orderPickup.lng,
+          )
+        : null;
 
     for (final row in rows) {
       final driverId = row['id']?.toString();
@@ -478,11 +593,14 @@ class OrderAssignmentService {
       }
 
       final driverCompanyId = row['company_id']?.toString();
-      final profileId = row['profile_id']?.toString();
+      final profileId = row['profile_id']?.toString().trim();
       final approvedViaRequest =
-          profileId != null && approvedProfileIds.contains(profileId);
+          profileId != null &&
+          profileId.isNotEmpty &&
+          approvedProfileIds.contains(profileId);
       if ((driverCompanyId == null || driverCompanyId != companyId) &&
           !approvedViaRequest) {
+        skippedCompanyMismatch++;
         _debug(
           explainDriverRejection(
             driverId: driverId,
@@ -500,6 +618,7 @@ class OrderAssignmentService {
           .trim()
           .toLowerCase();
       if (verificationStatus != 'approved') {
+        skippedNotApproved++;
         _debug(
           explainDriverRejection(
             driverId: driverId,
@@ -510,7 +629,8 @@ class OrderAssignmentService {
         continue;
       }
 
-      if (!_isDriverAvailable(row)) {
+      if (!_isDriverAssignableForAutoAssign(row)) {
+        skippedAvailability++;
         _debug(
           explainDriverRejection(
             driverId: driverId,
@@ -524,25 +644,39 @@ class OrderAssignmentService {
         continue;
       }
 
-      final activeOrder = await getDriverActiveOrder(driverId);
-      if (activeOrder != null) {
+      var location = await _loadFreshDriverLocation(
+        driverId,
+        row,
+        allowCoordsWithoutPing: true,
+        allowStaleCoordinates: true,
+      );
+      if (location == null &&
+          companyDepot != null &&
+          companyDepot.hasCoordinates) {
+        location = companyDepot;
         _debug(
-          explainDriverRejection(
-            driverId: driverId,
-            reason: 'has_active_order',
-            details:
-                'order_id=${activeOrder['order_id']} status=${activeOrder['status']}',
-          ),
+          '[auto-assign] driver=$driverId using company depot as routing origin '
+          '(no driver GPS).',
         );
-        continue;
       }
-
-      final location = await _loadFreshDriverLocation(driverId, row);
+      if (location == null &&
+          pickupRoutingProxy != null &&
+          pickupRoutingProxy.hasCoordinates) {
+        location = pickupRoutingProxy;
+        _debug(
+          '[auto-assign] driver=$driverId using order pickup as routing origin '
+          '(no driver GPS or company base on map).',
+        );
+      }
       if (location == null) {
+        skippedNoFreshLocation++;
         _debug(
           explainDriverRejection(
             driverId: driverId,
             reason: 'no_location',
+            details:
+                'no driver coordinates, company depot=${companyDepot != null}, '
+                'pickup_ok=${pickupRoutingProxy != null}',
           ),
         );
         continue;
@@ -577,15 +711,56 @@ class OrderAssignmentService {
       );
     }
 
-    return drivers;
+    String? emptyPoolDetail;
+    if (drivers.isEmpty && merged.isNotEmpty) {
+      if (rows.isEmpty) {
+        emptyPoolDetail =
+            'Merged ${merged.length} driver row(s) for this company but none '
+            'had a usable profile_id for auto-assign '
+            '(ignored: $skippedMissingProfile). '
+            'Fix duplicate driver rows or set profile_id to match the approved-drivers list.';
+      } else {
+        emptyPoolDetail =
+            'From ${rows.length} unique driver profile(s) for this company '
+            '(after merging duplicate driver rows): '
+            'not approved $skippedNotApproved, company/profile mismatch '
+            '$skippedCompanyMismatch, blocked/off shift $skippedAvailability, '
+            'no map anchor (driver + company + pickup) $skippedNoFreshLocation, '
+            'ignored (no profile_id) $skippedMissingProfile.';
+      }
+    }
+
+    return (drivers: drivers, emptyPoolDetail: emptyPoolDetail);
   }
 
   Future<DriverRoute> _loadDriverRoute(CandidateDriver driver) async {
     final persisted = await _tryLoadPersistedRoute(driver);
     if (persisted != null) {
-      return _mergeActiveAssignmentsIntoRoute(driver, persisted);
+      final merged = await _mergeActiveAssignmentsIntoRoute(driver, persisted);
+      if (_isRouteStructurallyUsable(merged)) {
+        return merged;
+      }
+      _debug(
+        '[auto-assign] driver=${driver.id} persisted route is structurally invalid; '
+        'falling back to assignments-only reconstruction.',
+      );
     }
     return _inferRouteFromAssignments(driver);
+  }
+
+  bool _isRouteStructurallyUsable(DriverRoute route) {
+    var load = route.initialLoad;
+    if (!load.isNonNegative || !load.fitsWithin(route.vehicleCapacity)) {
+      return false;
+    }
+    for (final stop in route.stops) {
+      if (!stop.location.hasCoordinates) return false;
+      load = load + stop.loadDelta;
+      if (!load.isNonNegative || !load.fitsWithin(route.vehicleCapacity)) {
+        return false;
+      }
+    }
+    return true;
   }
 
   Future<DriverRoute?> _tryLoadPersistedRoute(CandidateDriver driver) async {
@@ -609,6 +784,25 @@ class OrderAssignmentService {
       final rawStops = List<Map<String, dynamic>>.from(stopRows);
       if (rawStops.isEmpty) return _emptyRoute(driver);
 
+      // Guard against stale persisted route stops: only keep stops whose order
+      // is still in an open assignment for this same driver/company.
+      final activeAssignmentRows = await _db
+          .from('assignments')
+          .select('order_id')
+          .eq('driver_id', driver.id)
+          .eq('company_id', driver.companyId)
+          .isFilter('completed_at', null);
+      final activeAssignmentOrderIds = List<Map<String, dynamic>>.from(
+        activeAssignmentRows,
+      )
+          .map((row) => row['order_id']?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty)
+          .toSet();
+      if (activeAssignmentOrderIds.isEmpty) {
+        return _emptyRoute(driver);
+      }
+
       final orderIds = rawStops
           .map((row) => row['order_id']?.toString())
           .whereType<String>()
@@ -623,6 +817,7 @@ class OrderAssignmentService {
       for (final row in rawStops) {
         final orderId = row['order_id']?.toString();
         if (orderId == null || orderId.isEmpty) continue;
+        if (!activeAssignmentOrderIds.contains(orderId)) continue;
         final order = orderMap[orderId];
         if (order == null) continue;
 
@@ -705,8 +900,17 @@ class OrderAssignmentService {
       final existingOrderId = assignment['order_id']?.toString();
       if (existingOrderId == null || existingOrderId.isEmpty) continue;
 
-      final existingOrder = await _loadAssignmentOrder(existingOrderId);
-      if (existingOrder == null) continue;
+      final existingOrder = await _loadAssignmentOrder(
+        existingOrderId,
+        allowIncomplete: true,
+      );
+      if (existingOrder == null) {
+        _debug(
+          '[auto-assign] skip open assignment order=$existingOrderId '
+          'for driver=${driver.id}: missing demand or pickup/dropoff coordinates',
+        );
+        continue;
+      }
 
       final status = await _loadOrderStatus(existingOrderId);
       if (_isRouteInactiveStatus(status)) continue;
@@ -964,6 +1168,44 @@ class OrderAssignmentService {
 
   Future<void> _markAssignmentFailed(String orderId, String reason) async {
     try {
+      final order = await _db
+          .from('orders')
+          .select('assignment_status, assigned_driver_id')
+          .eq('id', orderId)
+          .maybeSingle();
+      final assignmentStatus = order?['assignment_status']
+          ?.toString()
+          .trim()
+          .toLowerCase();
+      final assignedDriverId = order?['assigned_driver_id']?.toString().trim();
+      if (assignmentStatus == 'assigned' &&
+          assignedDriverId != null &&
+          assignedDriverId.isNotEmpty) {
+        _debug(
+          '[auto-assign] skip marking failed for order=$orderId '
+          'because it is already assigned to driver=$assignedDriverId',
+        );
+        return;
+      }
+
+      final existingAssignment = await _db
+          .from('assignments')
+          .select('id, driver_id')
+          .eq('order_id', orderId)
+          .isFilter('completed_at', null)
+          .limit(1)
+          .maybeSingle();
+      final assignmentDriverId = existingAssignment?['driver_id']
+          ?.toString()
+          .trim();
+      if (assignmentDriverId != null && assignmentDriverId.isNotEmpty) {
+        _debug(
+          '[auto-assign] skip marking failed for order=$orderId '
+          'because an active assignment exists for driver=$assignmentDriverId',
+        );
+        return;
+      }
+
       await _db
           .from('orders')
           .update({
@@ -1012,13 +1254,20 @@ class OrderAssignmentService {
   }
 
   Future<String> _loadOrderStatus(String orderId) async {
+    final status = await _loadOrderStatusNullable(orderId);
+    return status ?? 'created';
+  }
+
+  Future<String?> _loadOrderStatusNullable(String orderId) async {
     final row = await _db
         .from('orders')
         .select('status')
         .eq('id', orderId)
         .limit(1)
         .maybeSingle();
-    return row?['status']?.toString().toLowerCase() ?? 'created';
+    final raw = row?['status']?.toString().trim();
+    if (raw == null || raw.isEmpty) return null;
+    return raw.toLowerCase();
   }
 
   Future<String?> _resolveActiveCompanyIdForMerchant(String merchantId) async {
@@ -1056,8 +1305,16 @@ class OrderAssignmentService {
 
   Future<AssignmentLocation?> _loadFreshDriverLocation(
     String driverId,
-    Map<String, dynamic> driverRow,
-  ) async {
+    Map<String, dynamic> driverRow, {
+    Duration? maxLocationAge,
+    /// When true (auto-assign only), use [current_location_lat]/lng even if
+    /// there is no ping timestamp — many rows only have coordinates.
+    bool allowCoordsWithoutPing = false,
+    /// When true (auto-assign candidate pool only), accept last known coordinates
+    /// even if the ping timestamp is stale. Other callers keep a freshness window.
+    bool allowStaleCoordinates = false,
+  }) async {
+    final maxAge = maxLocationAge ?? _freshLocationWindow;
     final rowPing = _firstDate([
       driverRow['last_location_ping_at'],
       driverRow['updated_at'],
@@ -1065,7 +1322,31 @@ class OrderAssignmentService {
     final rowLat = _toDouble(driverRow['current_location_lat']);
     final rowLng = _toDouble(driverRow['current_location_lng']);
     if (rowLat != null && rowLng != null) {
-      if (!_isFreshPing(rowPing)) {
+      if (allowStaleCoordinates) {
+        _debug(
+          'Candidate $driverId: using drivers.current_location_* '
+          '(last known; ping=${rowPing?.toIso8601String() ?? "none"})',
+        );
+        return AssignmentLocation(
+          name: 'Driver $driverId',
+          address: null,
+          lat: rowLat,
+          lng: rowLng,
+        );
+      }
+      final pingMissing = rowPing == null;
+      if (!_isFreshPing(rowPing, maxAge: maxAge)) {
+        if (allowCoordsWithoutPing && pingMissing) {
+          _debug(
+            'Candidate $driverId: using drivers.current_location_* without ping time.',
+          );
+          return AssignmentLocation(
+            name: 'Driver $driverId',
+            address: null,
+            lat: rowLat,
+            lng: rowLng,
+          );
+        }
         _debug(
           explainDriverRejection(
             driverId: driverId,
@@ -1088,6 +1369,8 @@ class OrderAssignmentService {
           .from('driver_locations')
           .select('*')
           .eq('driver_id', driverId)
+          .order('updated_at', ascending: false)
+          .limit(1)
           .maybeSingle();
       if (row == null) return null;
       final pingAt = _firstDate([
@@ -1097,7 +1380,30 @@ class OrderAssignmentService {
       final lat = _toDouble(row['lat']);
       final lng = _toDouble(row['lng']);
       if (lat == null || lng == null) return null;
-      if (!_isFreshPing(pingAt)) {
+      if (allowStaleCoordinates) {
+        _debug(
+          'Candidate $driverId: using driver_locations (last known; '
+          'ping=${pingAt?.toIso8601String() ?? "none"})',
+        );
+        return AssignmentLocation(
+          name: row['city']?.toString() ?? 'Driver $driverId',
+          address: row['address_text']?.toString() ?? row['city']?.toString(),
+          lat: lat,
+          lng: lng,
+        );
+      }
+      if (!_isFreshPing(pingAt, maxAge: maxAge)) {
+        if (allowCoordsWithoutPing && pingAt == null) {
+          _debug(
+            'Candidate $driverId: using driver_locations lat/lng without ping time.',
+          );
+          return AssignmentLocation(
+            name: row['city']?.toString() ?? 'Driver $driverId',
+            address: row['address_text']?.toString() ?? row['city']?.toString(),
+            lat: lat,
+            lng: lng,
+          );
+        }
         _debug(
           explainDriverRejection(
             driverId: driverId,
@@ -1341,10 +1647,42 @@ class OrderAssignmentService {
     return status == 'available';
   }
 
-  bool _isFreshPing(DateTime? pingAt) {
+  /// Dashboard "on shift + available" is ideal. For **auto-assign** we also
+  /// allow approved drivers unless they explicitly opted out, then use last
+  /// known coordinates for routing (see [allowStaleCoordinates] on
+  /// [_loadFreshDriverLocation]).
+  bool _isDriverAssignableForAutoAssign(Map<String, dynamic> row) {
+    if (_isDriverAvailable(row)) return true;
+
+    final status = row['availability_status']?.toString().trim().toLowerCase();
+    const blocked = {'offline', 'on_break', 'paused', 'busy'};
+    if (status != null && status.isNotEmpty && blocked.contains(status)) {
+      return false;
+    }
+    return true;
+  }
+
+  bool _isFreshPing(DateTime? pingAt, {Duration? maxAge}) {
     if (pingAt == null) return false;
     final age = DateTime.now().toUtc().difference(pingAt.toUtc());
-    return age <= _freshLocationWindow;
+    return age <= (maxAge ?? _freshLocationWindow);
+  }
+
+  String _classifyAutoAssignDriverLoopError(Object error) {
+    final text = error.toString().toLowerCase();
+    if (text.contains('missing pickup') ||
+        text.contains('missing package demand')) {
+      return 'assignment_data_incomplete';
+    }
+    if (text.contains('route-estimate') ||
+        text.contains('socketexception') ||
+        text.contains('failed host lookup')) {
+      return 'routing_request_failed';
+    }
+    if (text.contains('timeout')) {
+      return 'routing_timeout';
+    }
+    return 'routing_or_insertion_error';
   }
 
   bool _isLoadedStatus(String status) {
@@ -1392,12 +1730,80 @@ class OrderAssignmentService {
     for (final row in List<Map<String, dynamic>>.from(rows)) {
       final orderId = row['order_id']?.toString();
       if (orderId == null || orderId.isEmpty) continue;
-      final status = await _loadOrderStatus(orderId);
-      if (status == null) continue;
-      if (_isRouteInactiveStatus(status)) continue;
-      return {'order_id': orderId, 'status': status};
+      final active = await _loadActiveAssignmentContext(
+        orderId: orderId,
+        expectedDriverId: driverId,
+      );
+      if (active == null) continue;
+      return {'order_id': orderId, 'status': active.$1};
     }
     return null;
+  }
+
+  Future<Map<String, dynamic>?> getDriverActiveOrderForCompany({
+    required String driverId,
+    required String companyId,
+  }) async {
+    final rows = await _db
+        .from('assignments')
+        .select('order_id, assigned_at')
+        .eq('driver_id', driverId)
+        .eq('company_id', companyId)
+        .isFilter('completed_at', null)
+        .limit(20);
+    for (final row in List<Map<String, dynamic>>.from(rows)) {
+      final orderId = row['order_id']?.toString();
+      if (orderId == null || orderId.isEmpty) continue;
+      final active = await _loadActiveAssignmentContext(
+        orderId: orderId,
+        expectedDriverId: driverId,
+      );
+      if (active == null) continue;
+      final orderCompanyId = active.$3;
+      if (orderCompanyId != null &&
+          orderCompanyId.isNotEmpty &&
+          orderCompanyId != companyId) {
+        continue;
+      }
+      return {'order_id': orderId, 'status': active.$1};
+    }
+    return null;
+  }
+
+  /// Returns active assignment context only when the order is still linked to
+  /// the same driver. This ignores stale/orphan assignment rows left behind
+  /// after unassign/retry flows.
+  Future<(String, String?, String?)?> _loadActiveAssignmentContext({
+    required String orderId,
+    required String expectedDriverId,
+  }) async {
+    final row = await _db
+        .from('orders')
+        .select('status, assigned_driver_id, delivery_company_id, company_id')
+        .eq('id', orderId)
+        .limit(1)
+        .maybeSingle();
+    if (row == null) return null;
+
+    final status = row['status']?.toString().trim().toLowerCase();
+    if (status == null || status.isEmpty) return null;
+    if (_isRouteInactiveStatus(status)) return null;
+    // "On a delivery" should mean physically active delivery work, not just
+    // pre-accept / awaiting-response assignments.
+    if (!_isLoadedStatus(status)) return null;
+
+    final assignedDriverId = row['assigned_driver_id']?.toString().trim();
+    if (assignedDriverId == null ||
+        assignedDriverId.isEmpty ||
+        assignedDriverId != expectedDriverId) {
+      return null;
+    }
+
+    final companyId = _firstNonEmpty([
+      row['delivery_company_id'],
+      row['company_id'],
+    ]);
+    return (status, assignedDriverId, companyId);
   }
 
   Future<void> releaseDriverAfterOrderFinished({

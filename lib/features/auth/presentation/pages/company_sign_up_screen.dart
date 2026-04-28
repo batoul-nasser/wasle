@@ -160,6 +160,7 @@ class _CompanySignUpScreenState extends State<CompanySignUpScreen> {
             email: email,
             title: 'Verify Company Account',
             mode: AuthFlowMode.companySignup,
+            password: password,
             fullName: adminName,
             companyName: companyName,
             companyPhone: phone,

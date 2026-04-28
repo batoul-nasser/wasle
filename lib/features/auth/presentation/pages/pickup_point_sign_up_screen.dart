@@ -38,6 +38,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
   final TextEditingController confirmAddressController = TextEditingController();
   final TextEditingController cityController = TextEditingController();
   final TextEditingController areaController = TextEditingController();
+  final TextEditingController latitudeController = TextEditingController();
+  final TextEditingController longitudeController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   final TextEditingController confirmPasswordController = TextEditingController();
   final TextEditingController commissionValueController = TextEditingController();
@@ -190,6 +192,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
     final confirmAddress = confirmAddressController.text.trim();
     final city = cityController.text.trim();
     final area = areaController.text.trim();
+    final latitude = double.tryParse(latitudeController.text.trim());
+    final longitude = double.tryParse(longitudeController.text.trim());
     final password = passwordController.text;
     final confirmPassword = confirmPasswordController.text;
     final maxOrdersPerDay =
@@ -210,6 +214,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
         confirmAddress.isEmpty ||
         city.isEmpty ||
         area.isEmpty ||
+        latitudeController.text.trim().isEmpty ||
+        longitudeController.text.trim().isEmpty ||
         password.isEmpty ||
         confirmPassword.isEmpty) {
       setState(() => errorText = 'Please fill all required fields.');
@@ -247,6 +253,11 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
 
     if (maxOrdersPerDay == null || maxOrdersPerDay <= 0) {
       setState(() => errorText = 'Max orders per day must be greater than 0.');
+      return;
+    }
+
+    if (latitude == null || longitude == null) {
+      setState(() => errorText = 'Please enter valid pickup point latitude/lng.');
       return;
     }
 
@@ -311,6 +322,7 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
             email: email,
             title: 'Verify Pickup Point Account',
             mode: AuthFlowMode.pickupPointSignup,
+            password: password,
             fullName: ownerName,
             phone: phone,
             city: city,
@@ -318,6 +330,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
             addressText: address,
             confirmAddressText: confirmAddress,
             area: area,
+            branchLat: latitude,
+            branchLng: longitude,
             maxOrdersPerDay: maxOrdersPerDay,
             workingDays: selectedWorkingDays.toList(),
             opensAt: _formatTimeOfDay(opensAt!),
@@ -366,6 +380,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
     confirmAddressController.dispose();
     cityController.dispose();
     areaController.dispose();
+    latitudeController.dispose();
+    longitudeController.dispose();
     passwordController.dispose();
     confirmPasswordController.dispose();
     commissionValueController.dispose();
@@ -506,6 +522,30 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
                     decoration: const InputDecoration(
                       labelText: 'Area',
                       prefixIcon: Icon(Icons.map_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  TextField(
+                    controller: latitudeController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                      signed: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Latitude',
+                      prefixIcon: Icon(Icons.my_location_outlined),
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  TextField(
+                    controller: longitudeController,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                      signed: true,
+                    ),
+                    decoration: const InputDecoration(
+                      labelText: 'Longitude',
+                      prefixIcon: Icon(Icons.explore_outlined),
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),

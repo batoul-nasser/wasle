@@ -58,17 +58,56 @@ class PickupPointService {
         handling == 'customer_pays_at_pickup';
   }
 
+  Future<List<String>> _ordersOwnedByDestinationPickup(String ppId) async {
+    final rows = await _db
+        .from('orders')
+        .select('id')
+        .eq('destination_pickup_point_id', ppId);
+    return List<Map<String, dynamic>>.from(rows)
+        .map((row) => row['id']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty)
+        .toList();
+  }
+
+  Future<void> _ensureDestinationOwnedOrder({
+    required String orderId,
+    required String pickupPointId,
+  }) async {
+    final row = await _db
+        .from('orders')
+        .select('id')
+        .eq('id', orderId)
+        .eq('destination_pickup_point_id', pickupPointId)
+        .maybeSingle();
+    if (row == null) {
+      throw Exception(
+        'This order is not assigned to your pickup point as destination.',
+      );
+    }
+  }
+
   Future<List<Map<String, dynamic>>> getPendingCashOrders() async {
     try {
       final pp = await getMyPickupPoint();
       if (pp == null) return [];
       final ppId = pp['id'].toString();
 
+      final ownedOrderIds = await _ordersOwnedByDestinationPickup(ppId);
+      if (ownedOrderIds.isEmpty) return [];
+      const paymentEligibleStatuses = [
+        'failed',
+        'customer_not_available',
+        'pending_pickup_point_delivery',
+        'dropped_at_pickup_point',
+      ];
       final orders = await _db
           .from('orders')
-          .select('id, tracking_code, status, created_at')
-          .eq('pickup_point_id', ppId)
-          .eq('status', 'dropped_at_pickup_point');
+          .select(
+            'id, tracking_code, status, created_at, destination_pickup_point_id, dropoff_type',
+          )
+          .inFilter('id', ownedOrderIds)
+          .inFilter('status', paymentEligibleStatuses);
 
       if ((orders as List).isEmpty) return [];
       final orderIds = orders.map((o) => o['id'].toString()).toList();
@@ -89,6 +128,10 @@ class PickupPointService {
           .map(
             (o) => {
               ...Map<String, dynamic>.from(o),
+              'pickup_role': (o['dropoff_type']?.toString().toLowerCase() == 'home')
+                  ? 'backup_option_2'
+                  : 'destination_pickup',
+              'payment_can_collect_here': true,
               'payment': paymentMap[o['id'].toString()],
             },
           )
@@ -120,10 +163,14 @@ class PickupPointService {
       final effectiveSince =
           since ?? DateTime.now().toUtc().subtract(const Duration(days: 1));
 
+      final ownedOrderIds = await _ordersOwnedByDestinationPickup(ppId);
+      if (ownedOrderIds.isEmpty) return [];
+
       final remittances = await _db
           .from('pickup_point_remittances')
           .select('order_id, payment_id, amount, whish_ref, status, sent_at')
           .eq('pickup_point_id', ppId)
+          .inFilter('order_id', ownedOrderIds)
           .gte('sent_at', effectiveSince.toIso8601String())
           .order('sent_at', ascending: false)
           .limit(limit);
@@ -196,7 +243,7 @@ class PickupPointService {
       final ordersAtPickupPoint = await _db
           .from('orders')
           .select('id')
-          .eq('pickup_point_id', ppId);
+          .eq('destination_pickup_point_id', ppId);
 
       final orderIds = List<Map<String, dynamic>>.from(ordersAtPickupPoint)
           .map((row) => row['id']?.toString())
@@ -295,6 +342,13 @@ class PickupPointService {
     String? note,
   }) async {
     try {
+      final pp = await getMyPickupPoint();
+      if (pp == null) throw Exception('Pickup point not found');
+      await _ensureDestinationOwnedOrder(
+        orderId: orderId,
+        pickupPointId: pp['id'].toString(),
+      );
+
       final token =
           Supabase.instance.client.auth.currentSession?.accessToken ?? '';
       final response = await Supabase.instance.client.functions.invoke(
@@ -333,6 +387,10 @@ class PickupPointService {
     try {
       final pp = await getMyPickupPoint();
       if (pp == null) throw Exception('Pickup point not found');
+      await _ensureDestinationOwnedOrder(
+        orderId: orderId,
+        pickupPointId: pp['id'].toString(),
+      );
 
       // Call Edge Function instead of writing directly to payments
       final token =

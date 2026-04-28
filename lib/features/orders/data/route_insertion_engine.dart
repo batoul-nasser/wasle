@@ -154,9 +154,14 @@ class RouteInsertionEngine {
       return [_ShiftWindow(startAt: nowUtc, endAt: null)];
     }
 
-    // If only one side exists, keep backwards-compatible behavior.
+    // If only shift_end exists: when it is already in the past (stale row,
+    // default timestamp, etc.) the old behavior returned **no** windows so
+    // every insertion failed even for approved drivers. Treat that like
+    // "no shift constraint" instead of blocking assignment.
     if (shiftStart == null) {
-      if (nowUtc.isAfter(shiftEnd!)) return const [];
+      if (nowUtc.isAfter(shiftEnd!)) {
+        return [_ShiftWindow(startAt: nowUtc, endAt: null)];
+      }
       return [_ShiftWindow(startAt: nowUtc, endAt: shiftEnd)];
     }
     if (shiftEnd == null) {

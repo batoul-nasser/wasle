@@ -114,6 +114,7 @@ class _MerchantSignUpScreenState extends State<MerchantSignUpScreen> {
             email: email,
             title: 'Verify Merchant Account',
             mode: AuthFlowMode.merchantSignup,
+            password: password,
             fullName: fullName,
             phone: phone,
             businessName: businessName,

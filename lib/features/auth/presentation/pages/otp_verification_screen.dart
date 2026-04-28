@@ -250,6 +250,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           if (userId == null) {
             throw Exception('User session not found after OTP verification');
           }
+          await _authService.setCurrentUserPassword(
+            _required(widget.password, 'Password'),
+          );
           await _authService.createCompanyProfile(
             userId: userId,
             adminName: _required(widget.fullName, 'Admin name'),
@@ -278,6 +281,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           if (userId == null) {
             throw Exception('User session not found after OTP verification');
           }
+          await _authService.setCurrentUserPassword(
+            _required(widget.password, 'Password'),
+          );
           await _authService.createCustomerProfile(
             userId: userId,
             fullName: _required(widget.fullName, 'Full name'),
@@ -290,6 +296,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           if (userId == null) {
             throw Exception('User session not found after OTP verification');
           }
+          await _authService.setCurrentUserPassword(
+            _required(widget.password, 'Password'),
+          );
           await _authService.createMerchantProfile(
             userId: userId,
             fullName: _required(widget.fullName, 'Full name'),
@@ -307,6 +316,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           if (userId == null) {
             throw Exception('User session not found after OTP verification');
           }
+          await _authService.setCurrentUserPassword(
+            _required(widget.password, 'Password'),
+          );
           final timestamp = DateTime.now().millisecondsSinceEpoch;
           final safeEmail = _safeEmail();
 
@@ -364,6 +376,8 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
               widget.confirmAddressText,
               'Confirm address',
             ),
+            lat: widget.branchLat,
+            lng: widget.branchLng,
             city: _required(widget.city, 'City'),
             area: _required(widget.area, 'Area'),
             maxOrdersPerDay: widget.maxOrdersPerDay,

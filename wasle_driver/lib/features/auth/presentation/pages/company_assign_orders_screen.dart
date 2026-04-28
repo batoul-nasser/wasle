@@ -248,6 +248,11 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
       return driverId != null && driverId.isNotEmpty;
     }
 
+    bool driverAccepted(Map<String, dynamic> order) {
+      final accepted = order['accepted_at']?.toString().trim();
+      return accepted != null && accepted.isNotEmpty;
+    }
+
     bool isLocked(Map<String, dynamic> order) {
       final status = order['status']?.toString().toLowerCase() ?? 'created';
       return _lockedStatuses.contains(status);
@@ -262,8 +267,12 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
       return !hasDriver(order) && canReassign(order);
     }).toList();
 
+    final pendingAcceptanceOrders = orders.where((order) {
+      return hasDriver(order) && !driverAccepted(order) && canReassign(order);
+    }).toList();
+
     final assignedOrders = orders.where((order) {
-      return hasDriver(order) && canReassign(order);
+      return hasDriver(order) && driverAccepted(order) && canReassign(order);
     }).toList();
 
     final lockedOrders = orders.where((order) {
@@ -324,14 +333,40 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                             }),
                           const SizedBox(height: AppSpacing.lg),
                           const SectionHeader(
+                            title: 'Awaiting driver acceptance',
+                            subtitle:
+                                'A driver is linked but has not accepted the job in the app yet',
+                          ),
+                          const SizedBox(height: AppSpacing.md),
+                          if (pendingAcceptanceOrders.isEmpty)
+                            const InfoCard(
+                              child: Text(
+                                'No orders waiting on driver acceptance.',
+                                style: AppTextStyles.bodyMuted,
+                              ),
+                            )
+                          else
+                            ...pendingAcceptanceOrders.map((order) {
+                              return Padding(
+                                padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                                child: _OrderCard(
+                                  order: order,
+                                  onAssignTap: () => _openAssignSheet(order),
+                                  onUnassignTap: () => _unassignDriver(order),
+                                  assignEnabled: true,
+                                ),
+                              );
+                            }),
+                          const SizedBox(height: AppSpacing.lg),
+                          const SectionHeader(
                             title: 'Already Assigned',
-                            subtitle: 'Reassign if needed',
+                            subtitle: 'Driver accepted — reassign if needed',
                           ),
                           const SizedBox(height: AppSpacing.md),
                           if (assignedOrders.isEmpty)
                             const InfoCard(
                               child: Text(
-                                'No assigned orders found yet.',
+                                'No orders with an accepted driver yet.',
                                 style: AppTextStyles.bodyMuted,
                               ),
                             )

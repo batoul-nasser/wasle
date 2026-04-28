@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/domain/delivery_constraints.dart';
 
@@ -41,8 +42,9 @@ class AuthService {
     required String email,
     required String password,
   }) async {
+    final normalizedEmail = email.trim().toLowerCase();
     return await _client.auth.signInWithPassword(
-      email: email,
+      email: normalizedEmail,
       password: password,
     );
   }
@@ -53,12 +55,13 @@ class AuthService {
     String? emailRedirectTo,
     Map<String, dynamic>? data,
   }) async {
+    final normalizedEmail = email.trim().toLowerCase();
     if (shouldCreateUser && _client.auth.currentUser != null) {
       await _client.auth.signOut();
     }
 
     await _client.auth.signInWithOtp(
-      email: email,
+      email: normalizedEmail,
       shouldCreateUser: shouldCreateUser,
       emailRedirectTo: emailRedirectTo,
       data: data,
@@ -183,11 +186,12 @@ class AuthService {
     required OtpType preferredType,
     OtpType? fallbackType,
   }) async {
+    final normalizedEmail = email.trim().toLowerCase();
     AuthException? firstError;
 
     try {
       return await _client.auth.verifyOTP(
-        email: email,
+        email: normalizedEmail,
         token: token,
         type: preferredType,
       );
@@ -201,7 +205,7 @@ class AuthService {
 
     try {
       return await _client.auth.verifyOTP(
-        email: email,
+        email: normalizedEmail,
         token: token,
         type: fallbackType,
       );
@@ -215,10 +219,11 @@ class AuthService {
     required OtpType preferredType,
     OtpType? fallbackType,
   }) async {
+    final normalizedEmail = email.trim().toLowerCase();
     AuthException? firstError;
 
     try {
-      await _client.auth.resend(type: preferredType, email: email);
+      await _client.auth.resend(type: preferredType, email: normalizedEmail);
       return;
     } on AuthException catch (error) {
       firstError = error;
@@ -229,7 +234,7 @@ class AuthService {
     }
 
     try {
-      await _client.auth.resend(type: fallbackType, email: email);
+      await _client.auth.resend(type: fallbackType, email: normalizedEmail);
     } on AuthException {
       throw firstError!;
     }
@@ -572,6 +577,14 @@ class AuthService {
     if (applicantId == null || applicantId.isEmpty) {
       throw Exception('Pickup point applicant is missing');
     }
+    final lat = _toDouble(application['lat']);
+    final lng = _toDouble(application['lng']);
+    if (lat == null || lng == null) {
+      throw Exception(
+        'Pickup point application is missing map coordinates (lat/lng). '
+        'Please update location coordinates before approval.',
+      );
+    }
 
     final pickupPayload = <String, dynamic>{
       'owner_profile_id': applicantId,
@@ -581,6 +594,8 @@ class AuthService {
       'phone': application['phone'],
       'email': application['email'],
       'address_text': application['address_text'],
+      'lat': lat,
+      'lng': lng,
       'city': application['city'],
       'area': application['area'],
       'opens_at': application['opens_at'],
@@ -668,6 +683,12 @@ class AuthService {
     if (open.isEmpty) return close;
     if (close.isEmpty) return open;
     return '$open - $close';
+  }
+
+  double? _toDouble(dynamic value) {
+    if (value is num) return value.toDouble();
+    if (value is String) return double.tryParse(value.trim());
+    return null;
   }
 
   Future<String?> getCurrentRole() async {
@@ -1061,6 +1082,8 @@ class AuthService {
     required String pickupPointName,
     required String addressText,
     required String confirmAddressText,
+    double? lat,
+    double? lng,
     required String city,
     required String area,
     int? maxOrdersPerDay,
@@ -1096,6 +1119,8 @@ class AuthService {
       'pickup_point_name': pickupPointName,
       'address_text': addressText,
       'confirm_address_text': confirmAddressText,
+      'lat': lat,
+      'lng': lng,
       'city': city,
       'area': area,
       'max_orders_per_day': maxOrdersPerDay,
@@ -1490,6 +1515,7 @@ class AuthService {
         .from('orders')
         .update({
           'delivery_company_id': companyId,
+          'company_id': companyId,
           'updated_at': DateTime.now().toUtc().toIso8601String(),
         })
         .eq('id', orderId);
@@ -1584,12 +1610,16 @@ class AuthService {
         .toSet()
         .toList();
 
-    final pickupIds = orders
-        .map((order) => order['pickup_point_id']?.toString())
-        .whereType<String>()
-        .where((id) => id.isNotEmpty)
-        .toSet()
-        .toList();
+    final pickupIds = <String>{
+      ...orders
+          .map((order) => order['pickup_point_id']?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty),
+      ...orders
+          .map((order) => order['destination_pickup_point_id']?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty),
+    }.toList();
 
     final customerProfileIds = orders
         .map((order) => order['customer_profile_id']?.toString())
@@ -1646,7 +1676,7 @@ class AuthService {
         : List<Map<String, dynamic>>.from(
             await _client
                 .from('pickup_points')
-                .select('id, name, address_text')
+                .select('id, name, address_text, lat, lng, city, area')
                 .inFilter('id', pickupIds),
           );
 
@@ -1694,21 +1724,44 @@ class AuthService {
     return orders.map((order) {
       final orderId = order['id']?.toString() ?? '';
       final assignment = assignmentByOrderId[orderId];
-      final rawDriverId = assignment?['driver_id']?.toString();
-      final driver = rawDriverId == null ? null : driverById[rawDriverId];
-      final hasValidDriver =
-          rawDriverId != null && rawDriverId.isNotEmpty && driver != null;
+      final rawDriverId = assignment?['driver_id']?.toString().trim();
+      final hasLinkedDriverOnAssignment =
+          rawDriverId != null && rawDriverId.isNotEmpty;
+      final driver = hasLinkedDriverOnAssignment
+          ? driverById[rawDriverId]
+          : null;
       final driverProfileId = driver?['profile_id']?.toString();
       final driverProfile = driverProfileId == null
           ? null
           : profileById[driverProfileId];
+
+      /// Keep [driver_id] whenever the assignment row links a driver, even if
+      /// the drivers join failed (RLS, deleted row). Never show "assigned"
+      /// order status with a blank driver line because [driver_name] was null.
+      final String? resolvedDriverName = !hasLinkedDriverOnAssignment
+          ? null
+          : _firstNonEmpty([
+              driverProfile?['full_name'],
+              if (driver != null) 'Driver (name not on file)',
+              'Unknown driver (record missing or inaccessible)',
+            ]);
+      final String? resolvedDriverPhone =
+          driverProfile != null ? driverProfile['phone']?.toString() : null;
+      final String? resolvedVehicleType =
+          driver != null ? driver['vehicle_type']?.toString() : null;
 
       final customerProfileId = order['customer_profile_id']?.toString();
       final customerProfile = customerProfileId == null
           ? null
           : profileById[customerProfileId];
       final branch = branchById[order['branch_id']?.toString()];
-      final pickup = pickupById[order['pickup_point_id']?.toString()];
+      final sourcePickup = pickupById[order['pickup_point_id']?.toString()];
+      final destinationPickup =
+          pickupById[order['destination_pickup_point_id']?.toString()];
+      final pickupSourceType =
+          order['pickup_source_type']?.toString().trim().toLowerCase() ?? 'store';
+      final dropoffType =
+          order['dropoff_type']?.toString().trim().toLowerCase() ?? 'home';
       final merchant =
           merchantById[_firstNonEmpty([
             order['merchant_id'],
@@ -1732,7 +1785,76 @@ class AuthService {
               ) ==
               true;
 
-      return {
+      final pickupName = pickupSourceType == 'pickup_point'
+          ? _firstNonEmpty([sourcePickup?['name'], branch?['name']]) ??
+              'Pickup point'
+          : _firstNonEmpty([branch?['name'], sourcePickup?['name']]) ?? 'Store';
+      final pickupAddress = pickupSourceType == 'pickup_point'
+          ? _firstNonEmpty([sourcePickup?['address_text'], branch?['address_text']]) ??
+              'No pickup address'
+          : _firstNonEmpty([branch?['address_text'], sourcePickup?['address_text']]) ??
+              'No pickup address';
+      final status = order['status']?.toString().trim().toLowerCase() ?? '';
+      final movedToPickupStatuses = const {
+        'failed',
+        'customer_not_available',
+        'pending_pickup_point_delivery',
+        'dropped_at_pickup_point',
+      };
+      final hasBackupPickupPoint =
+          dropoffType == 'home' && destinationPickup != null;
+      final backupIsActiveDropoff =
+          hasBackupPickupPoint && movedToPickupStatuses.contains(status);
+      final activeDropoffAddress = dropoffType == 'pickup_point_specific'
+          ? _firstNonEmpty([
+              destinationPickup?['address_text'],
+              _destinationPickupPointDropoffLabel(destinationPickup),
+            ])
+          : (backupIsActiveDropoff
+                ? _firstNonEmpty([
+                    destinationPickup?['address_text'],
+                    _destinationPickupPointDropoffLabel(destinationPickup),
+                  ])
+                : _firstNonEmpty([
+                    address?['dropoff_address_text'],
+                    address?['dropoff_address'],
+                    order['customer_address_text'],
+                    order['dropoff_address_text'],
+                  ]));
+      final activeDropoffLat = dropoffType == 'pickup_point_specific'
+          ? _toDouble(destinationPickup?['lat'])
+          : _toDouble(order['dropoff_location_lat']) ??
+                _toDouble(order['customer_lat']);
+      final activeDropoffLng = dropoffType == 'pickup_point_specific'
+          ? _toDouble(destinationPickup?['lng'])
+          : _toDouble(order['dropoff_location_lng']) ??
+                _toDouble(order['customer_lng']);
+      final activeDropoffName = dropoffType == 'pickup_point_specific'
+          ? (_firstNonEmpty([destinationPickup?['name']]) ?? 'Pickup point')
+          : (backupIsActiveDropoff
+                ? (_firstNonEmpty([destinationPickup?['name']]) ??
+                      'Backup pickup point')
+                : 'Customer Home');
+      final backupPickupId =
+          hasBackupPickupPoint ? destinationPickup!['id'] : null;
+      final backupPickupName = hasBackupPickupPoint
+          ? _firstNonEmpty([destinationPickup!['name']])
+          : null;
+      final backupPickupAddress = hasBackupPickupPoint
+          ? _firstNonEmpty([destinationPickup!['address_text']])
+          : null;
+      final backupPickupLat = hasBackupPickupPoint
+          ? _toDouble(destinationPickup!['lat'])
+          : null;
+      final backupPickupLng = hasBackupPickupPoint
+          ? _toDouble(destinationPickup!['lng'])
+          : null;
+      final backupPickupCity =
+          hasBackupPickupPoint ? destinationPickup!['city']?.toString() : null;
+      final backupPickupArea =
+          hasBackupPickupPoint ? destinationPickup!['area']?.toString() : null;
+
+      final mapped = {
         'assignment_id': assignment?['id'],
         'order_id': orderId,
         'tracking_code': _firstNonEmpty([order['tracking_code'], orderId]),
@@ -1747,27 +1869,54 @@ class AuthService {
             }.contains(assignmentStatus?.trim().toLowerCase() ?? '') ||
             eventSuggestsFailure,
         'auto_assignment_reason': autoAssignmentReason,
-        'pickup_name':
-            _firstNonEmpty([pickup?['name'], branch?['name']]) ??
-            'Pickup point',
-        'pickup_address':
-            _firstNonEmpty([
-              pickup?['address_text'],
-              branch?['address_text'],
-            ]) ??
-            'No pickup address',
+        'pickup_source_type': pickupSourceType,
+        'dropoff_type': dropoffType,
+        'pickup_point_id': order['pickup_point_id'],
+        'destination_pickup_point_id': order['destination_pickup_point_id'],
+        'pickup_location_lat': order['pickup_location_lat'],
+        'pickup_location_lng': order['pickup_location_lng'],
+        'dropoff_location_lat': order['dropoff_location_lat'],
+        'dropoff_location_lng': order['dropoff_location_lng'],
+        'customer_lat': order['customer_lat'],
+        'customer_lng': order['customer_lng'],
+        'delivery_company_id': order['delivery_company_id'],
+        'company_id': order['company_id'],
+        'parcel_description': order['parcel_description'],
+        'item_count': order['item_count'],
+        'estimated_weight': order['estimated_weight'],
+        'estimated_volume': order['estimated_volume'],
+        'notes': order['notes'],
+        'pickup_name': pickupName,
+        'pickup_address': pickupAddress,
+        'dropoff_name': dropoffType == 'pickup_point_specific'
+            ? (_firstNonEmpty([destinationPickup?['name']]) ?? 'Pickup point')
+            : activeDropoffName,
+        'destination_type':
+            dropoffType == 'pickup_point_specific' ? 'pickup_point' : 'home',
+        'dropoff_lat': activeDropoffLat,
+        'dropoff_lng': activeDropoffLng,
+        'has_backup_pickup_point': hasBackupPickupPoint,
+        'backup_pickup_point_id': backupPickupId,
+        'backup_pickup_id': backupPickupId,
+        'backup_pickup_point_name': backupPickupName,
+        'backup_pickup_name': backupPickupName,
+        'backup_pickup_point_address': backupPickupAddress,
+        'backup_pickup_address': backupPickupAddress,
+        'backup_pickup_point_lat': backupPickupLat,
+        'backup_pickup_lat': backupPickupLat,
+        'backup_pickup_point_lng': backupPickupLng,
+        'backup_pickup_lng': backupPickupLng,
+        'backup_pickup_point_city': backupPickupCity,
+        'backup_pickup_city': backupPickupCity,
+        'backup_pickup_point_area': backupPickupArea,
+        'backup_pickup_area': backupPickupArea,
+        'backup_pickup_is_active_dropoff': backupIsActiveDropoff,
         'merchant_name':
             _firstNonEmpty([merchant?['name']]) ?? 'Unknown merchant',
-        'driver_id': hasValidDriver ? rawDriverId : null,
-        'driver_name': hasValidDriver
-            ? (driverProfile?['full_name']?.toString())
-            : null,
-        'driver_phone': hasValidDriver
-            ? (driverProfile?['phone']?.toString())
-            : null,
-        'vehicle_type': hasValidDriver
-            ? (driver['vehicle_type']?.toString())
-            : null,
+        'driver_id': hasLinkedDriverOnAssignment ? rawDriverId : null,
+        'driver_name': resolvedDriverName,
+        'driver_phone': resolvedDriverPhone,
+        'vehicle_type': resolvedVehicleType,
         'accepted_at': assignment?['accepted_at'],
         'customer_name':
             _firstNonEmpty([
@@ -1781,15 +1930,32 @@ class AuthService {
               order['customer_phone'],
             ]) ??
             'No phone',
-        'dropoff_address':
-            _firstNonEmpty([
-              address?['dropoff_address_text'],
-              address?['dropoff_address'],
-              order['customer_address_text'],
-            ]) ??
-            'No dropoff address',
+        'dropoff_address': activeDropoffAddress ?? 'No dropoff address',
       };
+      debugPrint(
+        '[COMPANY_ORDER_MAP] ${mapped['tracking_code']} '
+        'dropoff_type=$dropoffType '
+        'destination_pickup_point_id=${order['destination_pickup_point_id']} '
+        'backup=${mapped['backup_pickup_point_name']} '
+        'backupLat=${mapped['backup_pickup_point_lat']} '
+        'backupLng=${mapped['backup_pickup_point_lng']}',
+      );
+      return mapped;
     }).toList();
+  }
+
+  /// Merchant "specific pickup point" orders often leave `customer_address_text`
+  /// null; the real destination is `destination_pickup_point_id`.
+  String? _destinationPickupPointDropoffLabel(
+    Map<String, dynamic>? pickupPoint,
+  ) {
+    if (pickupPoint == null) return null;
+    final name = pickupPoint['name']?.toString().trim() ?? '';
+    final addr = pickupPoint['address_text']?.toString().trim() ?? '';
+    if (name.isNotEmpty && addr.isNotEmpty) {
+      return '$name — $addr';
+    }
+    return _firstNonEmpty([name, addr]);
   }
 
   Future<List<Map<String, dynamic>>> _getCompanyOrderRows(
@@ -1799,9 +1965,14 @@ class AuthService {
       final orderRows = await _client
           .from('orders')
           .select(
-            'id, merchant_id, branch_id, customer_profile_id, pickup_point_id, delivery_company_id, status, '
-            'tracking_code, customer_name, customer_phone, customer_address_text, '
-            'assignment_status, assigned_driver_id, assignment_failure_reason, '
+            'id, tracking_code, merchant_id, branch_id, customer_profile_id, '
+            'customer_name, customer_phone, customer_address_text, customer_lat, '
+            'customer_lng, pickup_source_type, pickup_point_id, '
+            'destination_pickup_point_id, dropoff_type, pickup_location_lat, '
+            'pickup_location_lng, dropoff_location_lat, dropoff_location_lng, '
+            'delivery_company_id, company_id, status, assignment_status, '
+            'assigned_driver_id, assignment_failure_reason, parcel_description, '
+            'item_count, estimated_weight, estimated_volume, notes, '
             'created_at, updated_at',
           )
           .inFilter('delivery_company_id', companyIds)
@@ -1814,8 +1985,13 @@ class AuthService {
       final orderRows = await _client
           .from('orders')
           .select(
-            'id, merchant_id, branch_id, customer_profile_id, pickup_point_id, delivery_company_id, status, '
-            'tracking_code, customer_name, customer_phone, customer_address_text, '
+            'id, tracking_code, merchant_id, branch_id, customer_profile_id, '
+            'customer_name, customer_phone, customer_address_text, customer_lat, '
+            'customer_lng, pickup_source_type, pickup_point_id, '
+            'destination_pickup_point_id, dropoff_type, pickup_location_lat, '
+            'pickup_location_lng, dropoff_location_lat, dropoff_location_lng, '
+            'delivery_company_id, company_id, status, parcel_description, '
+            'item_count, estimated_weight, estimated_volume, notes, '
             'created_at, updated_at',
           )
           .inFilter('delivery_company_id', companyIds)
@@ -1955,24 +2131,14 @@ class AuthService {
           .toList();
 
       if (requestProfileIds.isNotEmpty) {
-        final requestedDriverRows = <Map<String, dynamic>>[
-          ...List<Map<String, dynamic>>.from(
-            await _client
-                .from('drivers')
-                .select(
-                  'id, profile_id, company_id, vehicle_type, verification_status',
-                )
-                .inFilter('profile_id', requestProfileIds),
-          ),
-          ...List<Map<String, dynamic>>.from(
-            await _client
-                .from('drivers')
-                .select(
-                  'id, profile_id, company_id, vehicle_type, verification_status',
-                )
-                .inFilter('id', requestProfileIds),
-          ),
-        ];
+        final requestedDriverRows = List<Map<String, dynamic>>.from(
+          await _client
+              .from('drivers')
+              .select(
+                'id, profile_id, company_id, vehicle_type, verification_status',
+              )
+              .inFilter('profile_id', requestProfileIds),
+        );
 
         final requestCompanyByProfileId = {
           for (final row in approvedRequests)

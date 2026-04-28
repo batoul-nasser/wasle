@@ -761,7 +761,7 @@ class _MerchantOrderDetailsScreenState
     final value = _order['estimated_volume'];
     if (value == null) return '-';
     final text = value.toString().trim();
-    return text.isEmpty ? '-' : '$text m³';
+    return text.isEmpty ? '-' : '$text cm³';
   }
 
   double? get _customerLat => _safeDouble(_order['customer_lat']);

@@ -1098,6 +1098,35 @@ class _PickupDashboardScreenState extends State<PickupDashboardScreen> {
                           ),
                         ],
                       ),
+                      const SizedBox(height: AppSpacing.sm),
+                      Wrap(
+                        spacing: AppSpacing.xs,
+                        runSpacing: AppSpacing.xs,
+                        children: [
+                          StatusChip(
+                            label:
+                                parcel['pickup_role_label']?.toString() ??
+                                'Role unknown',
+                            tone: StatusChipTone.info,
+                          ),
+                          StatusChip(
+                            label:
+                                (parcel['payment_can_collect_here'] == true)
+                                ? 'Payment eligible here'
+                                : 'No payment collection',
+                            tone: (parcel['payment_can_collect_here'] == true)
+                                ? StatusChipTone.success
+                                : StatusChipTone.warning,
+                          ),
+                          if ((parcel['payment_status']?.toString().trim().isNotEmpty ??
+                              false))
+                            StatusChip(
+                              label:
+                                  'Payment: ${parcel['payment_status'].toString()}',
+                              tone: StatusChipTone.neutral,
+                            ),
+                        ],
+                      ),
                       const SizedBox(height: AppSpacing.md),
                       LayoutBuilder(
                         builder: (context, constraints) {

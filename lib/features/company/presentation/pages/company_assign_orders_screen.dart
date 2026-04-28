@@ -77,6 +77,13 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
     return driverId != null && driverId.isNotEmpty;
   }
 
+  /// Assignment row exists with a driver, but the driver has not accepted yet
+  /// (`accepted_at` is still null in `assignments`).
+  bool _driverAcceptedAssignment(Map<String, dynamic> order) {
+    final accepted = order['accepted_at']?.toString().trim();
+    return accepted != null && accepted.isNotEmpty;
+  }
+
   bool _isLocked(Map<String, dynamic> order) {
     final status = order['status']?.toString().toLowerCase() ?? 'created';
     return _lockedStatuses.contains(status);
@@ -315,6 +322,35 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
     }
   }
 
+  String _orderDetailsDriverLine(Map<String, dynamic> order) {
+    final id = order['driver_id']?.toString().trim();
+    if (id == null || id.isEmpty) {
+      return 'Driver: Not assigned';
+    }
+    final name = order['driver_name']?.toString().trim();
+    if (name != null && name.isNotEmpty) {
+      return 'Driver: $name';
+    }
+    final short = id.length <= 10 ? id : '${id.substring(0, 8)}…';
+    return 'Driver: Linked (id $short)';
+  }
+
+  bool _isHomeOrder(Map<String, dynamic> order) {
+    return (order['dropoff_type']?.toString().trim().toLowerCase() ?? '') ==
+        'home';
+  }
+
+  bool _showBackupPickup(Map<String, dynamic> order) {
+    return _isHomeOrder(order) && order['has_backup_pickup_point'] == true;
+  }
+
+  String _coordsLine(dynamic lat, dynamic lng) {
+    final a = lat?.toString().trim();
+    final b = lng?.toString().trim();
+    if (a == null || a.isEmpty || b == null || b.isEmpty) return '-';
+    return '$a, $b';
+  }
+
   Future<void> _openOrderDetails(Map<String, dynamic> order) async {
     await showModalBottomSheet<void>(
       context: context,
@@ -377,9 +413,50 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                       ),
                       const SizedBox(height: AppSpacing.sm),
                       Text(
-                        'Dropoff: ${order['dropoff_address'] ?? '-'}',
+                        _isHomeOrder(order)
+                            ? 'Destination: Option 1 — Home Delivery'
+                            : 'Destination: Pickup Point',
                         style: AppTextStyles.body,
                       ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        _isHomeOrder(order)
+                            ? (order['dropoff_address']?.toString() ?? '-')
+                            : (order['dropoff_name']?.toString() ?? '-'),
+                        style: AppTextStyles.bodyMuted,
+                      ),
+                      const SizedBox(height: AppSpacing.xxs),
+                      Text(
+                        'Coordinates: ${_coordsLine(order['dropoff_lat'] ?? order['dropoff_location_lat'] ?? order['customer_lat'], order['dropoff_lng'] ?? order['dropoff_location_lng'] ?? order['customer_lng'])}',
+                        style: AppTextStyles.bodyMuted,
+                      ),
+                      if (_showBackupPickup(order)) ...[
+                        const SizedBox(height: AppSpacing.sm),
+                        Text(
+                          'Option 2 — Backup Pickup Point',
+                          style: AppTextStyles.body,
+                        ),
+                        const SizedBox(height: AppSpacing.xxs),
+                        Text(
+                          order['backup_pickup_point_name']?.toString() ?? '-',
+                          style: AppTextStyles.bodyMuted,
+                        ),
+                        const SizedBox(height: AppSpacing.xxs),
+                        Text(
+                          order['backup_pickup_point_address']?.toString() ?? '-',
+                          style: AppTextStyles.bodyMuted,
+                        ),
+                        const SizedBox(height: AppSpacing.xxs),
+                        Text(
+                          'Coordinates: ${_coordsLine(order['backup_pickup_point_lat'], order['backup_pickup_point_lng'])}',
+                          style: AppTextStyles.bodyMuted,
+                        ),
+                        const SizedBox(height: AppSpacing.xxs),
+                        Text(
+                          'Used only if the customer is not available at home.',
+                          style: AppTextStyles.caption,
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -395,7 +472,7 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                       ),
                       const SizedBox(height: AppSpacing.xxs),
                       Text(
-                        'Driver: ${order['driver_name'] ?? 'Not assigned'}',
+                        _orderDetailsDriverLine(order),
                         style: AppTextStyles.bodyMuted,
                       ),
                       if ((order['driver_phone']?.toString().trim().isNotEmpty ??
@@ -451,9 +528,9 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
 
       final message = result.assigned
           ? 'Automatic assignment succeeded (driver ${result.driverId}). '
-                'Tested ${result.testedDrivers}, feasible ${result.feasibleInsertions}.'
+                'Routing-ready drivers ${result.testedDrivers}, feasible insertions ${result.feasibleInsertions}.'
           : 'Automatic assignment still failed: ${result.reason} '
-                '(tested ${result.testedDrivers}, feasible ${result.feasibleInsertions}).';
+                '(routing-ready ${result.testedDrivers}, feasible ${result.feasibleInsertions}).';
       ScaffoldMessenger.of(pageContext).showSnackBar(
         SnackBar(content: Text(message)),
       );
@@ -488,8 +565,16 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
           !isAutoFallbackEligible(order);
     }).toList();
 
+    final pendingAcceptanceOrders = orders.where((order) {
+      return _hasDriver(order) &&
+          !_driverAcceptedAssignment(order) &&
+          _canReassign(order);
+    }).toList();
+
     final assignedOrders = orders.where((order) {
-      return _hasDriver(order) && _canReassign(order);
+      return _hasDriver(order) &&
+          _driverAcceptedAssignment(order) &&
+          _canReassign(order);
     }).toList();
 
     final lockedOrders = orders.where((order) {
@@ -579,14 +664,42 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                     }),
                   const SizedBox(height: AppSpacing.lg),
                   const SectionHeader(
+                    title: 'Awaiting driver acceptance',
+                    subtitle:
+                        'A driver is linked but has not accepted the job in the app yet',
+                  ),
+                  const SizedBox(height: AppSpacing.md),
+                  if (pendingAcceptanceOrders.isEmpty)
+                    const InfoCard(
+                      child: Text(
+                        'No orders waiting on driver acceptance.',
+                        style: AppTextStyles.bodyMuted,
+                      ),
+                    )
+                  else
+                    ...pendingAcceptanceOrders.map((order) {
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: AppSpacing.md),
+                        child: _OrderCard(
+                          order: order,
+                          onAutoRetryTap: null,
+                          onViewDetailsTap: () => _openOrderDetails(order),
+                          onAssignTap: () => _openAssignSheet(order),
+                          onUnassignTap: () => _unassignDriver(order),
+                          assignEnabled: true,
+                        ),
+                      );
+                    }),
+                  const SizedBox(height: AppSpacing.lg),
+                  const SectionHeader(
                     title: 'Already Assigned',
-                    subtitle: 'Reassign if needed',
+                    subtitle: 'Driver accepted — reassign if needed',
                   ),
                   const SizedBox(height: AppSpacing.md),
                   if (assignedOrders.isEmpty)
                     const InfoCard(
                       child: Text(
-                        'No assigned orders found yet.',
+                        'No orders with an accepted driver yet.',
                         style: AppTextStyles.bodyMuted,
                       ),
                     )
@@ -694,6 +807,14 @@ class _OrderCard extends StatelessWidget {
             'Customer: ${order['customer_name'] ?? 'Customer'}',
             style: AppTextStyles.bodyMuted,
           ),
+          if ((order['dropoff_type']?.toString().toLowerCase() == 'home') &&
+              order['has_backup_pickup_point'] == true) ...[
+            const SizedBox(height: AppSpacing.xs),
+            Text(
+              'Option 2 backup: ${order['backup_pickup_point_name'] ?? '-'}',
+              style: AppTextStyles.caption,
+            ),
+          ],
           const SizedBox(height: AppSpacing.md),
           SecondaryButton(
             label: 'View Order Details',
