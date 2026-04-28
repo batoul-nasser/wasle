@@ -171,6 +171,20 @@ class PickupPointRepository {
       for (final row in paymentRows)
         if (row['order_id'] != null) row['order_id'].toString(): row,
     };
+    final agentCollectionRows = orderIds.isEmpty
+        ? <Map<String, dynamic>>[]
+        : List<Map<String, dynamic>>.from(
+            await _client
+                .from('agent_collections')
+                .select('order_id, status')
+                .inFilter('order_id', orderIds),
+          );
+    final agentCollectionStatusByOrderId = <String, String>{
+      for (final row in agentCollectionRows)
+        if (row['order_id'] != null &&
+            (row['status']?.toString().trim().isNotEmpty ?? false))
+          row['order_id'].toString(): row['status'].toString(),
+    };
     final assignmentRows = orderIds.isEmpty
         ? <Map<String, dynamic>>[]
         : List<Map<String, dynamic>>.from(
@@ -291,7 +305,8 @@ class PickupPointRepository {
           destinationId == pickupPointId && dropoffType == 'home';
       if (!isBackupForCurrentPickup) return true;
       return status == 'pending_pickup_point_delivery' ||
-          status == 'dropped_at_pickup_point';
+          status == 'dropped_at_pickup_point' ||
+          status == 'ready_for_customer_pickup';
     }).toList();
 
     return visibleOrders.map((order) {
@@ -338,6 +353,10 @@ class PickupPointRepository {
           paymentEligibleStatuses.contains(status);
       final isOnline = paymentMethod == 'whish_online';
       final isCashAtPickup = paymentMethod == 'cash_at_pickup';
+      final agentCollectionStatus =
+          agentCollectionStatusByOrderId[order['id']?.toString() ?? '']
+              ?.trim()
+              .toLowerCase();
       final canCollectPayment = !isSourcePickup &&
           isDestinationPickup &&
           isCashAtPickup &&
@@ -355,7 +374,14 @@ class PickupPointRepository {
         paymentCollectionLabel = 'No payment collection';
       } else if (canCollectPayment) {
         if (pickupHandling == 'agent_collection') {
-          paymentCollectionLabel = 'Agent collection required';
+          if (agentCollectionStatus == 'collected') {
+            paymentCollectionLabel =
+                'Agent collected — pickup confirmation pending';
+          } else if (agentCollectionStatus == 'ready_for_agent') {
+            paymentCollectionLabel = 'Waiting for agent collection';
+          } else {
+            paymentCollectionLabel = 'Agent collection required';
+          }
         } else {
           paymentCollectionLabel = 'Payment eligible here';
         }
@@ -409,6 +435,7 @@ class PickupPointRepository {
         'payment_status': payment?['status']?.toString(),
         'payment_method': payment?['method']?.toString(),
         'payment_amount': payment?['amount'],
+        'agent_collection_status': agentCollectionStatus,
         'source_pickup_name': sourcePickup?['name']?.toString(),
         'source_pickup_address': sourcePickup?['address_text']?.toString(),
         'destination_pickup_name': destinationPickup?['name']?.toString(),
@@ -441,10 +468,13 @@ class PickupPointRepository {
         'status=${mapped['status']} pickup_point_id=$sourceId destination_pickup_point_id=$destinationId',
       );
       debugPrint(
-        '[PICKUP_POINT_COMPANY] deliveryCompanyId=${order['delivery_company_id']} companyId=${order['company_id']} companyName=$deliveryCompanyName',
+        '[PICKUP_COMPANY_DRIVER] tracking=${mapped['tracking_code']} '
+        'companyId=${order['company_id']} deliveryCompanyId=${order['delivery_company_id']} '
+        'assignedDriverId=$assignedDriverId driverName=$driverName',
       );
       debugPrint(
-        '[PICKUP_POINT_DRIVER] assignedDriverId=$assignedDriverId assignmentDriverId=$assignmentDriverId '
+        '[PICKUP_DRIVER_MAP] tracking=${mapped['tracking_code']} assignedDriverId=$assignedDriverId assignmentDriverId=$assignmentDriverId '
+        'driverProfileId=${driver?['profile_id']} '
         'driverName=$driverName driverPhone=$driverPhone vehicle=$vehicleType',
       );
       debugPrint(

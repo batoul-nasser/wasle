@@ -242,6 +242,9 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
     double amount,
     String tracking,
   ) {
+    final collectionStatus =
+        order['agent_collection_status']?.toString().toLowerCase();
+    final waitingForAgent = collectionStatus == 'ready_for_agent';
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -271,7 +274,9 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
                 const SizedBox(height: 4),
                 Text(
                   _showsAgentCollection
-                      ? 'Cash waiting for agent collection: \$${amount.toStringAsFixed(2)}'
+                      ? (waitingForAgent
+                          ? 'Waiting for agent collection: \$${amount.toStringAsFixed(2)}'
+                          : 'Cash waiting for agent collection: \$${amount.toStringAsFixed(2)}')
                       : 'Cash to send Wasle: \$${amount.toStringAsFixed(2)}',
                   style: const TextStyle(
                     color: Color(0xFFD4800A),
@@ -283,7 +288,7 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
           ),
           _showsAgentCollection
               ? OutlinedButton.icon(
-                  onPressed: () => _confirmAgentCollected(order),
+                  onPressed: waitingForAgent ? null : () => _confirmAgentCollected(order),
                   icon: const Icon(Icons.handshake_outlined, size: 16),
                   label: const Text('Cash ready for agent'),
                   style: OutlinedButton.styleFrom(

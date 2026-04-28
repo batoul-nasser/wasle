@@ -115,9 +115,18 @@ class PickupPointService {
           .inFilter('order_id', orderIds)
           .eq('method', 'cash_at_pickup')
           .eq('status', 'pending');
+      final agentCollections = await _db
+          .from('agent_collections')
+          .select('order_id, status')
+          .inFilter('order_id', orderIds);
 
       final paymentMap = {
         for (final p in (payments as List)) p['order_id'].toString(): p,
+      };
+      final agentStatusByOrderId = {
+        for (final a in List<Map<String, dynamic>>.from(agentCollections))
+          if (a['order_id'] != null)
+            a['order_id'].toString(): a['status']?.toString(),
       };
 
       return orders
@@ -130,6 +139,7 @@ class PickupPointService {
                   : 'destination_pickup',
               'payment_can_collect_here': true,
               'payment': paymentMap[o['id'].toString()],
+              'agent_collection_status': agentStatusByOrderId[o['id'].toString()],
             },
           )
           .toList();

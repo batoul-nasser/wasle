@@ -109,16 +109,46 @@ class AgentService {
       final agentId = _uid;
       if (agentId == null) throw Exception('Agent not logged in');
 
-      await _db.from('agent_collections').insert({
-        'agent_id': agentId,
-        'order_id': orderId,
-        'payment_id': paymentId,
-        'pickup_point_id': pickupPointId,
-        'amount': amount,
-        'status': 'collected',
-        'note': note ?? '',
-        'collected_at': DateTime.now().toUtc().toIso8601String(),
-      });
+      final collectedAt = DateTime.now().toUtc().toIso8601String();
+      final existing = await _db
+          .from('agent_collections')
+          .select('id, status')
+          .eq('order_id', orderId)
+          .eq('payment_id', paymentId)
+          .eq('pickup_point_id', pickupPointId)
+          .maybeSingle();
+      if (existing == null) {
+        await _db.from('agent_collections').insert({
+          'agent_id': agentId,
+          'order_id': orderId,
+          'payment_id': paymentId,
+          'pickup_point_id': pickupPointId,
+          'amount': amount,
+          'status': 'collected',
+          'note': note ?? '',
+          'collected_at': collectedAt,
+        });
+      } else {
+        await _db
+            .from('agent_collections')
+            .update({
+              'agent_id': agentId,
+              'status': 'collected',
+              'note': note ?? '',
+              'collected_at': collectedAt,
+            })
+            .eq('id', existing['id']);
+      }
+
+      await _db
+          .from('payments')
+          .update({
+            'collected_by': agentId,
+            'collected_at': collectedAt,
+            'status': 'paid',
+            'updated_at': collectedAt,
+          })
+          .eq('id', paymentId);
 
       await _db.from('order_events').insert({
         'order_id': orderId,
@@ -130,9 +160,12 @@ class AgentService {
           'collected_by_agent_id': agentId,
           'pickup_point_id': pickupPointId,
           'amount': amount,
-          'collected_at': DateTime.now().toUtc().toIso8601String(),
+          'collected_at': collectedAt,
         },
       });
+      debugPrint(
+        '[AGENT_COLLECTION] tracking=$orderId paymentId=$paymentId pickupPointId=$pickupPointId status=collected agentId=$agentId collectedAt=$collectedAt',
+      );
     } catch (e) {
       debugPrint('[AgentService] confirmCollection: $e');
       rethrow;
