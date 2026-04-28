@@ -518,11 +518,12 @@ class DriverDeliveriesRepository {
     final pickupPointId = backup['id'].toString();
     final pickupPointName = backup['name']?.toString() ?? 'Pickup point';
     final pickupPointAddress = backup['address_text']?.toString();
+    final trackingCode = order['tracking_code']?.toString() ?? '';
     final now = DateTime.now().toUtc().toIso8601String();
     const newStatus = 'pending_pickup_point_delivery';
     debugPrint(
-      '[OPTION2_REDIRECT_ATTEMPT] order=$orderId status=$currentStatus '
-      'driverUser=${_client.auth.currentUser?.id} '
+      '[OPTION2_REDIRECT_ATTEMPT] authUser=${_client.auth.currentUser?.id} '
+      'order=$orderId tracking=$trackingCode status=$currentStatus '
       'destinationPickup=$configuredBackupId backupLat=$backupLat backupLng=$backupLng',
     );
     try {
@@ -530,7 +531,6 @@ class DriverDeliveriesRepository {
           .from('orders')
           .update({
             'status': newStatus,
-            'dropoff_type': 'home',
             'dropoff_location_lat': backupLat,
             'dropoff_location_lng': backupLng,
             'updated_at': now,

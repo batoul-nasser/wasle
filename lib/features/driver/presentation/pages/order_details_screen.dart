@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:wasle/core/ui/ui.dart';
 import '../../data/driver_deliveries_repository.dart';
@@ -381,9 +382,11 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       await _loadDetails();
     } catch (e) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('Failed to redirect order: $e')));
+      final isRls = e is PostgrestException && e.code == '42501';
+      final message = isRls
+          ? 'Permission error: driver is not allowed to update this assigned order. Check RLS policy.'
+          : 'Failed to redirect order: $e';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
     } finally {
       if (mounted) {
         setState(() => isUpdating = false);
