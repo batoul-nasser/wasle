@@ -436,6 +436,13 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
                           'Option 2 — Backup Pickup Point',
                           style: AppTextStyles.body,
                         ),
+                        if (order['backup_pickup_is_active_dropoff'] == true) ...[
+                          const SizedBox(height: AppSpacing.xxs),
+                          const Text(
+                            'ACTIVE destination',
+                            style: AppTextStyles.caption,
+                          ),
+                        ],
                         const SizedBox(height: AppSpacing.xxs),
                         Text(
                           order['backup_pickup_point_name']?.toString() ?? '-',

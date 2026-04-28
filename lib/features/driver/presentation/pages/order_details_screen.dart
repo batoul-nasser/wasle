@@ -348,7 +348,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       builder: (_) => AlertDialog(
         title: const Text('Customer Not Available'),
         content: const Text(
-          'The system will automatically redirect this home delivery to the nearest pickup point for the same delivery company.',
+          'The order will be moved to the configured backup pickup point (Option 2).',
         ),
         actions: [
           TextButton(
@@ -357,7 +357,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Redirect Order'),
+            child: const Text('Move to Backup Pickup Point'),
           ),
         ],
       ),
@@ -374,7 +374,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
           content: Text(
-            'Customer unavailable. Order redirected to the nearest pickup point.',
+            'Customer unavailable. Order moved to backup pickup point.',
           ),
         ),
       );
@@ -417,14 +417,26 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
     final workflowStatus = _repository.workflowStatusFromOrderStatus(
       delivery.status,
     );
+    final currentStatus = (delivery.status).toLowerCase();
     final isPickupPointDropoff =
         (delivery.dropoffType ?? '').trim().toLowerCase() == 'pickup_point' ||
-        (delivery.pickupPointId ?? '').trim().isNotEmpty;
+        (delivery.pickupPointId ?? '').trim().isNotEmpty ||
+        currentStatus == 'pending_pickup_point_delivery' ||
+        currentStatus == 'dropped_at_pickup_point';
     final allowedWorkflowActions = _repository
         .getAllowedWorkflowActions(delivery.status)
         .where(
           (action) =>
-              action != 'customer_not_available' || !isPickupPointDropoff,
+              action != 'customer_not_available' ||
+              (!isPickupPointDropoff &&
+                  details!.hasBackupPickupPoint &&
+                  (delivery.dropoffType ?? '').trim().toLowerCase() == 'home' &&
+                  !{
+                    'delivered',
+                    'cancelled',
+                    'dropped_at_pickup_point',
+                    'returned_to_store',
+                  }.contains(currentStatus)),
         )
         .toList();
     final actionLayout = _resolveActionLayout(
@@ -489,7 +501,10 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             const SizedBox(height: AppSpacing.md),
             InfoCard(
               title: 'Dropoff Information',
-              subtitle: delivery.dropoffName ?? 'Dropoff location',
+              subtitle: (currentStatus == 'pending_pickup_point_delivery' ||
+                      currentStatus == 'dropped_at_pickup_point')
+                  ? 'Backup Pickup Point / Option 2'
+                  : (delivery.dropoffName ?? 'Dropoff location'),
               leading: _iconBox(Icons.flag_outlined),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -505,6 +520,14 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     _coordinateLabel(details!.dropoffLat, details!.dropoffLng),
                     style: AppTextStyles.bodyMuted,
                   ),
+                  if (currentStatus == 'pending_pickup_point_delivery' ||
+                      currentStatus == 'dropped_at_pickup_point') ...[
+                    const SizedBox(height: AppSpacing.xs),
+                    Text(
+                      'Customer was not available. Deliver this order to the backup pickup point.',
+                      style: AppTextStyles.caption,
+                    ),
+                  ],
                   const SizedBox(height: AppSpacing.md),
                   _mapButton(
                     actionLabel: 'Open Dropoff Map',

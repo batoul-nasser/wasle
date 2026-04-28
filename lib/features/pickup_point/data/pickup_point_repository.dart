@@ -198,7 +198,18 @@ class PickupPointRepository {
         if (customer['id'] != null) customer['id'].toString(): customer,
     };
 
-    return orders.map((order) {
+    final visibleOrders = orders.where((order) {
+      final dropoffType = order['dropoff_type']?.toString().trim().toLowerCase() ?? '';
+      final status = order['status']?.toString().trim().toLowerCase() ?? '';
+      final destinationId = order['destination_pickup_point_id']?.toString();
+      final isBackupForCurrentPickup =
+          destinationId == pickupPointId && dropoffType == 'home';
+      if (!isBackupForCurrentPickup) return true;
+      return status == 'pending_pickup_point_delivery' ||
+          status == 'dropped_at_pickup_point';
+    }).toList();
+
+    return visibleOrders.map((order) {
       final customer =
           customerById[order['customer_profile_id']?.toString()] ?? {};
       final status = order['status']?.toString().trim().toLowerCase() ?? '';
@@ -214,8 +225,6 @@ class PickupPointRepository {
                 : 'destination_pickup')
           : 'source_pickup';
       final paymentEligibleStatuses = const {
-        'failed',
-        'customer_not_available',
         'pending_pickup_point_delivery',
         'dropped_at_pickup_point',
       };

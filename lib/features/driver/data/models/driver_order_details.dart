@@ -7,6 +7,7 @@ class DriverOrderDetails {
   final String? dropoffAddress;
   final double? dropoffLat;
   final double? dropoffLng;
+  final bool hasBackupPickupPoint;
   final String? pickupOpeningHours;
   final List<DeliveryTimelineEvent> events;
 
@@ -16,6 +17,7 @@ class DriverOrderDetails {
     required this.dropoffAddress,
     required this.dropoffLat,
     required this.dropoffLng,
+    required this.hasBackupPickupPoint,
     required this.pickupOpeningHours,
     required this.events,
   });

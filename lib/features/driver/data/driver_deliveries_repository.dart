@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'models/delivery_timeline_event.dart';
@@ -77,7 +78,7 @@ class DriverDeliveriesRepository {
     'ready_for_driver_pickup': ['pending_driver_receipt', 'picked_up'],
     'assigned': ['pending_driver_receipt', 'picked_up'],
     'pending_driver_receipt': ['driver_received_order', 'picked_up'],
-    'driver_received_order': ['in_transit'],
+    'driver_received_order': ['in_transit', 'customer_not_available'],
     'picked_up': ['in_transit'],
     'in_transit': ['delivered', 'failed'],
     'failed': [
@@ -253,6 +254,9 @@ class DriverDeliveriesRepository {
     final pickupPointId = pickupOrderList.isEmpty
         ? null
         : pickupOrderList.first;
+    final hasBackupPickupPoint =
+        (pickupPointId?['destination_pickup_point_id']?.toString().trim().isNotEmpty ??
+        false);
 
     final pickupId = pickupPointId?['pickup_point_id']?.toString();
     if (pickupId != null && pickupId.isNotEmpty) {
@@ -328,6 +332,7 @@ class DriverDeliveriesRepository {
           delivery.dropoffLng ??
           _toDouble(pickupPointId?['dropoff_location_lng']) ??
           _toDouble(pickupPointId?['customer_lng']),
+      hasBackupPickupPoint: hasBackupPickupPoint,
       pickupOpeningHours: openingHours,
       events: events,
     );
@@ -394,7 +399,9 @@ class DriverDeliveriesRepository {
       throw Exception('Order not found');
     }
 
-    final pickupPointId = order['order']['pickup_point_id']?.toString();
+    final pickupPointId =
+        order['order']['destination_pickup_point_id']?.toString() ??
+        order['order']['pickup_point_id']?.toString();
     if (pickupPointId == null || pickupPointId.isEmpty) {
       throw Exception('No pickup point is assigned for this order.');
     }
@@ -439,9 +446,12 @@ class DriverDeliveriesRepository {
     final address = orderWithAddress['address'];
     final currentStatus = (order['status']?.toString() ?? 'created')
         .toLowerCase();
-    if (workflowStatusFromOrderStatus(currentStatus) != 'in_transit') {
+    if (!{
+      'in_transit',
+      'driver_received_order',
+    }.contains(workflowStatusFromOrderStatus(currentStatus))) {
       throw Exception(
-        'Customer unavailable fallback is only allowed while the order is in transit.',
+        'Customer unavailable fallback is only allowed while the order is active.',
       );
     }
 
@@ -451,80 +461,51 @@ class DriverDeliveriesRepository {
       );
     }
 
-    final companyId = _firstNonEmpty([
-      order['delivery_company_id'],
-      order['company_id'],
-      await _loadAssignmentCompanyId(orderId: orderId, driverId: driverId),
-    ]);
-    if (companyId == null) {
-      throw Exception('Order is missing a delivery company.');
-    }
-
-    var customerLat =
+    final customerLat =
         _toDouble(address?['dropoff_lat']) ??
         _toDouble(order['dropoff_location_lat']) ??
         _toDouble(order['customer_lat']);
-    var customerLng =
+    final customerLng =
         _toDouble(address?['dropoff_lng']) ??
         _toDouble(order['dropoff_location_lng']) ??
         _toDouble(order['customer_lng']);
-    final customerAddress = _firstNonEmpty([
-      address?['dropoff_address_text'],
-      address?['dropoff_address'],
-      order['customer_address_text'],
-      order['dropoff_address_text'],
-      order['dropoff_address'],
-    ]);
-
     if (customerLat == null || customerLng == null) {
-      throw Exception(
-        'Customer dropoff coordinates are missing, so the nearest pickup point cannot be determined.',
-      );
+      throw Exception('Customer home coordinates are missing.');
     }
 
     final configuredBackupId = order['destination_pickup_point_id']?.toString();
-    Map<String, dynamic>? nearestPickupPoint;
-    if (configuredBackupId != null && configuredBackupId.isNotEmpty) {
-      final backupRows = await _client
-          .from('pickup_points')
-          .select('id, name, address_text, lat, lng, is_active')
-          .eq('id', configuredBackupId)
-          .limit(1);
-      final backupList = List<Map<String, dynamic>>.from(backupRows);
-      final backup = backupList.isEmpty ? null : backupList.first;
-      final isActive = backup?['is_active'] == true;
-      final hasCoords =
-          _toDouble(backup?['lat']) != null && _toDouble(backup?['lng']) != null;
-      if (backup != null && isActive && hasCoords) {
-        nearestPickupPoint = backup;
-      }
+    if (configuredBackupId == null || configuredBackupId.isEmpty) {
+      throw Exception('No backup pickup point is configured for this order.');
     }
-    nearestPickupPoint ??= await _findNearestCompanyPickupPoint(
-      companyId: companyId,
-      lat: customerLat,
-      lng: customerLng,
-    );
-    if (nearestPickupPoint == null) {
-      throw Exception(
-        'No active pickup point with valid coordinates is configured for this delivery company.',
-      );
+    final backupRows = await _client
+        .from('pickup_points')
+        .select('id, name, address_text, lat, lng, city, area, is_active')
+        .eq('id', configuredBackupId)
+        .limit(1);
+    final backupList = List<Map<String, dynamic>>.from(backupRows);
+    final backup = backupList.isEmpty ? null : backupList.first;
+    final backupLat = _toDouble(backup?['lat']);
+    final backupLng = _toDouble(backup?['lng']);
+    if (backup == null || backup['is_active'] != true) {
+      throw Exception('Backup pickup point is missing or inactive.');
+    }
+    if (backupLat == null || backupLng == null) {
+      throw Exception('Backup pickup point location is missing.');
     }
 
-    final pickupPointId = nearestPickupPoint['id'].toString();
-    final pickupPointName =
-        nearestPickupPoint['name']?.toString() ?? 'Pickup point';
-    final pickupPointAddress = nearestPickupPoint['address_text']?.toString();
+    final pickupPointId = backup['id'].toString();
+    final pickupPointName = backup['name']?.toString() ?? 'Pickup point';
+    final pickupPointAddress = backup['address_text']?.toString();
     final now = DateTime.now().toUtc().toIso8601String();
+    const newStatus = 'pending_pickup_point_delivery';
 
     await _client
         .from('orders')
         .update({
-          'status': 'pending_pickup_point_delivery',
-          'dropoff_type': 'pickup_point',
-          'pickup_point_id': pickupPointId,
-          'destination_pickup_point_id': pickupPointId,
-          'dropoff_location_lat': _toDouble(nearestPickupPoint['lat']),
-          'dropoff_location_lng': _toDouble(nearestPickupPoint['lng']),
+          'status': newStatus,
+          'dropoff_type': 'home',
+          'dropoff_location_lat': backupLat,
+          'dropoff_location_lng': backupLng,
           'updated_at': now,
         })
         .eq('id', orderId)
@@ -539,17 +520,20 @@ class DriverDeliveriesRepository {
     final latestStatus = latestList.isEmpty
         ? ''
         : (latestList.first['status']?.toString() ?? '').toLowerCase();
-    if (latestStatus != 'pending_pickup_point_delivery') {
+    if (latestStatus != newStatus) {
       throw Exception(
         'Order status changed to "$latestStatus". Refresh the order before retrying.',
       );
     }
 
     final note =
-        'Customer not available at '
-        '${customerAddress ?? '${customerLat.toStringAsFixed(6)}, ${customerLng.toStringAsFixed(6)}'}. '
-        'Order redirected automatically to pickup point $pickupPointName'
+        'Customer unavailable. Order moved to backup pickup point: $pickupPointName'
         '${pickupPointAddress == null ? '' : ' ($pickupPointAddress)'}';
+    debugPrint(
+      '[OPTION2_MOVE] order=$orderId tracking=${order['tracking_code']} '
+      'backupPickup=$pickupPointId lat=$backupLat lng=$backupLng '
+      'oldHome=$customerLat,$customerLng newStatus=$newStatus',
+    );
 
     try {
       await _client.from('order_events').insert({
@@ -557,14 +541,29 @@ class DriverDeliveriesRepository {
         'event_type': 'note_added',
         'created_by': currentUser?.id,
         'note': note,
+        'metadata': {
+          'reason': 'customer_not_available',
+          'moved_to_backup_pickup_point': true,
+          'backup_pickup_point_id': pickupPointId,
+          'backup_pickup_point_name': pickupPointName,
+          'backup_pickup_point_lat': backupLat,
+          'backup_pickup_point_lng': backupLng,
+          'previous_customer_lat': customerLat,
+          'previous_customer_lng': customerLng,
+        },
       });
     } catch (_) {}
 
+    final companyId = _firstNonEmpty([
+      order['delivery_company_id'],
+      order['company_id'],
+      await _loadAssignmentCompanyId(orderId: orderId, driverId: driverId),
+    ]);
     await _retargetPendingDropoffRouteStop(
       orderId: orderId,
       driverId: driverId,
-      companyId: companyId,
-      pickupPoint: nearestPickupPoint,
+      companyId: companyId ?? '',
+      pickupPoint: backup,
     );
   }
 
@@ -985,12 +984,16 @@ class DriverDeliveriesRepository {
         if (row['order_id'] != null) row['order_id'].toString(): row,
     };
 
-    final pickupIds = orders
-        .map((order) => order['pickup_point_id']?.toString())
-        .whereType<String>()
-        .where((id) => id.isNotEmpty)
-        .toSet()
-        .toList();
+    final pickupIds = <String>{
+      ...orders
+          .map((order) => order['pickup_point_id']?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty),
+      ...orders
+          .map((order) => order['destination_pickup_point_id']?.toString())
+          .whereType<String>()
+          .where((id) => id.isNotEmpty),
+    }.toList();
 
     final merchantIds = <String>{
       for (final order in orders)
@@ -1069,8 +1072,18 @@ class DriverDeliveriesRepository {
       final orderAddress = orderAddressByOrderId[orderId];
 
       final pickup = pickupById[order['pickup_point_id']?.toString()];
+      final destinationPickup =
+          pickupById[order['destination_pickup_point_id']?.toString()];
       final branch = branchById[order['branch_id']?.toString()];
       final isPickupPointDropoff = _isPickupPointDropoff(order);
+      final status = (order['status']?.toString() ?? '').toLowerCase();
+      final isHomeOption2Active =
+          (order['dropoff_type']?.toString().toLowerCase() == 'home') &&
+          destinationPickup != null &&
+          const {
+            'pending_pickup_point_delivery',
+            'dropped_at_pickup_point',
+          }.contains(status);
       final merchantKey = _firstNonEmpty([
         order['merchant_id'],
         branch?['merchant_id'],
@@ -1148,12 +1161,28 @@ class DriverDeliveriesRepository {
           _toDouble(orderAddress?['pickup_lng']) ??
           _toDouble(order['pickup_lng']) ??
           _toDouble(branch?['lng']);
-      final pickupPointDropoffName = isPickupPointDropoff
-          ? (pickup?['name'])
-          : null;
-      final pickupPointDropoffAddress = isPickupPointDropoff
-          ? (pickup?['address_text'])
-          : null;
+      final destinationPickupName = destinationPickup == null
+          ? null
+          : destinationPickup['name'];
+      final destinationPickupAddress = destinationPickup == null
+          ? null
+          : destinationPickup['address_text'];
+      final destinationPickupLat = _toDouble(
+        destinationPickup == null ? null : destinationPickup['lat'],
+      );
+      final destinationPickupLng = _toDouble(
+        destinationPickup == null ? null : destinationPickup['lng'],
+      );
+      final pickupPointDropoffName = isHomeOption2Active
+          ? destinationPickupName
+          : (isPickupPointDropoff
+                ? (destinationPickupName ?? pickup?['name'])
+                : null);
+      final pickupPointDropoffAddress = isHomeOption2Active
+          ? destinationPickupAddress
+          : (isPickupPointDropoff
+                ? (destinationPickupAddress ?? pickup?['address_text'])
+                : null);
       final dropoffName =
           _firstNonEmpty([
             pickupPointDropoffName,
@@ -1173,24 +1202,39 @@ class DriverDeliveriesRepository {
         order['address'],
       ]);
       double? dropoffLat = _toDouble(
-        isPickupPointDropoff
-            ? (pickup?['lat'] ??
+        isHomeOption2Active
+            ? (destinationPickupLat ??
                   orderAddress?['dropoff_lat'] ??
                   order['dropoff_location_lat'] ??
                   order['customer_lat'])
-            : (orderAddress?['dropoff_lat'] ??
-                  order['dropoff_location_lat'] ??
-                  order['customer_lat']),
+            : (isPickupPointDropoff
+                ? ((destinationPickupLat ?? pickup?['lat']) ??
+                      orderAddress?['dropoff_lat'] ??
+                      order['dropoff_location_lat'] ??
+                      order['customer_lat'])
+                : (orderAddress?['dropoff_lat'] ??
+                      order['dropoff_location_lat'] ??
+                      order['customer_lat'])),
       );
       double? dropoffLng = _toDouble(
-        isPickupPointDropoff
-            ? (pickup?['lng'] ??
+        isHomeOption2Active
+            ? (destinationPickupLng ??
                   orderAddress?['dropoff_lng'] ??
                   order['dropoff_location_lng'] ??
                   order['customer_lng'])
-            : (orderAddress?['dropoff_lng'] ??
-                  order['dropoff_location_lng'] ??
-                  order['customer_lng']),
+            : (isPickupPointDropoff
+                ? ((destinationPickupLng ?? pickup?['lng']) ??
+                      orderAddress?['dropoff_lng'] ??
+                      order['dropoff_location_lng'] ??
+                      order['customer_lng'])
+                : (orderAddress?['dropoff_lng'] ??
+                      order['dropoff_location_lng'] ??
+                      order['customer_lng'])),
+      );
+      debugPrint(
+        '[DRIVER_ACTIVE_DESTINATION] order=$orderId status=$status '
+        'activeLat=$dropoffLat activeLng=$dropoffLng '
+        'activeType=${isHomeOption2Active ? "backup_option_2" : (isPickupPointDropoff ? "pickup_point" : "home")}',
       );
       result.add(
         DriverDelivery(
@@ -1219,7 +1263,9 @@ class DriverDeliveriesRepository {
           pickupLng: pickupLng,
           pickupPointId: order['pickup_point_id']?.toString(),
           dropoffType: order['dropoff_type']?.toString(),
-          dropoffName: dropoffName,
+          dropoffName: isHomeOption2Active
+              ? 'Backup Pickup Point / Option 2'
+              : dropoffName,
           dropoffAddress: dropoffAddress,
           dropoffLat: dropoffLat,
           dropoffLng: dropoffLng,

@@ -70,10 +70,20 @@ class _TrackMyOrderPageState extends State<TrackMyOrderPage> {
           final order = Map<String, dynamic>.from(data['order'] as Map);
           final pickup =
               data['destination_pickup'] as Map<String, dynamic>?;
-          final lat = (pickup?['lat'] as num?)?.toDouble() ??
-              (order['dropoff_location_lat'] as num?)?.toDouble();
-          final lng = (pickup?['lng'] as num?)?.toDouble() ??
-              (order['dropoff_location_lng'] as num?)?.toDouble();
+          final status = (order['status']?.toString() ?? '').toLowerCase();
+          final movedToPickupStatuses = const {
+            'pending_pickup_point_delivery',
+            'dropped_at_pickup_point',
+          };
+          final option2Active = movedToPickupStatuses.contains(status);
+          final lat = option2Active
+              ? ((pickup?['lat'] as num?)?.toDouble() ??
+                    (order['dropoff_location_lat'] as num?)?.toDouble())
+              : (order['dropoff_location_lat'] as num?)?.toDouble();
+          final lng = option2Active
+              ? ((pickup?['lng'] as num?)?.toDouble() ??
+                    (order['dropoff_location_lng'] as num?)?.toDouble())
+              : (order['dropoff_location_lng'] as num?)?.toDouble();
           final mapSupported = !kIsWeb &&
               (defaultTargetPlatform == TargetPlatform.android ||
                   defaultTargetPlatform == TargetPlatform.iOS) &&
@@ -96,8 +106,10 @@ class _TrackMyOrderPageState extends State<TrackMyOrderPage> {
                             markerId: const MarkerId('order_destination'),
                             position: LatLng(lat, lng),
                             infoWindow: InfoWindow(
-                              title: pickup?['name']?.toString() ??
-                                  'Order destination',
+                              title: option2Active
+                                  ? (pickup?['name']?.toString() ??
+                                        'Backup pickup point')
+                                  : 'Customer home destination',
                             ),
                           ),
                         },
@@ -142,13 +154,26 @@ class _TrackMyOrderPageState extends State<TrackMyOrderPage> {
                           fontWeight: FontWeight.w600,
                         ),
                       ),
+                      if (pickup != null && !option2Active) ...[
+                        const SizedBox(height: 10),
+                        Text(
+                          'Option 2 backup: ${pickup['name']?.toString() ?? 'Pickup point'}',
+                        ),
+                      ],
+                      if (option2Active) ...[
+                        const SizedBox(height: 10),
+                        const Text(
+                          'Customer unavailable. Order moved to pickup point.',
+                          style: TextStyle(fontWeight: FontWeight.w600),
+                        ),
+                      ],
                       const SizedBox(height: 10),
                       Text(
-                        'Dropoff: ${pickup?['name']?.toString() ?? order['customer_address_text']?.toString() ?? 'Customer location'}',
+                        'Dropoff: ${option2Active ? (pickup?['name']?.toString() ?? 'Backup pickup point') : (order['customer_address_text']?.toString() ?? 'Customer location')}',
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        'Address: ${pickup?['address_text']?.toString() ?? order['customer_address_text']?.toString() ?? '-'}',
+                        'Address: ${option2Active ? (pickup?['address_text']?.toString() ?? '-') : (order['customer_address_text']?.toString() ?? '-')}',
                       ),
                     ],
                   ),

@@ -96,8 +96,6 @@ class PickupPointService {
       final ownedOrderIds = await _ordersOwnedByDestinationPickup(ppId);
       if (ownedOrderIds.isEmpty) return [];
       const paymentEligibleStatuses = [
-        'failed',
-        'customer_not_available',
         'pending_pickup_point_delivery',
         'dropped_at_pickup_point',
       ];
