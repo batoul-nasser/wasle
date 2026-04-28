@@ -432,10 +432,6 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             lng: widget.branchLng,
             city: _required(widget.city, 'City'),
             area: _required(widget.area, 'Area'),
-            lat: widget.branchLat,
-            lng: widget.branchLng,
-            city: _required(widget.city, 'City'),
-            area: _required(widget.area, 'Area'),
             maxOrdersPerDay: widget.maxOrdersPerDay,
             workingDays: widget.workingDays == null || widget.workingDays!.isEmpty
                 ? const ['Monday', 'Tuesday', 'Wednesday']
