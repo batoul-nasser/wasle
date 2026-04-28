@@ -766,12 +766,12 @@ class AuthService {
       final status = await checkDriverStatus();
       final requestStatus = await getLatestDriverRequestStatus();
       if (status == 'approved') return '/driver-dashboard';
+      if (requestStatus == 'approved') return '/driver-dashboard';
       if (requestStatus == 'pending') return '/waiting-approval';
       if (status == 'rejected' || requestStatus == 'rejected') {
         return '/rejected';
       }
       if (status == 'pending') return '/waiting-approval';
-      if (requestStatus == 'approved') return '/driver-dashboard';
       return '/select-company';
     }
 
@@ -1416,6 +1416,20 @@ class AuthService {
         'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
       },
     );
+
+    // Legacy rows may only match by drivers.id (without profile_id).
+    // Keep the row synchronized so approved drivers immediately appear linked.
+    await _updateDriverRowsWithSchemaFallback(
+      driverId: driverProfileId,
+      values: {
+        'verification_status': 'approved',
+        'company_id': requestCompanyId,
+        'availability_status': 'unavailable',
+        'is_available': false,
+        'is_active_shift': false,
+        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
+      },
+    );
   }
 
   Future<void> rejectDriverRequest({
@@ -1447,6 +1461,18 @@ class AuthService {
 
     await _updateDriverRowsWithSchemaFallback(
       profileId: driverProfileId,
+      values: {
+        'verification_status': 'rejected',
+        'company_id': null,
+        'availability_status': 'unavailable',
+        'is_available': false,
+        'is_active_shift': false,
+        'shift_ended_at': DateTime.now().toUtc().toIso8601String(),
+      },
+    );
+
+    await _updateDriverRowsWithSchemaFallback(
+      driverId: driverProfileId,
       values: {
         'verification_status': 'rejected',
         'company_id': null,
