@@ -432,14 +432,12 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
           (action) =>
               action != 'customer_not_available' ||
               (!isPickupPointDropoff &&
-                  details!.hasBackupPickupPoint &&
-                  (delivery.dropoffType ?? '').trim().toLowerCase() == 'home' &&
-                  !{
-                    'delivered',
-                    'cancelled',
-                    'dropped_at_pickup_point',
-                    'returned_to_store',
-                  }.contains(currentStatus)),
+                  _repository.canMoveToBackupPickup(
+                    currentStatus,
+                    delivery.dropoffType,
+                    details!.hasBackupPickupPoint ? 'configured' : null,
+                  ) &&
+                  details!.hasBackupPickupPoint),
         )
         .toList();
     final actionLayout = _resolveActionLayout(

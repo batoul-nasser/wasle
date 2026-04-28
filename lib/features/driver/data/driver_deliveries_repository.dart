@@ -99,7 +99,7 @@ class DriverDeliveriesRepository {
   static const Map<String, List<String>> _workflowTransitions = {
     'assigned': ['pending_driver_receipt'],
     'pending_driver_receipt': ['driver_received_order'],
-    'driver_received_order': ['in_transit'],
+    'driver_received_order': ['in_transit', 'customer_not_available'],
     'in_transit': ['delivered', 'customer_not_available', 'failed'],
     'failed': ['rescheduled', 'dropped_at_pickup_point', 'returning_to_store'],
     'rescheduled': [],
@@ -142,6 +142,24 @@ class DriverDeliveriesRepository {
   List<String> getAllowedWorkflowActions(String currentOrderStatus) {
     final workflowStatus = workflowStatusFromOrderStatus(currentOrderStatus);
     return List<String>.from(_workflowTransitions[workflowStatus] ?? const []);
+  }
+
+  bool canMoveToBackupPickup(
+    String status,
+    String? dropoffType,
+    String? destinationPickupPointId,
+  ) {
+    final normalizedStatus = status.trim().toLowerCase();
+    final normalizedDropoff = (dropoffType ?? '').trim().toLowerCase();
+    final activeStatuses = {
+      'driver_received_order',
+      'picked_up',
+      'in_transit',
+    };
+    return activeStatuses.contains(normalizedStatus) &&
+        normalizedDropoff == 'home' &&
+        destinationPickupPointId != null &&
+        destinationPickupPointId.trim().isNotEmpty;
   }
 
   String? mapWorkflowActionToOrderStatus(String action) {
@@ -570,21 +588,44 @@ class DriverDeliveriesRepository {
     required String orderId,
   }) async {
     final driverId = await _resolveCurrentDriverId();
+    final latestOrder = await _client
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
     final orderWithAddress = await _loadOrderWithAddress(orderId);
     if (orderWithAddress == null) {
       throw Exception('Order not found');
     }
 
-    final order = orderWithAddress['order']!;
+    final order = latestOrder ?? orderWithAddress['order']!;
     final address = orderWithAddress['address'];
     final currentStatus = (order['status']?.toString() ?? 'created')
         .toLowerCase();
-    if (!{
-      'in_transit',
-      'driver_received_order',
-    }.contains(workflowStatusFromOrderStatus(currentStatus))) {
+    final dropoffType = order['dropoff_type']?.toString();
+    final destinationPickupPointId =
+        order['destination_pickup_point_id']?.toString();
+    final assignmentStatus = order['assignment_status']?.toString();
+    final allowed = canMoveToBackupPickup(
+      currentStatus,
+      dropoffType,
+      destinationPickupPointId,
+    );
+    debugPrint(
+      '[CUSTOMER_UNAVAILABLE_CHECK] tracking=${order['tracking_code']} order=$orderId status=$currentStatus dropoffType=$dropoffType destinationPickup=$destinationPickupPointId assignmentStatus=$assignmentStatus',
+    );
+    debugPrint('[CUSTOMER_UNAVAILABLE_ALLOWED] allowed=$allowed');
+    if (!allowed) {
+      String reason = 'status_not_active';
+      if ((dropoffType ?? '').trim().toLowerCase() != 'home') {
+        reason = 'not_home_delivery';
+      } else if (destinationPickupPointId == null ||
+          destinationPickupPointId.trim().isEmpty) {
+        reason = 'missing_destination_pickup_point';
+      }
+      debugPrint('[CUSTOMER_UNAVAILABLE_REJECT] reason=$reason');
       throw Exception(
-        'Customer unavailable fallback is only allowed while the order is active.',
+        'Customer unavailable fallback is only allowed while the order is active. ($reason)',
       );
     }
 
@@ -623,6 +664,7 @@ class DriverDeliveriesRepository {
       throw Exception('Backup pickup point is missing or inactive.');
     }
     if (backupLat == null || backupLng == null) {
+      debugPrint('[CUSTOMER_UNAVAILABLE_REJECT] reason=missing_backup_coordinates');
       throw Exception('Backup pickup point location is missing.');
     }
 
