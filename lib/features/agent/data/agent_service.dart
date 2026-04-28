@@ -23,9 +23,16 @@ class AgentService {
 
         final orders = await _db
             .from('orders')
-            .select('id, tracking_code, status, created_at')
-            .eq('pickup_point_id', ppId)
-            .eq('status', 'dropped_at_pickup_point');
+            .select(
+              'id, tracking_code, status, created_at, dropoff_type, destination_pickup_point_id',
+            )
+            .eq('destination_pickup_point_id', ppId)
+            .eq('dropoff_type', 'home')
+            .inFilter('status', [
+              'pending_pickup_point_delivery',
+              'dropped_at_pickup_point',
+              'ready_for_customer_pickup',
+            ]);
 
         if ((orders as List).isEmpty) continue;
 
@@ -85,20 +92,6 @@ class AgentService {
       final agentId = _uid;
       if (agentId == null) throw Exception('Agent not logged in');
 
-      final token =
-          Supabase.instance.client.auth.currentSession?.accessToken ?? '';
-      final response = await Supabase.instance.client.functions.invoke(
-        'mark_cash_paid',
-        headers: {'Authorization': 'Bearer $token'},
-        body: {'order_id': orderId},
-      );
-
-      if (response.status != 200) {
-        throw Exception(
-          response.data['error'] ?? 'Failed to mark payment as paid',
-        );
-      }
-
       await _db.from('agent_collections').insert({
         'agent_id': agentId,
         'order_id': orderId,
@@ -114,8 +107,14 @@ class AgentService {
         'order_id': orderId,
         'event_type': 'agent_cash_collected',
         'created_by': agentId,
-        'note': 'Cash collected by agent. Amount: \$$amount'
+        'note': 'Agent collected cash from pickup point. Amount: \$$amount'
             '${note != null && note.isNotEmpty ? '. Note: $note' : ''}',
+        'metadata': {
+          'collected_by_agent_id': agentId,
+          'pickup_point_id': pickupPointId,
+          'amount': amount,
+          'collected_at': DateTime.now().toUtc().toIso8601String(),
+        },
       });
     } catch (e) {
       debugPrint('[AgentService] confirmCollection: $e');

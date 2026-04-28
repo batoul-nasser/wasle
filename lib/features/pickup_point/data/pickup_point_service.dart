@@ -96,6 +96,7 @@ class PickupPointService {
       const paymentEligibleStatuses = [
         'pending_pickup_point_delivery',
         'dropped_at_pickup_point',
+        'ready_for_customer_pickup',
       ];
       final orders = await _db
           .from('orders')
@@ -353,10 +354,74 @@ class PickupPointService {
             ' Amount: \$${amount.toStringAsFixed(2)}'
             '${note != null && note.trim().isNotEmpty ? '. Note: ${note.trim()}' : ''}',
       });
+
+      // If the agent already collected cash, finalize payment now.
+      final agentCollected = await _db
+          .from('order_events')
+          .select('id')
+          .eq('order_id', orderId)
+          .eq('event_type', 'agent_cash_collected')
+          .limit(1)
+          .maybeSingle();
+      if (agentCollected != null) {
+        final token =
+            Supabase.instance.client.auth.currentSession?.accessToken ?? '';
+        final response = await Supabase.instance.client.functions.invoke(
+          'mark_cash_paid',
+          headers: {'Authorization': 'Bearer $token'},
+          body: {'order_id': orderId},
+        );
+        if (response.status != 200) {
+          throw Exception(
+            response.data['error'] ?? 'Failed to finalize payment after agent collection',
+          );
+        }
+      }
     } catch (e) {
       debugPrint('[PickupPointService] confirmCollectedByAgent: $e');
       rethrow;
     }
+  }
+
+  Future<List<Map<String, dynamic>>> getCollectedOrdersHistory({
+    int limit = 30,
+  }) async {
+    final agentEvents = await getRecentAgentCollections(limit: limit);
+    final whishRows = await getRecentRemittedOrders(limit: limit);
+    final merged = <Map<String, dynamic>>[
+      ...agentEvents.map(
+        (row) => {
+          'tracking_code': row['tracking_code'],
+          'amount': row['amount'],
+          'payment_status': row['payment_status'],
+          'event_type': row['event_type'],
+          'created_at': row['created_at'],
+          'collector_name': row['collector_name'],
+          'collector_phone': row['collector_phone'],
+          'source': 'agent_collection',
+        },
+      ),
+      ...whishRows.map(
+        (row) => {
+          'tracking_code': row['tracking_code'],
+          'amount': row['amount'],
+          'payment_status': row['status'] ?? row['payment_status'],
+          'event_type': 'remittance_sent',
+          'created_at': row['sent_at'],
+          'collector_name': '',
+          'collector_phone': '',
+          'source': 'whish_remittance',
+        },
+      ),
+    ];
+    merged.sort((a, b) {
+      final ad = DateTime.tryParse(a['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      final bd = DateTime.tryParse(b['created_at']?.toString() ?? '') ??
+          DateTime.fromMillisecondsSinceEpoch(0);
+      return bd.compareTo(ad);
+    });
+    return merged.take(limit).toList();
   }
 
   Future<void> confirmSentToWasle({

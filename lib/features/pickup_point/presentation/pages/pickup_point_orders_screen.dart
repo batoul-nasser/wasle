@@ -15,6 +15,7 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
   final _service = PickupPointService();
 
   List<Map<String, dynamic>> _orders = [];
+  List<Map<String, dynamic>> _history = [];
   Map<String, dynamic>? _pickupPoint;
   bool _loading = true;
 
@@ -30,10 +31,12 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
     setState(() => _loading = true);
     final pickupPoint = await _service.getMyPickupPoint();
     final orders = await _service.getPendingCashOrders();
+    final history = await _service.getCollectedOrdersHistory();
     if (!mounted) return;
     setState(() {
       _pickupPoint = pickupPoint;
       _orders = orders;
+      _history = history;
       _loading = false;
     });
   }
@@ -144,109 +147,176 @@ class _PickupPointOrdersScreenState extends State<PickupPointOrdersScreen> {
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
-          : _orders.isEmpty
-          ? Center(
-              child: Text(
-                _showsAgentCollection
-                    ? 'No orders are currently waiting for agent collection.'
-                    : 'No orders waiting for cash payment.',
-                style: const TextStyle(color: Colors.black54),
-              ),
-            )
           : RefreshIndicator(
               onRefresh: _load,
-              child: ListView.separated(
+              child: ListView(
                 padding: const EdgeInsets.all(16),
-                itemCount: _orders.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (context, i) {
-                  final order = _orders[i];
-                  final payment = order['payment'] as Map<String, dynamic>;
-                  final amount = (payment['amount'] as num).toDouble();
-                  final tracking = order['tracking_code']?.toString() ?? '-';
-
-                  return Container(
-                    padding: const EdgeInsets.all(16),
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(16),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x10000000),
-                          blurRadius: 8,
-                          offset: Offset(0, 3),
-                        ),
-                      ],
-                    ),
-                    child: Row(
-                      children: [
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_orders.isEmpty)
+                    Text(
+                      _showsAgentCollection
+                          ? 'No orders are currently waiting for agent collection.'
+                          : 'No orders waiting for cash payment.',
+                      style: const TextStyle(color: Colors.black54),
+                    )
+                  else
+                    ..._orders.map((order) {
+                      final payment = order['payment'] as Map<String, dynamic>;
+                      final amount = (payment['amount'] as num).toDouble();
+                      final tracking = order['tracking_code']?.toString() ?? '-';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: _buildActiveCard(order, payment, amount, tracking),
+                      );
+                    }),
+                  const SizedBox(height: 20),
+                  const Text(
+                    'Collected Orders History',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  if (_history.isEmpty)
+                    const Text(
+                      'No collected history yet.',
+                      style: TextStyle(color: Colors.black54),
+                    )
+                  else
+                    ..._history.map((row) {
+                      final tracking = row['tracking_code']?.toString() ?? '-';
+                      final amount = (row['amount'] as num?)?.toDouble() ?? 0.0;
+                      final status = row['payment_status']?.toString() ?? '';
+                      final source = row['source']?.toString() ?? '';
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                          child: Row(
                             children: [
-                              Text(
-                                tracking,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 15,
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      tracking,
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                      '\$${amount.toStringAsFixed(2)} - $status',
+                                      style: const TextStyle(
+                                        color: Color(0xFF166534),
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
-                              const SizedBox(height: 4),
                               Text(
-                                _showsAgentCollection
-                                    ? 'Cash waiting for agent collection: \$${amount.toStringAsFixed(2)}'
-                                    : 'Cash to send Wasle: \$${amount.toStringAsFixed(2)}',
+                                source == 'agent_collection'
+                                    ? 'Agent'
+                                    : 'Whish',
                                 style: const TextStyle(
-                                  color: Color(0xFFD4800A),
-                                  fontWeight: FontWeight.w600,
+                                  color: Colors.black54,
+                                  fontSize: 12,
                                 ),
                               ),
                             ],
                           ),
                         ),
-                        _showsAgentCollection
-                            ? OutlinedButton.icon(
-                                onPressed: () => _confirmAgentCollected(order),
-                                icon: const Icon(
-                                  Icons.handshake_outlined,
-                                  size: 16,
-                                ),
-                                label: const Text('Cash ready for agent'),
-                                style: OutlinedButton.styleFrom(
-                                  foregroundColor: Colors.green,
-                                  side: const BorderSide(color: Colors.green),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                              )
-                            : ElevatedButton(
-                                onPressed: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => SendToWasleScreen(
-                                      orderId: order['id'].toString(),
-                                      paymentId: payment['id'].toString(),
-                                      amount: amount,
-                                      trackingCode: tracking,
-                                    ),
-                                  ),
-                                ).then((_) => _load()),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: const Color(0xFF2563EB),
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                ),
-                                child: const Text('Send to Wasle'),
-                              ),
-                      ],
-                    ),
-                  );
-                },
+                      );
+                    }),
+                ],
               ),
             ),
+    );
+  }
+
+  Widget _buildActiveCard(
+    Map<String, dynamic> order,
+    Map<String, dynamic> payment,
+    double amount,
+    String tracking,
+  ) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x10000000),
+            blurRadius: 8,
+            offset: Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  tracking,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 15,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  _showsAgentCollection
+                      ? 'Cash waiting for agent collection: \$${amount.toStringAsFixed(2)}'
+                      : 'Cash to send Wasle: \$${amount.toStringAsFixed(2)}',
+                  style: const TextStyle(
+                    color: Color(0xFFD4800A),
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          _showsAgentCollection
+              ? OutlinedButton.icon(
+                  onPressed: () => _confirmAgentCollected(order),
+                  icon: const Icon(Icons.handshake_outlined, size: 16),
+                  label: const Text('Cash ready for agent'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.green,
+                    side: const BorderSide(color: Colors.green),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                )
+              : ElevatedButton(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => SendToWasleScreen(
+                        orderId: order['id'].toString(),
+                        paymentId: payment['id'].toString(),
+                        amount: amount,
+                        trackingCode: tracking,
+                      ),
+                    ),
+                  ).then((_) => _load()),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: const Color(0xFF2563EB),
+                    foregroundColor: Colors.white,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                  ),
+                  child: const Text('Send to Wasle'),
+                ),
+        ],
+      ),
     );
   }
 }
