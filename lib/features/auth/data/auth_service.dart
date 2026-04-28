@@ -339,7 +339,16 @@ class AuthService {
         .eq('profile_id', profileId)
         .maybeSingle();
 
-    return response;
+    if (response != null) return response;
+
+    // Legacy compatibility: some environments used drivers.id == profile_id.
+    final fallback = await _client
+        .from('drivers')
+        .select()
+        .eq('id', profileId)
+        .maybeSingle();
+
+    return fallback;
   }
 
   Future<Map<String, dynamic>?> getCompanyById(String companyId) async {

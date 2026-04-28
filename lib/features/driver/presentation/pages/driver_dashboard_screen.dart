@@ -35,6 +35,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   Map<String, dynamic>? driverData;
   Map<String, dynamic>? companyData;
   Map<String, dynamic>? locationData;
+  String? approvedRequestCompanyId;
 
   @override
   void initState() {
@@ -58,19 +59,26 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
       final profile = await _authService.getProfileById(user.id);
       final driver = await _authService.getDriverByProfileId(user.id);
       final requestStatus = await _authService.getLatestDriverRequestStatus();
+      final requestSummary = await _authService.getLatestDriverRequestSummary();
 
       Map<String, dynamic>? company;
       Map<String, dynamic>? location;
 
       final driverId = driver?['id']?.toString();
       final companyId = driver?['company_id']?.toString();
+      final approvedCompanyFromRequest = requestStatus == 'approved'
+          ? _stringOrNull(requestSummary, 'company_id')
+          : null;
+      final effectiveCompanyId = (companyId != null && companyId.isNotEmpty)
+          ? companyId
+          : approvedCompanyFromRequest;
 
       if (driverId != null && driverId.isNotEmpty) {
         location = await _authService.getDriverLocationByDriverId(driverId);
       }
 
-      if (companyId != null && companyId.isNotEmpty) {
-        company = await _authService.getCompanyById(companyId);
+      if (effectiveCompanyId != null && effectiveCompanyId.isNotEmpty) {
+        company = await _authService.getCompanyById(effectiveCompanyId);
       }
 
       try {
@@ -92,6 +100,7 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
         companyData = company;
         locationData = location;
         latestRequestStatus = requestStatus;
+        approvedRequestCompanyId = approvedCompanyFromRequest;
         isLoading = false;
         errorText = null;
       });
@@ -104,6 +113,8 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
           'driver_row_id': driverId,
           'profile_id': driver?['profile_id']?.toString(),
           'company_id': companyId,
+          'effective_company_id': effectiveCompanyId,
+          'approved_request_company_id': approvedCompanyFromRequest,
           'verification_status': driver?['verification_status']?.toString(),
           'availability_status': driver?['availability_status']?.toString(),
           'can_start_working': _canStartWorking,
@@ -123,13 +134,21 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
   }
 
   bool get _hasLinkedCompany {
-    final companyId = driverData?['company_id']?.toString();
-    return companyId != null && companyId.isNotEmpty;
+    final driverCompanyId = driverData?['company_id']?.toString();
+    if (driverCompanyId != null && driverCompanyId.isNotEmpty) return true;
+
+    final requestCompanyId = approvedRequestCompanyId?.trim();
+    return requestCompanyId != null && requestCompanyId.isNotEmpty;
   }
 
-  bool get _isDriverApproved =>
-      driverData?['verification_status']?.toString().trim().toLowerCase() ==
-      'approved';
+  bool get _isDriverApproved {
+    final verificationStatus = driverData?['verification_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    if (verificationStatus == 'approved') return true;
+    return latestRequestStatus?.trim().toLowerCase() == 'approved';
+  }
 
   bool get _hasPendingCompanyRequest =>
       latestRequestStatus?.trim().toLowerCase() == 'pending';
@@ -146,6 +165,13 @@ class _DriverDashboardScreenState extends State<DriverDashboardScreen> {
       'available';
 
   bool get _isActiveShift => driverData?['is_active_shift'] == true;
+
+  String? _stringOrNull(Map<String, dynamic>? row, String key) {
+    final value = row?[key];
+    if (value == null) return null;
+    final text = value.toString().trim();
+    return text.isEmpty ? null : text;
+  }
 
   String get _companyLinkStateLabel {
     if (_hasLinkedCompany && _isDriverApproved) return 'Approved';

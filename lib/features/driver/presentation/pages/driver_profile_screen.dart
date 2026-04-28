@@ -46,10 +46,19 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
       final latestRequest = await _authService.getLatestDriverRequestSummary();
 
       Map<String, dynamic>? company;
-      final companyId = driver?['company_id'];
+      final companyId = driver?['company_id']?.toString();
+      final requestStatus = latestRequest?['request_status']
+          ?.toString()
+          .trim()
+          .toLowerCase();
+      final requestCompanyId = latestRequest?['company_id']?.toString();
+      final effectiveCompanyId =
+          (companyId != null && companyId.isNotEmpty)
+              ? companyId
+              : (requestStatus == 'approved' ? requestCompanyId : null);
 
-      if (companyId != null) {
-        company = await _authService.getCompanyById(companyId.toString());
+      if (effectiveCompanyId != null && effectiveCompanyId.isNotEmpty) {
+        company = await _authService.getCompanyById(effectiveCompanyId);
       }
 
       if (!mounted) return;
@@ -181,11 +190,22 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
     final fullName = profileData?['full_name']?.toString() ?? 'No Name';
     final phone = profileData?['phone'];
     final role = profileData?['role'];
-    final verification =
-        driverData?['verification_status'] ??
-        latestRequestData?['request_status'];
-    final company = companyData?['name'] ?? 'Not linked yet';
+    final driverVerification = driverData?['verification_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
     final latestRequestStatus = latestRequestData?['request_status']
+        ?.toString()
+        .trim()
+        .toLowerCase();
+    final verification = driverVerification == 'approved'
+        ? 'approved'
+        : (latestRequestStatus == 'approved'
+              ? 'approved'
+              : (driverData?['verification_status'] ??
+                    latestRequestData?['request_status']));
+    final company = companyData?['name'] ?? 'Not linked yet';
+    final latestRequestStatusText = latestRequestData?['request_status']
         ?.toString();
     final latestRequestCompany = latestRequestData?['company_name']?.toString();
 
@@ -289,8 +309,8 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                     icon: Icons.hourglass_top_rounded,
                     label: 'Latest Company Request',
                     value: latestRequestCompany == null
-                        ? latestRequestStatus
-                        : '$latestRequestCompany (${latestRequestStatus ?? '-'})',
+                        ? latestRequestStatusText
+                        : '$latestRequestCompany (${latestRequestStatusText ?? '-'})',
                   ),
                 ],
                 const SizedBox(height: AppSpacing.xl),
