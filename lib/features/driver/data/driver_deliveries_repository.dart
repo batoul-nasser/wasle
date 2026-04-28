@@ -245,6 +245,7 @@ class DriverDeliveriesRepository {
         .from('orders')
         .select(
           'pickup_point_id, destination_pickup_point_id, '
+          'dropoff_type, customer_address_text, '
           'customer_lat, customer_lng, '
           'dropoff_location_lat, dropoff_location_lng',
         )
@@ -259,6 +260,8 @@ class DriverDeliveriesRepository {
         false);
 
     final pickupId = pickupPointId?['pickup_point_id']?.toString();
+    final destinationPickupId =
+        pickupPointId?['destination_pickup_point_id']?.toString();
     if (pickupId != null && pickupId.isNotEmpty) {
       final pickupRows = await _client
           .from('pickup_points')
@@ -268,6 +271,14 @@ class DriverDeliveriesRepository {
       final pickupList = List<Map<String, dynamic>>.from(pickupRows);
       final pickup = pickupList.isEmpty ? null : pickupList.first;
       openingHours = pickup?['opening_hours']?.toString();
+    }
+    Map<String, dynamic>? destinationPickup;
+    if (destinationPickupId != null && destinationPickupId.isNotEmpty) {
+      destinationPickup = await _client
+          .from('pickup_points')
+          .select('id, name, address_text, lat, lng')
+          .eq('id', destinationPickupId)
+          .maybeSingle();
     }
 
     final eventRows = await _client
@@ -333,6 +344,16 @@ class DriverDeliveriesRepository {
           _toDouble(pickupPointId?['dropoff_location_lng']) ??
           _toDouble(pickupPointId?['customer_lng']),
       hasBackupPickupPoint: hasBackupPickupPoint,
+      backupPickupPointName: destinationPickup?['name']?.toString(),
+      backupPickupPointAddress: destinationPickup?['address_text']?.toString(),
+      backupPickupPointLat: _toDouble(destinationPickup?['lat']),
+      backupPickupPointLng: _toDouble(destinationPickup?['lng']),
+      homeDropoffAddress: _firstNonEmpty([
+        orderAddress?['dropoff_address_text'],
+        pickupPointId?['customer_address_text'],
+      ]),
+      homeDropoffLat: _toDouble(pickupPointId?['customer_lat']),
+      homeDropoffLng: _toDouble(pickupPointId?['customer_lng']),
       pickupOpeningHours: openingHours,
       events: events,
     );
@@ -381,14 +402,15 @@ class DriverDeliveriesRepository {
     required String orderId,
     String? pickupLabel,
   }) async {
+    await _ensureCanAcceptOrder(orderId: orderId);
     final trimmedLabel = pickupLabel?.trim();
     final note = trimmedLabel == null || trimmedLabel.isEmpty
-        ? null
-        : 'Picked up from $trimmedLabel';
+        ? 'Driver accepted the order.'
+        : 'Driver accepted the order. Picked up from $trimmedLabel';
 
     await updateOrderStatus(
       orderId: orderId,
-      newStatus: 'picked_up',
+      newStatus: 'driver_received_order',
       note: note,
     );
   }
@@ -498,18 +520,30 @@ class DriverDeliveriesRepository {
     final pickupPointAddress = backup['address_text']?.toString();
     final now = DateTime.now().toUtc().toIso8601String();
     const newStatus = 'pending_pickup_point_delivery';
-
-    await _client
-        .from('orders')
-        .update({
-          'status': newStatus,
-          'dropoff_type': 'home',
-          'dropoff_location_lat': backupLat,
-          'dropoff_location_lng': backupLng,
-          'updated_at': now,
-        })
-        .eq('id', orderId)
-        .eq('status', currentStatus);
+    debugPrint(
+      '[OPTION2_REDIRECT_ATTEMPT] order=$orderId status=$currentStatus '
+      'driverUser=${_client.auth.currentUser?.id} '
+      'destinationPickup=$configuredBackupId backupLat=$backupLat backupLng=$backupLng',
+    );
+    try {
+      await _client
+          .from('orders')
+          .update({
+            'status': newStatus,
+            'dropoff_type': 'home',
+            'dropoff_location_lat': backupLat,
+            'dropoff_location_lng': backupLng,
+            'updated_at': now,
+          })
+          .eq('id', orderId)
+          .eq('status', currentStatus);
+    } on PostgrestException catch (e) {
+      debugPrint(
+        '[OPTION2_REDIRECT_RLS_ERROR] code=${e.code} message=${e.message} '
+        'details=${e.details} hint=${e.hint}',
+      );
+      rethrow;
+    }
 
     final latestRows = await _client
         .from('orders')
@@ -911,6 +945,79 @@ class DriverDeliveriesRepository {
   }
 
   double _degreesToRadians(double degrees) => degrees * (math.pi / 180.0);
+
+  Future<void> _ensureCanAcceptOrder({required String orderId}) async {
+    final driverId = await _resolveCurrentDriverId();
+    final orderRows = await _client
+        .from('orders')
+        .select('id, item_count, estimated_weight, estimated_volume, status')
+        .eq('id', orderId)
+        .limit(1);
+    final orderList = List<Map<String, dynamic>>.from(orderRows);
+    if (orderList.isEmpty) throw Exception('Order not found');
+    final order = orderList.first;
+
+    final driverRows = await _client
+        .from('drivers')
+        .select('capacity_item_count, capacity_weight, capacity_volume')
+        .eq('id', driverId)
+        .limit(1);
+    final driverList = List<Map<String, dynamic>>.from(driverRows);
+    if (driverList.isEmpty) throw Exception('Driver profile not found');
+    final driver = driverList.first;
+
+    final assignmentRows = await _client
+        .from('assignments')
+        .select('order_id, completed_at')
+        .eq('driver_id', driverId)
+        .isFilter('completed_at', null);
+    final activeAssignments = List<Map<String, dynamic>>.from(assignmentRows);
+    final activeOrderIds = activeAssignments
+        .map((row) => row['order_id']?.toString())
+        .whereType<String>()
+        .where((id) => id.isNotEmpty && id != orderId)
+        .toSet()
+        .toList();
+
+    var currentItems = 0;
+    var currentWeight = 0.0;
+    var currentVolume = 0.0;
+    if (activeOrderIds.isNotEmpty) {
+      final activeOrdersRows = await _client
+          .from('orders')
+          .select('id, status, item_count, estimated_weight, estimated_volume')
+          .inFilter('id', activeOrderIds);
+      final activeOrders = List<Map<String, dynamic>>.from(activeOrdersRows);
+      const inactiveStatuses = {
+        'delivered',
+        'cancelled',
+        'dropped_at_pickup_point',
+        'returned_to_store',
+        'returning_to_store',
+      };
+      for (final active in activeOrders) {
+        final status = (active['status']?.toString() ?? '').toLowerCase();
+        if (inactiveStatuses.contains(status)) continue;
+        currentItems += _toInt(active['item_count']) ?? 1;
+        currentWeight += _toDouble(active['estimated_weight']) ?? 0.0;
+        currentVolume += _toDouble(active['estimated_volume']) ?? 0.0;
+      }
+    }
+
+    final orderItems = _toInt(order['item_count']) ?? 1;
+    final orderWeight = _toDouble(order['estimated_weight']) ?? 0.0;
+    final orderVolume = _toDouble(order['estimated_volume']) ?? 0.0;
+    final capItems = _toInt(driver['capacity_item_count']) ?? 0;
+    final capWeight = _toDouble(driver['capacity_weight']) ?? 0.0;
+    final capVolume = _toDouble(driver['capacity_volume']) ?? 0.0;
+
+    final exceeds = (currentItems + orderItems > capItems) ||
+        (currentWeight + orderWeight > capWeight) ||
+        (currentVolume + orderVolume > capVolume);
+    if (exceeds) {
+      throw Exception('Cannot accept this order. Driver capacity would be exceeded.');
+    }
+  }
 
   Future<String> _resolveCurrentDriverId() async {
     final user = currentUser;

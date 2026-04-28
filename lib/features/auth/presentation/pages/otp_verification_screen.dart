@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'package:wasle/core/ui/ui.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
@@ -222,11 +223,31 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
         _errorText = null;
       });
 
-      final response = await _authService.verifyOtp(
-        email: normalizedEmail,
-        token: otp,
-        mode: widget.mode,
-      );
+      AuthResponse response;
+      try {
+        response = await _authService.verifyOtp(
+          email: normalizedEmail,
+          token: otp,
+          mode: widget.mode,
+        );
+      } catch (error, stackTrace) {
+        AuthErrorMapper.log('otp_verify_failed', error, stackTrace);
+        setState(() {
+          _errorText = 'Invalid or expired OTP code.';
+          if (error.toString().toLowerCase().contains('expired')) {
+            _secondsRemaining = 0;
+            _timer?.cancel();
+          }
+        });
+        return;
+      }
+
+      if (widget.mode == AuthFlowMode.merchantSignup) {
+        debugPrint('[MERCHANT_SIGNUP] OTP verified');
+        debugPrint(
+          '[MERCHANT_SIGNUP] currentUser=${Supabase.instance.client.auth.currentUser?.id}',
+        );
+      }
       final userId = response.user?.id ?? _authService.currentUser?.id;
 
       switch (widget.mode) {
@@ -295,22 +316,36 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
           return;
 
         case AuthFlowMode.merchantSignup:
+          if (Supabase.instance.client.auth.currentUser == null) {
+            setState(() {
+              _errorText = 'OTP verified but session was not created.';
+            });
+            return;
+          }
           if (userId == null) {
             throw Exception('User session not found after OTP verification');
           }
-          await _authService.setCurrentUserPassword(
-            _required(widget.password, 'Password'),
-          );
-          await _authService.createMerchantProfile(
-            userId: userId,
-            fullName: _required(widget.fullName, 'Full name'),
-            phone: _required(widget.phone, 'Phone'),
-            businessName: _required(widget.businessName, 'Business name'),
-            branchName: _required(widget.branchName, 'Branch name'),
-            addressText: _required(widget.addressText, 'Branch address'),
-            branchLat: _requiredDouble(widget.branchLat, 'Branch latitude'),
-            branchLng: _requiredDouble(widget.branchLng, 'Branch longitude'),
-          );
+          try {
+            await _authService.setCurrentUserPassword(
+              _required(widget.password, 'Password'),
+            );
+            await _authService.createMerchantProfile(
+              userId: userId,
+              fullName: _required(widget.fullName, 'Full name'),
+              phone: _required(widget.phone, 'Phone'),
+              businessName: _required(widget.businessName, 'Business name'),
+              branchName: _required(widget.branchName, 'Branch name'),
+              addressText: _required(widget.addressText, 'Branch address'),
+              branchLat: _requiredDouble(widget.branchLat, 'Branch latitude'),
+              branchLng: _requiredDouble(widget.branchLng, 'Branch longitude'),
+            );
+          } catch (error, stackTrace) {
+            AuthErrorMapper.log('merchant_account_setup_failed', error, stackTrace);
+            setState(() {
+              _errorText = 'OTP verified, but merchant account setup failed.';
+            });
+            return;
+          }
           _goTo('/merchant-dashboard');
           return;
 

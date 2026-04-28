@@ -4,6 +4,7 @@ import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:wasle/core/domain/delivery_constraints.dart';
+import 'package:uuid/uuid.dart';
 
 enum AuthFlowMode {
   login,
@@ -16,6 +17,7 @@ enum AuthFlowMode {
 
 class AuthService {
   final SupabaseClient _client = Supabase.instance.client;
+  static const Uuid _uuid = Uuid();
 
   static const Set<String> _companyAssignableStatuses = {
     'created',
@@ -1064,20 +1066,30 @@ class AuthService {
         existingMerchantUser['merchant_id'] != null) {
       merchantId = existingMerchantUser['merchant_id'].toString();
     } else {
-      final business = await _client
-          .from('merchant_businesses')
-          .insert({'name': businessName})
-          .select('id')
-          .single();
+      merchantId = _uuid.v4();
+      debugPrint(
+        '[MERCHANT_SIGNUP] creating merchant_business '
+        'businessName=$businessName userId=$userId',
+      );
+      try {
+        await _client.from('merchant_businesses').insert({
+          'id': merchantId,
+          'name': businessName,
+        });
 
-      merchantId = business['id'] as String;
-
-      await _client.from('merchant_users').insert({
-        'profile_id': userId,
-        'merchant_id': merchantId,
-        'role': 'owner',
-        'business_name': businessName,
-      });
+        await _client.from('merchant_users').insert({
+          'profile_id': userId,
+          'merchant_id': merchantId,
+          'role': 'owner',
+          'business_name': businessName,
+        });
+      } on PostgrestException catch (e) {
+        debugPrint(
+          '[MERCHANT_SIGNUP_RLS_ERROR] code=${e.code} message=${e.message} '
+          'details=${e.details} hint=${e.hint}',
+        );
+        rethrow;
+      }
     }
 
     final existingBranch = await _client

@@ -447,6 +447,9 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
         delivery.itemCount != null ||
         delivery.estimatedWeightKg != null ||
         delivery.estimatedVolumeCm3 != null;
+    final isHomeDropoff = (delivery.dropoffType ?? '').toLowerCase() == 'home';
+    final option2Active = currentStatus == 'pending_pickup_point_delivery' ||
+        currentStatus == 'dropped_at_pickup_point';
 
     return Scaffold(
       appBar: AppBar(title: const Text('Order Details')),
@@ -501,14 +504,73 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
             const SizedBox(height: AppSpacing.md),
             InfoCard(
               title: 'Dropoff Information',
-              subtitle: (currentStatus == 'pending_pickup_point_delivery' ||
-                      currentStatus == 'dropped_at_pickup_point')
+              subtitle: option2Active
                   ? 'Backup Pickup Point / Option 2'
                   : (delivery.dropoffName ?? 'Dropoff location'),
               leading: _iconBox(Icons.flag_outlined),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  if (isHomeDropoff && details!.hasBackupPickupPoint) ...[
+                    Text('Option 1 - Home Delivery', style: AppTextStyles.body),
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      details!.homeDropoffAddress ?? 'Not provided',
+                      style: AppTextStyles.bodyMuted,
+                    ),
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      _coordinateLabel(
+                        details!.homeDropoffLat,
+                        details!.homeDropoffLng,
+                      ),
+                      style: AppTextStyles.bodyMuted,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    _mapButton(
+                      actionLabel: 'Open Home Map',
+                      missingLabel: 'Home location unavailable',
+                      lat: details!.homeDropoffLat,
+                      lng: details!.homeDropoffLng,
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    Text('Option 2 - Backup Pickup Point', style: AppTextStyles.body),
+                    if (option2Active) ...[
+                      const SizedBox(height: AppSpacing.xxs),
+                      const Text('Active Destination: Backup Pickup Point'),
+                    ],
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      details!.backupPickupPointName ?? '-',
+                      style: AppTextStyles.bodyMuted,
+                    ),
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      details!.backupPickupPointAddress ?? '-',
+                      style: AppTextStyles.bodyMuted,
+                    ),
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      _coordinateLabel(
+                        details!.backupPickupPointLat,
+                        details!.backupPickupPointLng,
+                      ),
+                      style: AppTextStyles.bodyMuted,
+                    ),
+                    const SizedBox(height: AppSpacing.xs),
+                    _mapButton(
+                      actionLabel: 'Open Backup Pickup Map',
+                      missingLabel: 'Backup pickup location unavailable',
+                      lat: details!.backupPickupPointLat,
+                      lng: details!.backupPickupPointLng,
+                    ),
+                    const SizedBox(height: AppSpacing.xxs),
+                    Text(
+                      'Used if the customer is not available at home.',
+                      style: AppTextStyles.caption,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                  ],
                   Text(
                     details!.dropoffAddress ??
                         delivery.dropoffAddress ??
@@ -520,8 +582,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                     _coordinateLabel(details!.dropoffLat, details!.dropoffLng),
                     style: AppTextStyles.bodyMuted,
                   ),
-                  if (currentStatus == 'pending_pickup_point_delivery' ||
-                      currentStatus == 'dropped_at_pickup_point') ...[
+                  if (option2Active) ...[
                     const SizedBox(height: AppSpacing.xs),
                     Text(
                       'Customer was not available. Deliver this order to the backup pickup point.',
@@ -595,15 +656,6 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                 ),
               ),
             ],
-            if (details!.orderNotes != null &&
-                details!.orderNotes!.isNotEmpty) ...[
-              const SizedBox(height: AppSpacing.md),
-              InfoCard(
-                title: 'Order Notes',
-                leading: _iconBox(Icons.notes_outlined),
-                child: Text(details!.orderNotes!, style: AppTextStyles.body),
-              ),
-            ],
             const SizedBox(height: AppSpacing.md),
             InfoCard(
               title: 'Order Timeline',
@@ -637,7 +689,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                   const SizedBox(height: AppSpacing.md),
                   if (actionLayout.primaryAction != null)
                     PrimaryButton(
-                      label: _statusLabel(actionLayout.primaryAction!),
+                      label: _actionLabel(actionLayout.primaryAction!),
                       icon: _actionIcon(actionLayout.primaryAction!),
                       isLoading: _isBusy,
                       onPressed: _isBusy
@@ -653,7 +705,7 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
                       runSpacing: AppSpacing.xs,
                       children: actionLayout.secondaryActions.map((action) {
                         return _StatusActionButton(
-                          label: _statusLabel(action),
+                          label: _actionLabel(action),
                           enabled: !_isBusy,
                           tone: _toneForStatus(action),
                           onPressed: () => _onTapWorkflowAction(action),
@@ -778,6 +830,16 @@ class _OrderDetailsScreenState extends State<OrderDetailsScreen> {
       default:
         return Icons.play_arrow_rounded;
     }
+  }
+
+  String _actionLabel(String action) {
+    if (action == 'driver_received_order') {
+      return 'Accept Order';
+    }
+    if (action == 'customer_not_available') {
+      return 'Customer Not Available';
+    }
+    return _statusLabel(action);
   }
 
   _ActionTone _toneForStatus(String status) {

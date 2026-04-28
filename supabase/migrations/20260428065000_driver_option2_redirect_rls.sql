@@ -30,7 +30,10 @@ using (
     from public.assignments a
     join public.drivers d on d.id = a.driver_id
     where a.order_id = orders.id
-      and d.profile_id = auth.uid()
+      and (
+        d.profile_id = auth.uid()
+        or d.id = auth.uid()
+      )
   )
 )
 with check (
@@ -39,7 +42,10 @@ with check (
     from public.assignments a
     join public.drivers d on d.id = a.driver_id
     where a.order_id = orders.id
-      and d.profile_id = auth.uid()
+      and (
+        d.profile_id = auth.uid()
+        or d.id = auth.uid()
+      )
   )
   and status::text = any (
     array[
@@ -70,7 +76,10 @@ using (
     from public.assignments a
     join public.drivers d on d.id = a.driver_id
     where a.order_id = order_events.order_id
-      and d.profile_id = auth.uid()
+      and (
+        d.profile_id = auth.uid()
+        or d.id = auth.uid()
+      )
   )
 );
 
@@ -86,6 +95,9 @@ with check (
     from public.assignments a
     join public.drivers d on d.id = a.driver_id
     where a.order_id = order_events.order_id
-      and d.profile_id = auth.uid()
+      and (
+        d.profile_id = auth.uid()
+        or d.id = auth.uid()
+      )
   )
 );
