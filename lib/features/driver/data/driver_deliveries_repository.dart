@@ -557,6 +557,20 @@ class DriverDeliveriesRepository {
           })
           .eq('id', orderId)
           .eq('status', currentStatus);
+    } on PostgrestException catch (e) {
+      debugPrint(
+        '[OPTION2_REDIRECT_ORDERS_UPDATE_ERROR] code=${e.code} message=${e.message} '
+        'details=${e.details} hint=${e.hint}',
+      );
+      if (e.code == '42501') {
+        throw Exception(
+          'Permission error on orders update (42501). Driver is not allowed to move this assigned order to pending_pickup_point_delivery.',
+        );
+      }
+      rethrow;
+    }
+
+    try {
       await _client.from('order_addresses').upsert(
         {
           'order_id': orderId,
@@ -568,9 +582,14 @@ class DriverDeliveriesRepository {
       );
     } on PostgrestException catch (e) {
       debugPrint(
-        '[OPTION2_REDIRECT_RLS_ERROR] code=${e.code} message=${e.message} '
+        '[OPTION2_REDIRECT_ORDER_ADDRESSES_SYNC_ERROR] code=${e.code} message=${e.message} '
         'details=${e.details} hint=${e.hint}',
       );
+      if (e.code == '42501') {
+        throw Exception(
+          'Order moved, but order_addresses sync failed (42501). Apply order_addresses RLS migration.',
+        );
+      }
       rethrow;
     }
 
