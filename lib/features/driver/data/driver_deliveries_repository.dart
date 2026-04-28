@@ -244,7 +244,7 @@ class DriverDeliveriesRepository {
         .from('orders')
         .select(
           'pickup_point_id, destination_pickup_point_id, '
-          'customer_lat, customer_lng, dropoff_lat, dropoff_lng, '
+          'customer_lat, customer_lng, '
           'dropoff_location_lat, dropoff_location_lng',
         )
         .eq('id', orderId)
@@ -322,13 +322,11 @@ class DriverDeliveriesRepository {
           _toDouble(orderAddress?['dropoff_lat']) ??
           delivery.dropoffLat ??
           _toDouble(pickupPointId?['dropoff_location_lat']) ??
-          _toDouble(pickupPointId?['dropoff_lat']) ??
           _toDouble(pickupPointId?['customer_lat']),
       dropoffLng:
           _toDouble(orderAddress?['dropoff_lng']) ??
           delivery.dropoffLng ??
           _toDouble(pickupPointId?['dropoff_location_lng']) ??
-          _toDouble(pickupPointId?['dropoff_lng']) ??
           _toDouble(pickupPointId?['customer_lng']),
       pickupOpeningHours: openingHours,
       events: events,
@@ -465,12 +463,10 @@ class DriverDeliveriesRepository {
     var customerLat =
         _toDouble(address?['dropoff_lat']) ??
         _toDouble(order['dropoff_location_lat']) ??
-        _toDouble(order['dropoff_lat']) ??
         _toDouble(order['customer_lat']);
     var customerLng =
         _toDouble(address?['dropoff_lng']) ??
         _toDouble(order['dropoff_location_lng']) ??
-        _toDouble(order['dropoff_lng']) ??
         _toDouble(order['customer_lng']);
     final customerAddress = _firstNonEmpty([
       address?['dropoff_address_text'],
@@ -1180,20 +1176,20 @@ class DriverDeliveriesRepository {
         isPickupPointDropoff
             ? (pickup?['lat'] ??
                   orderAddress?['dropoff_lat'] ??
-                  order['dropoff_lat'] ??
+                  order['dropoff_location_lat'] ??
                   order['customer_lat'])
             : (orderAddress?['dropoff_lat'] ??
-                  order['dropoff_lat'] ??
+                  order['dropoff_location_lat'] ??
                   order['customer_lat']),
       );
       double? dropoffLng = _toDouble(
         isPickupPointDropoff
             ? (pickup?['lng'] ??
                   orderAddress?['dropoff_lng'] ??
-                  order['dropoff_lng'] ??
+                  order['dropoff_location_lng'] ??
                   order['customer_lng'])
             : (orderAddress?['dropoff_lng'] ??
-                  order['dropoff_lng'] ??
+                  order['dropoff_location_lng'] ??
                   order['customer_lng']),
       );
       result.add(

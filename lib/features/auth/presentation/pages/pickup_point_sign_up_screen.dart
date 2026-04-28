@@ -1,7 +1,12 @@
 import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:google_maps_flutter/google_maps_flutter.dart' as gmaps;
 import 'package:image_picker/image_picker.dart';
+import 'package:latlong2/latlong.dart' as latlong;
 import 'package:wasle/core/ui/ui.dart';
 import 'package:wasle/features/auth/data/auth_service.dart';
 import 'package:wasle/features/auth/presentation/pages/otp_verification_screen.dart';
@@ -38,8 +43,6 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
   final TextEditingController confirmAddressController = TextEditingController();
   final TextEditingController cityController = TextEditingController();
   final TextEditingController areaController = TextEditingController();
-  final TextEditingController latitudeController = TextEditingController();
-  final TextEditingController longitudeController = TextEditingController();
   final TextEditingController passwordController = TextEditingController();
   final TextEditingController confirmPasswordController = TextEditingController();
   final TextEditingController commissionValueController = TextEditingController();
@@ -79,6 +82,35 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
 
   bool isLoading = false;
   String? errorText;
+  double? _selectedLatitude;
+  double? _selectedLongitude;
+
+  bool get _hasPickupLocation =>
+      _selectedLatitude != null && _selectedLongitude != null;
+
+  Future<void> _pickLocationOnMap() async {
+    final result = await Navigator.of(context).push<_PickedPickupLocation>(
+      MaterialPageRoute(
+        builder: (_) => _PickupPointLocationPickerScreen(
+          initialLat: _selectedLatitude,
+          initialLng: _selectedLongitude,
+          initialAddress: addressController.text.trim(),
+        ),
+      ),
+    );
+    if (!mounted || result == null) return;
+    setState(() {
+      _selectedLatitude = result.lat;
+      _selectedLongitude = result.lng;
+      if (result.address.trim().isNotEmpty) {
+        addressController.text = result.address.trim();
+        if (confirmAddressController.text.trim().isEmpty) {
+          confirmAddressController.text = result.address.trim();
+        }
+      }
+      errorText = null;
+    });
+  }
 
   String _formatTimeOfDay(TimeOfDay time) {
     final hour = time.hour.toString().padLeft(2, '0');
@@ -192,8 +224,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
     final confirmAddress = confirmAddressController.text.trim();
     final city = cityController.text.trim();
     final area = areaController.text.trim();
-    final latitude = double.tryParse(latitudeController.text.trim());
-    final longitude = double.tryParse(longitudeController.text.trim());
+    final latitude = _selectedLatitude;
+    final longitude = _selectedLongitude;
     final password = passwordController.text;
     final confirmPassword = confirmPasswordController.text;
     final maxOrdersPerDay =
@@ -214,8 +246,6 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
         confirmAddress.isEmpty ||
         city.isEmpty ||
         area.isEmpty ||
-        latitudeController.text.trim().isEmpty ||
-        longitudeController.text.trim().isEmpty ||
         password.isEmpty ||
         confirmPassword.isEmpty) {
       setState(() => errorText = 'Please fill all required fields.');
@@ -256,8 +286,8 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
       return;
     }
 
-    if (latitude == null || longitude == null) {
-      setState(() => errorText = 'Please enter valid pickup point latitude/lng.');
+    if (!_hasPickupLocation || latitude == null || longitude == null) {
+      setState(() => errorText = 'Please pick pickup point location on the map.');
       return;
     }
 
@@ -380,8 +410,6 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
     confirmAddressController.dispose();
     cityController.dispose();
     areaController.dispose();
-    latitudeController.dispose();
-    longitudeController.dispose();
     passwordController.dispose();
     confirmPasswordController.dispose();
     commissionValueController.dispose();
@@ -525,27 +553,19 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
-                  TextField(
-                    controller: latitudeController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                      signed: true,
+                  ListTile(
+                    contentPadding: EdgeInsets.zero,
+                    leading: const Icon(Icons.map_outlined),
+                    title: const Text('Pickup Point Map Location'),
+                    subtitle: Text(
+                      _hasPickupLocation
+                          ? 'Lat: ${_selectedLatitude!.toStringAsFixed(6)}, '
+                              'Lng: ${_selectedLongitude!.toStringAsFixed(6)}'
+                          : 'No location selected yet',
                     ),
-                    decoration: const InputDecoration(
-                      labelText: 'Latitude',
-                      prefixIcon: Icon(Icons.my_location_outlined),
-                    ),
-                  ),
-                  const SizedBox(height: AppSpacing.md),
-                  TextField(
-                    controller: longitudeController,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                      signed: true,
-                    ),
-                    decoration: const InputDecoration(
-                      labelText: 'Longitude',
-                      prefixIcon: Icon(Icons.explore_outlined),
+                    trailing: TextButton(
+                      onPressed: _pickLocationOnMap,
+                      child: Text(_hasPickupLocation ? 'Change' : 'Pick'),
                     ),
                   ),
                   const SizedBox(height: AppSpacing.md),
@@ -778,6 +798,202 @@ class _PickupPointSignUpScreenState extends State<PickupPointSignUpScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _PickedPickupLocation {
+  final double lat;
+  final double lng;
+  final String address;
+
+  const _PickedPickupLocation({
+    required this.lat,
+    required this.lng,
+    required this.address,
+  });
+}
+
+class _PickupPointLocationPickerScreen extends StatefulWidget {
+  final double? initialLat;
+  final double? initialLng;
+  final String initialAddress;
+
+  const _PickupPointLocationPickerScreen({
+    required this.initialLat,
+    required this.initialLng,
+    required this.initialAddress,
+  });
+
+  @override
+  State<_PickupPointLocationPickerScreen> createState() =>
+      _PickupPointLocationPickerScreenState();
+}
+
+class _PickupPointLocationPickerScreenState
+    extends State<_PickupPointLocationPickerScreen> {
+  late final TextEditingController _addressController;
+  late gmaps.LatLng _selectedLatLng;
+  final MapController _desktopMapController = MapController();
+  gmaps.GoogleMapController? _mapController;
+  double _desktopZoom = 16;
+
+  bool get _useGoogleMapsPlugin =>
+      defaultTargetPlatform == TargetPlatform.android ||
+      defaultTargetPlatform == TargetPlatform.iOS;
+
+  latlong.LatLng get _desktopLatLng =>
+      latlong.LatLng(_selectedLatLng.latitude, _selectedLatLng.longitude);
+
+  @override
+  void initState() {
+    super.initState();
+    _addressController = TextEditingController(text: widget.initialAddress);
+    _selectedLatLng = gmaps.LatLng(
+      widget.initialLat ?? 33.8938,
+      widget.initialLng ?? 35.5018,
+    );
+  }
+
+  @override
+  void dispose() {
+    _addressController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _useCurrentLocation() async {
+    final serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) return;
+    var permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+    }
+    if (permission == LocationPermission.deniedForever ||
+        permission == LocationPermission.denied) {
+      return;
+    }
+    final position = await Geolocator.getCurrentPosition();
+    final next = gmaps.LatLng(position.latitude, position.longitude);
+    if (!mounted) return;
+    setState(() => _selectedLatLng = next);
+    if (_useGoogleMapsPlugin) {
+      await _mapController?.animateCamera(gmaps.CameraUpdate.newLatLngZoom(next, 16));
+    } else {
+      _desktopZoom = 16;
+      _desktopMapController.move(_desktopLatLng, _desktopZoom);
+    }
+  }
+
+  void _confirm() {
+    Navigator.of(context).pop(
+      _PickedPickupLocation(
+        lat: _selectedLatLng.latitude,
+        lng: _selectedLatLng.longitude,
+        address: _addressController.text.trim(),
+      ),
+    );
+  }
+
+  Widget _buildMap() {
+    if (_useGoogleMapsPlugin) {
+      return gmaps.GoogleMap(
+        initialCameraPosition: gmaps.CameraPosition(
+          target: _selectedLatLng,
+          zoom: 16,
+        ),
+        onMapCreated: (controller) => _mapController = controller,
+        markers: {
+          gmaps.Marker(
+            markerId: const gmaps.MarkerId('pickup_point_location'),
+            position: _selectedLatLng,
+          ),
+        },
+        onTap: (latLng) => setState(() => _selectedLatLng = latLng),
+        myLocationButtonEnabled: false,
+        zoomControlsEnabled: false,
+      );
+    }
+
+    return FlutterMap(
+      mapController: _desktopMapController,
+      options: MapOptions(
+        initialCenter: _desktopLatLng,
+        initialZoom: _desktopZoom,
+        onTap: (_, point) {
+          setState(() {
+            _selectedLatLng = gmaps.LatLng(point.latitude, point.longitude);
+          });
+        },
+      ),
+      children: [
+        TileLayer(
+          urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          userAgentPackageName: 'com.wasle.app',
+        ),
+        MarkerLayer(
+          markers: [
+            Marker(
+              width: 46,
+              height: 46,
+              point: _desktopLatLng,
+              child: const Icon(
+                Icons.location_on_rounded,
+                color: AppColors.danger,
+                size: 44,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Pick Pickup Point Location')),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: TextField(
+              controller: _addressController,
+              decoration: const InputDecoration(
+                labelText: 'Address',
+                prefixIcon: Icon(Icons.location_on_outlined),
+              ),
+            ),
+          ),
+          Expanded(
+            child: Stack(
+              children: [
+                _buildMap(),
+                Positioned(
+                  top: 12,
+                  right: 12,
+                  child: Column(
+                    children: [
+                      FloatingActionButton.small(
+                        heroTag: 'pp-my-location',
+                        onPressed: _useCurrentLocation,
+                        child: const Icon(Icons.my_location),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            child: PrimaryButton(
+              label: 'Use This Location',
+              icon: Icons.check_circle_outline,
+              onPressed: _confirm,
+            ),
+          ),
+        ],
       ),
     );
   }
