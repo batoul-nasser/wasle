@@ -121,9 +121,7 @@ class PickupPointRepository {
     final orderRows = await _client
         .from('orders')
         .select(
-          'id, tracking_code, status, assignment_status, '
-          'delivery_company_id, company_id, assigned_driver_id, '
-          'created_at, updated_at, customer_profile_id, '
+          'id, status, created_at, updated_at, customer_profile_id, '
           'pickup_point_id, destination_pickup_point_id, dropoff_type, '
           'customer_name, customer_phone, merchant_id, '
           'pickup_location_lat, pickup_location_lng, '
@@ -170,89 +168,6 @@ class PickupPointRepository {
     final paymentByOrderId = <String, Map<String, dynamic>>{
       for (final row in paymentRows)
         if (row['order_id'] != null) row['order_id'].toString(): row,
-    };
-
-    final assignmentRows = orderIds.isEmpty
-        ? <Map<String, dynamic>>[]
-        : List<Map<String, dynamic>>.from(
-            await _client
-                .from('assignments')
-                .select('order_id, driver_id, assigned_at')
-                .inFilter('order_id', orderIds)
-                .order('assigned_at', ascending: false),
-          );
-    final assignmentByOrderId = <String, Map<String, dynamic>>{};
-    for (final row in assignmentRows) {
-      final oid = row['order_id']?.toString();
-      if (oid == null || oid.isEmpty) continue;
-      assignmentByOrderId.putIfAbsent(oid, () => row);
-    }
-
-    final deliveryCompanyIds = <String>{
-      ...orders
-          .map((o) => o['delivery_company_id']?.toString())
-          .whereType<String>()
-          .where((id) => id.isNotEmpty),
-      ...orders
-          .map((o) => o['company_id']?.toString())
-          .whereType<String>()
-          .where((id) => id.isNotEmpty),
-    }.toList();
-    final deliveryCompanyRows = deliveryCompanyIds.isEmpty
-        ? <Map<String, dynamic>>[]
-        : List<Map<String, dynamic>>.from(
-            await _client
-                .from('delivery_companies')
-                .select('id, name, phone, status')
-                .inFilter('id', deliveryCompanyIds),
-          );
-    final companyById = <String, Map<String, dynamic>>{
-      for (final row in deliveryCompanyRows)
-        if (row['id'] != null) row['id'].toString(): row,
-    };
-
-    final driverIds = <String>{
-      ...orders
-          .map((o) => o['assigned_driver_id']?.toString())
-          .whereType<String>()
-          .where((id) => id.isNotEmpty),
-      ...assignmentRows
-          .map((a) => a['driver_id']?.toString())
-          .whereType<String>()
-          .where((id) => id.isNotEmpty),
-    }.toList();
-    final driverRows = driverIds.isEmpty
-        ? <Map<String, dynamic>>[]
-        : List<Map<String, dynamic>>.from(
-            await _client
-                .from('drivers')
-                .select(
-                  'id, profile_id, vehicle_type, verification_status, availability_status, current_location_lat, current_location_lng',
-                )
-                .inFilter('id', driverIds),
-          );
-    final driverById = <String, Map<String, dynamic>>{
-      for (final row in driverRows)
-        if (row['id'] != null) row['id'].toString(): row,
-    };
-
-    final driverProfileIds = driverRows
-        .map((d) => d['profile_id']?.toString())
-        .whereType<String>()
-        .where((id) => id.isNotEmpty)
-        .toSet()
-        .toList();
-    final driverProfileRows = driverProfileIds.isEmpty
-        ? <Map<String, dynamic>>[]
-        : List<Map<String, dynamic>>.from(
-            await _client
-                .from('profiles')
-                .select('id, full_name, phone, email')
-                .inFilter('id', driverProfileIds),
-          );
-    final driverProfileById = <String, Map<String, dynamic>>{
-      for (final row in driverProfileRows)
-        if (row['id'] != null) row['id'].toString(): row,
     };
 
     final pickupIds = <String>{
@@ -302,16 +217,6 @@ class PickupPointRepository {
       final sourceId = order['pickup_point_id']?.toString();
       final destinationId = order['destination_pickup_point_id']?.toString();
       final payment = paymentByOrderId[order['id']?.toString() ?? ''];
-      final assignment = assignmentByOrderId[order['id']?.toString() ?? ''];
-      final deliveryCompanyId = (order['delivery_company_id']?.toString().trim().isNotEmpty ?? false)
-          ? order['delivery_company_id']?.toString()
-          : order['company_id']?.toString();
-      final company = deliveryCompanyId == null ? null : companyById[deliveryCompanyId];
-      final assignedDriverId =
-          order['assigned_driver_id']?.toString() ?? assignment?['driver_id']?.toString();
-      final driver = assignedDriverId == null ? null : driverById[assignedDriverId];
-      final driverProfile =
-          driver == null ? null : driverProfileById[driver['profile_id']?.toString()];
       final sourcePickup = pickupById[sourceId];
       final destinationPickup = pickupById[destinationId];
       final role = destinationId == pickupPointId
@@ -329,12 +234,7 @@ class PickupPointRepository {
 
       final mapped = {
         'order_id': order['id']?.toString(),
-        'tracking_code': order['tracking_code']?.toString() ?? order['id']?.toString(),
         'status': order['status']?.toString(),
-        'assignment_status': order['assignment_status']?.toString(),
-        'delivery_company_id': order['delivery_company_id']?.toString(),
-        'company_id': order['company_id']?.toString(),
-        'assigned_driver_id': order['assigned_driver_id']?.toString(),
         'dropoff_type': dropoffType,
         'pickup_point_id': sourceId,
         'destination_pickup_point_id': destinationId,
@@ -367,50 +267,14 @@ class PickupPointRepository {
             customer['phone']?.toString() ??
             order['customer_phone']?.toString() ??
             '-',
-        'delivery_company_name': company?['name']?.toString() ?? 'No company assigned',
-        'delivery_company_phone': company?['phone']?.toString() ?? '-',
-        'delivery_company_status': company?['status']?.toString(),
-        'delivery_driver_id': assignedDriverId,
-        'delivery_driver_name':
-            driverProfile?['full_name']?.toString() ?? 'No driver assigned',
-        'delivery_driver_phone': driverProfile?['phone']?.toString() ?? '-',
-        'delivery_driver_email': driverProfile?['email']?.toString(),
-        'delivery_driver_profile_id': driver?['profile_id']?.toString(),
-        'delivery_vehicle_type': driver?['vehicle_type']?.toString(),
-        'delivery_verification_status': driver?['verification_status']?.toString(),
-        'delivery_availability_status': driver?['availability_status']?.toString(),
-        'delivery_status': _statusLabel(order['status']?.toString()),
-        'delivery_assigned_at': assignment?['assigned_at'],
       };
       debugPrint(
         '[PICKUP_POINT_ORDER] tracking=${mapped['order_id']} role=${mapped['pickup_role']} '
         'pickup_point_id=$sourceId destination_pickup_point_id=$destinationId '
         'dropoff_type=$dropoffType status=$status paymentCanCollect=$paymentCanCollect',
       );
-      debugPrint(
-        '[PICKUP_DASH_ORDER] tracking=${mapped['tracking_code']} status=${mapped['status']} '
-        'deliveryCompanyId=${mapped['delivery_company_id']} companyId=${mapped['company_id']} '
-        'assignedDriverId=$assignedDriverId destinationPickup=$destinationId',
-      );
-      debugPrint(
-        '[PICKUP_DASH_COMPANY] id=$deliveryCompanyId name=${mapped['delivery_company_name']}',
-      );
-      debugPrint(
-        '[PICKUP_DASH_DRIVER] driverId=$assignedDriverId profileId=${mapped['delivery_driver_profile_id']} '
-        'name=${mapped['delivery_driver_name']} phone=${mapped['delivery_driver_phone']} vehicle=${mapped['delivery_vehicle_type']}',
-      );
       return mapped;
     }).toList();
-  }
-
-  String _statusLabel(String? rawStatus) {
-    final status = (rawStatus ?? '').trim().toLowerCase();
-    if (status.isEmpty) return 'Not available';
-    return status
-        .replaceAll('_', ' ')
-        .split(' ')
-        .map((part) => part.isEmpty ? part : '${part[0].toUpperCase()}${part.substring(1)}')
-        .join(' ');
   }
 
   Future<void> updateParcelStatus({
