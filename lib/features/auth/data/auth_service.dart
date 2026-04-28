@@ -167,16 +167,22 @@ class AuthService {
     required String token,
     required AuthFlowMode mode,
   }) async {
+    final normalizedEmail = email.trim().toLowerCase();
     final preferredType =
         mode == AuthFlowMode.login ? OtpType.email : OtpType.signup;
+    final fallbackType = preferredType == OtpType.email
+        ? OtpType.signup
+        : OtpType.email;
+    debugPrint(
+      '[OTP_VERIFY] email=$normalizedEmail mode=$mode '
+      'preferredType=$preferredType fallbackType=$fallbackType',
+    );
 
     return await _verifyEmailOtp(
-      email: email,
+      email: normalizedEmail,
       token: token,
       preferredType: preferredType,
-      fallbackType: preferredType == OtpType.email
-          ? OtpType.signup
-          : OtpType.email,
+      fallbackType: fallbackType,
     );
   }
 
@@ -196,10 +202,18 @@ class AuthService {
         type: preferredType,
       );
     } on AuthException catch (error) {
+      debugPrint(
+        '[OTP_VERIFY] preferredType=$preferredType failed '
+        'code=${error.code} statusCode=${_extractStatusCode(error)} '
+        'message=${error.message}',
+      );
       firstError = error;
     }
 
     if (fallbackType == null || fallbackType == preferredType) {
+      throw firstError!;
+    }
+    if (!_shouldFallbackOtpVerification(firstError)) {
       throw firstError!;
     }
 
@@ -209,9 +223,32 @@ class AuthService {
         token: token,
         type: fallbackType,
       );
-    } on AuthException {
+    } on AuthException catch (fallbackError) {
+      debugPrint(
+        '[OTP_VERIFY] fallbackType=$fallbackType failed '
+        'code=${fallbackError.code} statusCode=${_extractStatusCode(fallbackError)} '
+        'message=${fallbackError.message}',
+      );
       throw firstError!;
     }
+  }
+
+  bool _shouldFallbackOtpVerification(AuthException? error) {
+    if (error == null) return false;
+    final code = (error.code ?? '').toLowerCase();
+    final message = error.message.toLowerCase();
+    return code == 'invalid_grant' ||
+        code == 'invalid_otp' ||
+        code == 'otp_invalid' ||
+        message.contains('invalid token') ||
+        message.contains('token is invalid') ||
+        message.contains('token has expired or is invalid');
+  }
+
+  String? _extractStatusCode(AuthException error) {
+    final raw = error.toString();
+    final match = RegExp(r'statusCode:\s*([0-9]+)').firstMatch(raw);
+    return match?.group(1);
   }
 
   Future<void> _resendEmailOtp({
@@ -1778,12 +1815,16 @@ class AuthService {
       final autoAssignmentReason =
           order['assignment_failure_reason']?.toString() ??
           autoAssignmentEventNote;
+      final hasAutoAssignmentReason =
+          autoAssignmentReason != null &&
+          autoAssignmentReason.trim().isNotEmpty;
       final eventSuggestsFailure =
           autoAssignmentEventNote?.toLowerCase().contains('failed') == true ||
           autoAssignmentEvent?['metadata']?.toString().toLowerCase().contains(
                 'assignment_failed',
               ) ==
-              true;
+              true ||
+          autoAssignmentEvent != null;
 
       final pickupName = pickupSourceType == 'pickup_point'
           ? _firstNonEmpty([sourcePickup?['name'], branch?['name']]) ??
@@ -1867,7 +1908,8 @@ class AuthService {
               'needs_manual_assignment',
               'unassigned',
             }.contains(assignmentStatus?.trim().toLowerCase() ?? '') ||
-            eventSuggestsFailure,
+            eventSuggestsFailure ||
+            hasAutoAssignmentReason,
         'auto_assignment_reason': autoAssignmentReason,
         'pickup_source_type': pickupSourceType,
         'dropoff_type': dropoffType,

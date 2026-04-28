@@ -104,15 +104,20 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
 
     setState(() => isAutoProcessing = true);
     var assignedCount = 0;
+    var attemptedCount = 0;
 
     try {
-      // Limit each pass to avoid long UI lock on very large lists.
-      final batch = targets.take(8);
-      for (final order in batch) {
+      // Process all current unassigned/reassignable orders automatically.
+      for (final order in targets) {
         final orderId = order['order_id']?.toString();
         if (orderId == null || orderId.isEmpty) continue;
-        final result = await _assignmentService.autoAssignOrder(orderId);
-        if (result.assigned) assignedCount++;
+        attemptedCount++;
+        try {
+          final result = await _assignmentService.autoAssignOrder(orderId);
+          if (result.assigned) assignedCount++;
+        } catch (_) {
+          // Keep iterating so one failing order never blocks others.
+        }
       }
 
       if (!mounted) return;
@@ -121,6 +126,14 @@ class _CompanyAssignOrdersScreenState extends State<CompanyAssignOrdersScreen> {
           SnackBar(
             content: Text(
               'Auto-assignment processed: $assignedCount order(s) assigned automatically.',
+            ),
+          ),
+        );
+      } else if (attemptedCount > 0) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'Auto-assignment attempted automatically for all pending orders.',
             ),
           ),
         );

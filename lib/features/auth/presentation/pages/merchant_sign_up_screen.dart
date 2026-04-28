@@ -59,7 +59,7 @@ class _MerchantSignUpScreenState extends State<MerchantSignUpScreen> {
     final fullName = fullNameController.text.trim();
     final businessName = businessNameController.text.trim();
     final phone = phoneController.text.trim();
-    final email = emailController.text.trim();
+    final email = emailController.text.trim().toLowerCase();
     final password = passwordController.text;
     final confirmPassword = confirmPasswordController.text;
     final branchName = branchNameController.text.trim();
@@ -103,7 +103,11 @@ class _MerchantSignUpScreenState extends State<MerchantSignUpScreen> {
         errorText = null;
       });
 
-      await _authService.sendOtp(email: email, shouldCreateUser: true);
+      await _authService.sendOtp(
+        email: email,
+        shouldCreateUser: true,
+        data: {'role': 'merchant', 'full_name': fullName},
+      );
 
       if (!mounted) return;
 

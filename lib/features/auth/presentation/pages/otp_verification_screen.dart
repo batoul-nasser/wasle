@@ -207,7 +207,9 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
   }
 
   Future<void> _verifyOtp() async {
+    if (_isLoading) return;
     final otp = _otpController.text.trim();
+    final normalizedEmail = widget.email.trim().toLowerCase();
     final validationError = _validateOtpInput(otp);
     if (validationError != null) {
       setState(() => _errorText = validationError);
@@ -221,7 +223,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       });
 
       final response = await _authService.verifyOtp(
-        email: widget.email,
+        email: normalizedEmail,
         token: otp,
         mode: widget.mode,
       );
@@ -258,7 +260,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             adminName: _required(widget.fullName, 'Admin name'),
             companyName: _required(widget.companyName, 'Company name'),
             phone: _required(widget.companyPhone ?? widget.phone, 'Phone'),
-            email: widget.email,
+            email: normalizedEmail,
             exactAddress: _required(
               widget.exactAddress ?? widget.location,
               'Exact address',
@@ -366,7 +368,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
             userId: userId,
             ownerName: _required(widget.fullName, 'Owner name'),
             phone: _required(widget.phone, 'Phone'),
-            email: widget.email,
+            email: normalizedEmail,
             pickupPointName: _required(
               widget.pickupPointName,
               'Pickup point name',
@@ -445,9 +447,13 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
       setState(() => _errorText = null);
 
       if (widget.mode == AuthFlowMode.login) {
-        await _authService.resendLoginOtp(email: widget.email);
+        await _authService.resendLoginOtp(
+          email: widget.email.trim().toLowerCase(),
+        );
       } else {
-        await _authService.resendSignupOtp(email: widget.email);
+        await _authService.resendSignupOtp(
+          email: widget.email.trim().toLowerCase(),
+        );
       }
 
       _startTimer();
@@ -561,7 +567,7 @@ class _OtpVerificationScreenState extends State<OtpVerificationScreen> {
               label: 'Verify OTP',
               icon: Icons.verified_outlined,
               isLoading: _isLoading,
-              onPressed: _verifyOtp,
+              onPressed: _isLoading ? null : _verifyOtp,
             ),
             const SizedBox(height: AppSpacing.sm),
             if (_secondsRemaining == 0)
