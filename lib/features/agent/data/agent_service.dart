@@ -46,6 +46,16 @@ class AgentService {
             .eq('status', 'pending');
 
         if ((payments as List).isEmpty) continue;
+        final agentCollections = List<Map<String, dynamic>>.from(
+          await _db
+              .from('agent_collections')
+              .select('order_id, status')
+              .inFilter('order_id', orderIds),
+        );
+        final collectionByOrderId = {
+          for (final row in agentCollections)
+            if (row['order_id'] != null) row['order_id'].toString(): row['status']?.toString(),
+        };
 
         double totalPending = 0.0;
         final pendingOrders = <Map<String, dynamic>>[];
@@ -56,6 +66,13 @@ class AgentService {
             orElse: () => <String, dynamic>{},
           );
           if (payment.isEmpty) continue;
+          final collectionStatus =
+              collectionByOrderId[order['id'].toString()]?.toLowerCase();
+          if (collectionStatus != null &&
+              collectionStatus.isNotEmpty &&
+              collectionStatus != 'ready_for_agent') {
+            continue;
+          }
           final amount = (payment['amount'] as num?)?.toDouble() ?? 0.0;
           totalPending += amount;
           pendingOrders.add({

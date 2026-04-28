@@ -354,15 +354,34 @@ class PickupPointService {
             ' Amount: \$${amount.toStringAsFixed(2)}'
             '${note != null && note.trim().isNotEmpty ? '. Note: ${note.trim()}' : ''}',
       });
-      await _db
+      final existingCollection = await _db
           .from('agent_collections')
-          .update({'status': 'pickup_confirmed'})
+          .select('id, status')
           .eq('order_id', orderId)
           .eq('pickup_point_id', pp['id'].toString())
-          .eq('status', 'collected');
-      debugPrint(
-        '[AGENT_COLLECTION] tracking=$orderId paymentId=$paymentId pickupPointId=${pp['id']} status=pickup_confirmed collectedAt=${DateTime.now().toUtc().toIso8601String()}',
-      );
+          .maybeSingle();
+      if (existingCollection == null) {
+        await _db.from('agent_collections').insert({
+          'agent_id': null,
+          'order_id': orderId,
+          'payment_id': paymentId,
+          'pickup_point_id': pp['id'].toString(),
+          'amount': amount,
+          'status': 'ready_for_agent',
+          'note': note ?? 'Pickup point marked cash ready for agent collection',
+        });
+        debugPrint(
+          '[AGENT_COLLECTION] tracking=$orderId paymentId=$paymentId pickupPointId=${pp['id']} status=ready_for_agent agentId=- collectedAt=-',
+        );
+      } else if ((existingCollection['status']?.toString() ?? '') == 'collected') {
+        await _db
+            .from('agent_collections')
+            .update({'status': 'pickup_confirmed'})
+            .eq('id', existingCollection['id']);
+        debugPrint(
+          '[AGENT_COLLECTION] tracking=$orderId paymentId=$paymentId pickupPointId=${pp['id']} status=pickup_confirmed agentId=- collectedAt=${DateTime.now().toUtc().toIso8601String()}',
+        );
+      }
 
       // If the agent already collected cash, finalize payment now.
       final agentCollected = await _db
@@ -373,6 +392,11 @@ class PickupPointService {
           .limit(1)
           .maybeSingle();
       if (agentCollected != null) {
+        final beforePayment = await _db
+            .from('payments')
+            .select('status')
+            .eq('id', paymentId)
+            .maybeSingle();
         final token =
             Supabase.instance.client.auth.currentSession?.accessToken ?? '';
         final response = await Supabase.instance.client.functions.invoke(
@@ -385,6 +409,14 @@ class PickupPointService {
             response.data['error'] ?? 'Failed to finalize payment after agent collection',
           );
         }
+        final afterPayment = await _db
+            .from('payments')
+            .select('status')
+            .eq('id', paymentId)
+            .maybeSingle();
+        debugPrint(
+          '[WHISH_REMITTANCE] tracking=$orderId paymentId=$paymentId amount=$amount reference=- statusBefore=${beforePayment?['status']} statusAfter=${afterPayment?['status']}',
+        );
       }
     } catch (e) {
       debugPrint('[PickupPointService] confirmCollectedByAgent: $e');
@@ -523,6 +555,9 @@ class PickupPointService {
         'created_by': _uid,
         'note': 'Cash sent to Wasle via Whish. Ref: $whishRef',
       });
+      debugPrint(
+        '[WHISH_REMITTANCE] tracking=$orderId paymentId=$paymentId amount=$amount reference=$whishRef statusBefore=pending statusAfter=paid',
+      );
     } catch (e) {
       debugPrint('[PickupPointService] confirmSentToWasle: $e');
       rethrow;
